@@ -31,7 +31,6 @@ class GoodbyeModel:
         openai_api_key: Optional[str] = None,
     ):
         self.aclient = AsyncOpenAI(api_key=openai_api_key or getenv("OPENAI_API_KEY"))
-
         self.embeddings_cache_path = embeddings_cache_path
         self.goodbye_embeddings: Optional[np.ndarray] = None
 
