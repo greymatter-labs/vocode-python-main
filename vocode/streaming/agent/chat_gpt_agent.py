@@ -25,6 +25,7 @@ from vocode.streaming.models.transcript import Transcript
 from vocode.streaming.vector_db.factory import VectorDBFactory
 
 from telephony_app.utils.call_information_handler import update_call_transcripts
+from telephony_app.utils.call_reformatter import replace_honorifics_in_string
 
 
 class ChatGPTAgent(RespondAgent[ChatGPTAgentConfig]):
@@ -206,8 +207,9 @@ class ChatGPTAgent(RespondAgent[ChatGPTAgentConfig]):
         async for message in collate_response_async(
             openai_get_tokens(stream), get_functions=True
         ):
-            all_messages.append(f"{message} ")
-            yield message, True
+            formatted_message = replace_honorifics_in_string(message)
+            all_messages.append(f"{formatted_message} ")
+            yield formatted_message, True
 
         complete_message = ''.join(all_messages)
 
