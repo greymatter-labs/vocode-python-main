@@ -136,81 +136,48 @@ class ChatGPTAgent(RespondAgent[ChatGPTAgentConfig]):
     def attach_transcript(self, transcript: Transcript):
         self.transcript = transcript
 
-    async def check_conditions(self, stringified_messages: str, conditions: List[str]) -> List[str]:
-        true_conditions = []
-
-        tasks = []
-        for condition in conditions:
-            user_message = {"role": "user", "content": stringified_messages + "\n\nNow, return either 'True' or 'False' depending on whether the condition: <" + condition.strip() + "> applies (True) to the conversation or not (False)."}
-
-            preamble = "You will be provided a condition and a conversation. Please classify if that condition applies (True), or does not apply (False) to the provided conversation.\n\nCondition:\n"
-            system_message = {"role": "system", "content": preamble + condition}
-            combined_messages = [system_message, user_message]
-            chat_parameters = self.get_chat_parameters(messages = combined_messages)
-            task = self.aclient.chat.completions.create(**chat_parameters)
-            tasks.append(task)
-
-        responses = await asyncio.gather(*tasks)
-
-        for response, condition in zip(responses, conditions):
-            if "true" in response.choices[0].message.content.strip().lower():
-                true_conditions.append(condition)
-
-        return true_conditions
-
     async def run_nonblocking_checks(self):
-        if self.agent_config.transcript_analyzer_func == 'check for spam':
-            telephony_id = await get_telephony_id_from_internal_id(
-                call_id=self.agent_config.current_call_id,
-                call_type=self.agent_config.call_type,
-            )
-            try:
-                preamble = "You will be given a transcript between a caller and the receiver's assistant. Please classify if the call is a spam or an important conversation that should be transferred to the intended recipient. If it's spam, say 'HANGUP'. If you should transfer, say 'TRANSFER'. If you're not sure, or there's not enough data, say 'NOT SURE'"
-                system_message = {"role": "system", "content": preamble}
-                transcript_message = {"role": "user", "content": self.transcript.to_string()}
+        analyzer_actions = [
+            {
+                "name": "check for spam",
+                "arguments": [
+                    {"name": "telephony_id", "type": "string", "description": "The telephony ID associated with the call."},
+                    {"name": "transcript", "type": "string", "description": "The transcript of the call to analyze."}
+                ]
+            },
+            {
+                "name": "check for availability",
+                "arguments": [
+                    {"name": "transcript", "type": "string", "description": "The transcript of the call to analyze."}
+                ]
+            }
+        ]
 
-                combined_messages = [system_message, transcript_message]
-                chat_parameters = self.get_chat_parameters(messages=combined_messages)
-                response = await self.aclient.chat.completions.create(**chat_parameters)
+        for action in analyzer_actions:
+            if self.agent_config.transcript_analyzer_func == action["name"]:
+                try:
+                    # Construct the prompt to guide the model to generate a valid JSON
+                    preamble = f"Given the following action data structure: {json.dumps(action, indent=2)}, " \
+                               f"and the transcript: {self.transcript.to_string()}, " \
+                               f"generate a valid JSON containing the keys 'name' and 'arguments' " \
+                               f"of the function call to make, or None if no action should be taken."
+                    system_message = {"role": "system", "content": preamble}
+                    transcript_message = {"role": "user", "content": self.transcript.to_string()}
 
-                spam_classification = response.choices[0].message.content
+                    combined_messages = [system_message, transcript_message]
+                    chat_parameters = self.get_chat_parameters(messages=combined_messages)
+                    response = await self.aclient.chat.completions.create(**chat_parameters)
 
-                if "TRANSFER" in spam_classification:
-                    self.logger.info("I am now transferring the call")
-                    await self.transfer_call(telephony_id=telephony_id)
-                elif "HANGUP" in spam_classification:
-                    self.logger.info(f"I am now hanging up because this call {self.agent_config.current_call_id} is spam")
-                    await hangup_twilio_call(call_sid=telephony_id)
-                else:
-                    self.logger.info("I'm not sure if this call is spam yet")
-            except Exception as e:
-                self.logger.error(f"An error occurred: {e}")
-        elif self.agent_config.transcript_analyzer_func == 'check for availability':
-            try:
-                preamble = "You will be given a transcript between a caller and the assistant. Please classify if the assistant has offered to check availability for the caller. If the assistant has offered to check availability, say 'YES'. If the assistant has not offered to check availability, say 'NO'. If you're not sure, or there's not enough data, say 'NOT SURE'"
-                system_message = {"role": "system", "content": preamble}
-                transcript_message = {"role": "user", "content": self.transcript.to_string()}
-                combined_messages = [system_message, transcript_message]
-                chat_parameters = self.get_chat_parameters(messages=combined_messages)
-                response = await self.aclient.chat.completions.create(**chat_parameters)
+                    # Parse the model's response to extract the function call details
+                    function_call_data = json.loads(response.choices[0].message.content)
+                    if function_call_data and function_call_data.get("name"):
+                        function_name = function_call_data["name"]
+                        function_args = function_call_data.get("arguments", {})
 
-                availability_classification = response.choices[0].message.content
-
-                if "yes" in availability_classification.lower():
-                    async with aiohttp.ClientSession() as session:
-                        async with session.get("http://127.0.0.1:27120/get_busy_periods?start_date=2024-02-05&end_date=2024-02-12") as response:
-                            if response.status == 200:
-                                self.logger.info("The assistant has offered to check availability")
-                                return await response.json()
-                            else:
-                                self.logger.error(f"Failed to check availability: HTTP {response.status}")
-                elif "no" in availability_classification.lower():
-                    self.logger.info("The assistant has not offered to check availability")
-                else:
-                    self.logger.info("I'm not sure if the assistant has offered to check availability yet")
-            except Exception as e:
-                self.logger.error(f"An error occurred: {e}")
-        return None
+                        # Yield a FunctionCall based on the model's response
+                        yield FunctionCall(name=function_name, arguments=function_args)
+                except Exception as e:
+                    self.logger.error(f"An error occurred: {e}")
     
     async def respond(
             self,
@@ -293,18 +260,7 @@ class ChatGPTAgent(RespondAgent[ChatGPTAgentConfig]):
             yield message, True
 
         latest_agent_response = ''.join(all_messages)
-        api_response = await self.run_nonblocking_checks()
-        if api_response:
-            #call the model with the api response to get the final response
-            preamble = "You will be given a transcript between a caller and the assistant. You will also be provided an API response. Write the assistant's latest message based on the API response."
-            system_message = {"role": "system", "content": preamble}
-            transcript_message = {"role": "user", "content": self.transcript.to_string()}
-            api_response_message = {"role": "user", "content": api_response}
-            combined_messages = [system_message, transcript_message, api_response_message]
-            chat_parameters = self.get_chat_parameters(messages=combined_messages)
-            response = await self.aclient.chat.completions.create(**chat_parameters)
-            output = response.choices[0].message.content
-            yield output, False 
+        await self.run_nonblocking_checks()
             
         self.logger.info(f"[{self.agent_config.call_type}:{self.agent_config.current_call_id}] Agent: {latest_agent_response}")
 
