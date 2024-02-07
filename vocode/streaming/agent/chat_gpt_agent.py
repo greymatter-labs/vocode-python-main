@@ -141,7 +141,7 @@ class ChatGPTAgent(RespondAgent[ChatGPTAgentConfig]):
             {
                 "name": "hangup spam call",
                 "arguments": [
-                    {"name": "hangup reasion", "type": "string", "description": "The reason for hanging up."},
+                    {"name": "hangup reason", "type": "string", "description": "The reason for hanging up."},
                 ]
             },
             {
@@ -155,7 +155,7 @@ class ChatGPTAgent(RespondAgent[ChatGPTAgentConfig]):
                 "arguments": [
                     {"name": "message", "type": "string", "description": "The message that the user requested to pass forward."},
                 ]
-            }
+            },
         ]
 
         for action in analyzer_actions:
