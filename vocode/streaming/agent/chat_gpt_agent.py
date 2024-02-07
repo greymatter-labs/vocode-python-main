@@ -139,16 +139,21 @@ class ChatGPTAgent(RespondAgent[ChatGPTAgentConfig]):
     async def run_nonblocking_checks(self):
         analyzer_actions = [
             {
-                "name": "check for spam",
+                "name": "hangup spam call",
                 "arguments": [
-                    {"name": "telephony_id", "type": "string", "description": "The telephony ID associated with the call."},
-                    {"name": "transcript", "type": "string", "description": "The transcript of the call to analyze."}
+                    {"name": "hangup reasion", "type": "string", "description": "The reason for hanging up."},
                 ]
             },
             {
                 "name": "check for availability",
                 "arguments": [
-                    {"name": "transcript", "type": "string", "description": "The transcript of the call to analyze."}
+                    {"name": "user timing preference", "type": "string", "description": "The user's preferred time frame to schedule."},
+                ]
+            },
+            {
+                "name": "pass forward message",
+                "arguments": [
+                    {"name": "message", "type": "string", "description": "The message that the user requested to pass forward."},
                 ]
             }
         ]
@@ -160,7 +165,7 @@ class ChatGPTAgent(RespondAgent[ChatGPTAgentConfig]):
                     preamble = f"Given the following action data structure: {json.dumps(action, indent=2)}, " \
                                f"and the transcript: {self.transcript.to_string()}, " \
                                f"generate a valid JSON containing the keys 'name' and 'arguments' " \
-                               f"of the function call to make, or None if no action should be taken."
+                               f"of the function call to make, or None if no action should be taken. The arguments key should be a dictionary containing parameter names and their values. If no action is appropriate, return None."
                     system_message = {"role": "system", "content": preamble}
                     transcript_message = {"role": "user", "content": self.transcript.to_string()}
 
@@ -169,7 +174,11 @@ class ChatGPTAgent(RespondAgent[ChatGPTAgentConfig]):
                     response = await self.aclient.chat.completions.create(**chat_parameters)
 
                     # Parse the model's response to extract the function call details
-                    function_call_data = json.loads(response.choices[0].message.content)
+                    response = response.choices[0].message.content
+                    # extract json by finding the first and last bracket
+                    json_start = response.find("{")
+                    json_end = response.rfind("}") + 1
+                    function_call_data = json.loads(response[json_start:json_end])
                     if function_call_data and function_call_data.get("name"):
                         function_name = function_call_data["name"]
                         function_args = function_call_data.get("arguments", {})
