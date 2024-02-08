@@ -5,6 +5,7 @@ import logging
 from typing import Any, Dict, List, Optional, Tuple, Union
 import aiohttp
 
+import sglang as sgl
 import openai
 from openai import AzureOpenAI, AsyncAzureOpenAI, OpenAI, AsyncOpenAI
 from typing import AsyncGenerator, Optional, Tuple
@@ -46,7 +47,17 @@ class ChatGPTAgent(RespondAgent[ChatGPTAgentConfig]):
         super().__init__(
             agent_config=agent_config, action_factory=action_factory, logger=logger
         )
+        sgl.set_default_backend(sgl.RuntimeEndpoint("https://9a12fb58e0d3934c.ngrok.app"))
+        regex_map = {
+            "send_message": r"{\n    \"one-sentence-message\": \"[\\w\\d\\s\\.,\\?!]{1,300}\"\n}",
+            "transfer_call": r"{\n    \"transfer_reason\": \"[\\w\\d\\s\\.,\\?!]{1,120}\"\n}"
+        }
 
+        #remove keys we won't use
+        for key in list(regex_map.keys()):
+            if key not in self.agent_config.transcript_analyzer_func:
+                del regex_map[key]
+        self.regex_map = regex_map
         if agent_config.azure_params:
             self.aclient = AsyncAzureOpenAI(api_version=agent_config.azure_params.api_version,
                                             api_key=getenv("AZURE_OPENAI_API_KEY"),
@@ -137,56 +148,29 @@ class ChatGPTAgent(RespondAgent[ChatGPTAgentConfig]):
         self.transcript = transcript
 
     async def run_nonblocking_checks(self):
-        analyzer_actions = [
-            {
-                "name": "hangup spam call",
-                "arguments": [
-                    {"name": "hangup reason", "type": "string", "description": "The reason for hanging up."},
-                ]
-            },
-            {
-                "name": "check for availability",
-                "arguments": [
-                    {"name": "user timing preference", "type": "string", "description": "The user's preferred time frame to schedule."},
-                ]
-            },
-            {
-                "name": "pass forward message",
-                "arguments": [
-                    {"name": "message", "type": "string", "description": "The message that the user requested to pass forward."},
-                ]
-            },
-        ]
-
-        for action in analyzer_actions:
-            if self.agent_config.transcript_analyzer_func == action["name"]:
-                try:
-                    # Construct the prompt to guide the model to generate a valid JSON
-                    preamble = f"Given the following action data structure: {json.dumps(action, indent=2)}, " \
-                               f"and the transcript: {self.transcript.to_string()}, " \
-                               f"generate a valid JSON containing the keys 'name' and 'arguments' " \
-                               f"of the function call to make, or None if no action should be taken. The arguments key should be a dictionary containing parameter names and their values. If no action is appropriate, return None."
-                    system_message = {"role": "system", "content": preamble}
-                    transcript_message = {"role": "user", "content": self.transcript.to_string()}
-
-                    combined_messages = [system_message, transcript_message]
-                    chat_parameters = self.get_chat_parameters(messages=combined_messages)
-                    response = await self.aclient.chat.completions.create(**chat_parameters)
-
-                    # Parse the model's response to extract the function call details
-                    response = response.choices[0].message.content
-                    # extract json by finding the first and last bracket
-                    json_start = response.find("{")
-                    json_end = response.rfind("}") + 1
-                    function_call_data = json.loads(response[json_start:json_end])
-                    if function_call_data and function_call_data.get("name"):
-                        function_name = function_call_data["name"]
-                        function_args = function_call_data.get("arguments", {})
-
-                        # Yield a FunctionCall based on the model's response
-                        yield FunctionCall(name=function_name, arguments=function_args)
-                except Exception as e:
-                    self.logger.error(f"An error occurred: {e}")
+        try:
+            @sgl.function
+            def function_call(s, conversation, regex_map):
+                s += "You will be provided a conditions to choose from and a conversation. Please classify which condition applies to the provided conversation.\nConditions:\n" + str(list(regex_map.keys())) + "\nConversation:\n" + conversation + "\n" + "The assistant has decided to perform the following action:\n"
+                condition = "Classification:\n" + sgl.gen("condition", choices=list(regex_map.keys()).append("continue helping"), stop="\n") + "\n"
+                s += condition
+                s += "Next, you will fill in the details for the action taken.\n"
+                conditionChoice = None
+                for con in list(regex_map.keys()):
+                    if str(con).lower() in s["condition"].lower():
+                        conditionChoice = con
+                        s += sgl.gen("json_output", max_tokens=500, regex=regex_map[con], stop="\n\n") + "\n"
+                    else:
+                        continue
+                return s, conditionChoice
+            conversation = self.transcript.to_string()
+            state, conditionChoice = function_call(conversation = conversation, regex_map = self.regex_map)
+            if conditionChoice and state["json_output"]:
+                ret = {"name": conditionChoice, "arguments": state["json_output"]}
+                yield FunctionCall(ret)
+            return
+        except Exception as e:
+            self.logger.error(f"Error while running nonblocking checks: {e}", exc_info=True)
     
     async def respond(
             self,
