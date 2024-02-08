@@ -1,10 +1,8 @@
 import os
-import aiohttp
-
-from aiohttp import BasicAuth
+import secrets
+import asyncio
 from typing import Type
 from pydantic import BaseModel, Field
-
 from vocode.streaming.action.phone_call_action import TwilioPhoneCallAction
 from vocode.streaming.models.actions import (
     ActionConfig,
@@ -12,7 +10,8 @@ from vocode.streaming.models.actions import (
     ActionOutput,
     ActionType,
 )
-
+from vocode.streaming.telephony.client.twilio_client import TwilioClient
+from vocode.streaming.models.telephony import TwilioConfig
 
 class TransferCallActionConfig(ActionConfig, type=ActionType.TRANSFER_CALL):
     to_phone: str
@@ -36,28 +35,46 @@ class TransferCall(
     response_type: Type[TransferCallResponse] = TransferCallResponse
 
     async def transfer_call(self, twilio_call_sid, to_phone):
-        twilio_account_sid = os.environ["TWILIO_ACCOUNT_SID"]
-        twilio_auth_token = os.environ["TWILIO_AUTH_TOKEN"]
+        twilio_config = TwilioConfig(
+            account_sid=os.getenv("TWILIO_ACCOUNT_SID"),
+            auth_token=os.getenv("TWILIO_AUTH_TOKEN"),
+        )
+        client = TwilioClient(twilio_config=twilio_config)
+        conference_name = secrets.token_urlsafe(16)
 
-        url = "https://api.twilio.com/2010-04-01/Accounts/{twilio_account_sid}/Calls/{twilio_auth_token}.json".format(
-            twilio_account_sid=twilio_account_sid, twilio_auth_token=twilio_call_sid
+        transferred_call_callback_url = f"https://{client.base_url}/handle_transferred_call_callback?telephony_call_sid={twilio_call_sid}"
+
+        connect_to_conference_twiml_response = (
+            f"<Response>"
+            f"  <Dial>"
+            f'    <Conference startConferenceOnEnter="true" endConferenceOnExit="true" statusCallback="{transferred_call_callback_url}" '
+            f'                statusCallbackEvent="start join end" statusCallbackMethod="POST">'
+            f"      {conference_name}"
+            f"    </Conference>"
+            f"  </Dial>"
+            f"</Response>"
         )
 
-        twiml_data = "<Response><Dial>{to_phone}</Dial></Response>".format(
-            to_phone=to_phone
+        self.logger.info(
+            f"Creating conference to agent with phone number {to_phone}"
         )
 
-        payload = {"Twiml": twiml_data}
+        client.twilio_client.calls.create(
+            to=to_phone,
+            from_=self.action_config.from_phone,  # Twilio number in our account
+            twiml=connect_to_conference_twiml_response,
+        )
 
-        auth = BasicAuth(twilio_account_sid, twilio_auth_token)
+        # Wait for a human agent to pick up before dialing the lead
+        await asyncio.sleep(6)
 
-        async with aiohttp.ClientSession(auth=auth) as session:
-            async with session.post(url, data=payload) as response:
-                if response.status != 200:
-                    print(await response.text())
-                    raise Exception("failed to update call")
-                else:
-                    return await response.json()
+        self.logger.info("Moving the lead into the conference")
+
+        client.twilio_client.calls(twilio_call_sid).update(
+            twiml=connect_to_conference_twiml_response
+        )
+
+        self.logger.info("Completed transferring lead to human agent.")
 
     async def run(
         self, action_input: ActionInput[TransferCallParameters]

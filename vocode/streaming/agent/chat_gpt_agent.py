@@ -3,7 +3,9 @@ import json
 import logging
 
 from typing import Any, Dict, List, Optional, Tuple, Union
+import aiohttp
 
+import sglang as sgl
 import openai
 from openai import AzureOpenAI, AsyncAzureOpenAI, OpenAI, AsyncOpenAI
 from typing import AsyncGenerator, Optional, Tuple
@@ -45,7 +47,17 @@ class ChatGPTAgent(RespondAgent[ChatGPTAgentConfig]):
         super().__init__(
             agent_config=agent_config, action_factory=action_factory, logger=logger
         )
+        sgl.set_default_backend(sgl.RuntimeEndpoint("https://9a12fb58e0d3934c.ngrok.app"))
+        regex_map = {
+            "send_message": r"{\n    \"one-sentence-message\": \"[\\w\\d\\s\\.,\\?!]{1,300}\"\n}",
+            "transfer_call": r"{\n    \"transfer_reason\": \"[\\w\\d\\s\\.,\\?!]{1,120}\"\n}"
+        }
 
+        #remove keys we won't use
+        for key in list(regex_map.keys()):
+            if key not in self.agent_config.transcript_analyzer_func:
+                del regex_map[key]
+        self.regex_map = regex_map
         if agent_config.azure_params:
             self.aclient = AsyncAzureOpenAI(api_version=agent_config.azure_params.api_version,
                                             api_key=getenv("AZURE_OPENAI_API_KEY"),
@@ -135,56 +147,30 @@ class ChatGPTAgent(RespondAgent[ChatGPTAgentConfig]):
     def attach_transcript(self, transcript: Transcript):
         self.transcript = transcript
 
-    async def check_conditions(self, stringified_messages: str, conditions: List[str]) -> List[str]:
-        true_conditions = []
-
-        tasks = []
-        for condition in conditions:
-            user_message = {"role": "user", "content": stringified_messages + "\n\nNow, return either 'True' or 'False' depending on whether the condition: <" + condition.strip() + "> applies (True) to the conversation or not (False)."}
-
-            preamble = "You will be provided a condition and a conversation. Please classify if that condition applies (True), or does not apply (False) to the provided conversation.\n\nCondition:\n"
-            system_message = {"role": "system", "content": preamble + condition}
-            combined_messages = [system_message, user_message]
-            chat_parameters = self.get_chat_parameters(messages = combined_messages)
-            task = self.aclient.chat.completions.create(**chat_parameters)
-            tasks.append(task)
-
-        responses = await asyncio.gather(*tasks)
-
-        for response, condition in zip(responses, conditions):
-            if "true" in response.choices[0].message.content.strip().lower():
-                true_conditions.append(condition)
-
-        return true_conditions
-
     async def run_nonblocking_checks(self):
-        if self.agent_config.transcript_analyzer_func == 'check for spam':
-            telephony_id = await get_telephony_id_from_internal_id(
-                call_id=self.agent_config.current_call_id,
-                call_type=self.agent_config.call_type,
-            )
-            try:
-                preamble = "You will be given a transcript between a caller and the receiver's assistant. Please classify if the call is a spam or an important conversation that should be transferred to the intended recipient. If it's spam, say 'HANGUP'. If you should transfer, say 'TRANSFER'. If you're not sure, or there's not enough data, say 'NOT SURE'"
-                system_message = {"role": "system", "content": preamble}
-                transcript_message = {"role": "user", "content": self.transcript.to_string()}
-
-                combined_messages = [system_message, transcript_message]
-                chat_parameters = self.get_chat_parameters(messages=combined_messages)
-                response = await self.aclient.chat.completions.create(**chat_parameters)
-
-                spam_classification = response.choices[0].message.content
-
-                if "TRANSFER" in spam_classification:
-                    self.logger.info("I am now transferring the call")
-                    await self.transfer_call(telephony_id=telephony_id)
-                elif "HANGUP" in spam_classification:
-                    self.logger.info(f"I am now hanging up because this call {self.agent_config.current_call_id} is spam")
-                    await hangup_twilio_call(call_sid=telephony_id)
-                else:
-                    self.logger.info("I'm not sure if this call is spam yet")
-            except Exception as e:
-                self.logger.error(f"An error occurred: {e}")
-        return
+        try:
+            @sgl.function
+            def function_call(s, conversation, regex_map):
+                s += "You will be provided a conditions to choose from and a conversation. Please classify which condition applies to the provided conversation.\nConditions:\n" + str(list(regex_map.keys())) + "\nConversation:\n" + conversation + "\n" + "The assistant has decided to perform the following action:\n"
+                condition = "Classification:\n" + sgl.gen("condition", choices=list(regex_map.keys()).append("continue helping"), stop="\n") + "\n"
+                s += condition
+                s += "Next, you will fill in the details for the action taken.\n"
+                conditionChoice = None
+                for con in list(regex_map.keys()):
+                    if str(con).lower() in s["condition"].lower():
+                        conditionChoice = con
+                        s += sgl.gen("json_output", max_tokens=500, regex=regex_map[con], stop="\n\n") + "\n"
+                    else:
+                        continue
+                return s, conditionChoice
+            conversation = self.transcript.to_string()
+            state, conditionChoice = function_call(conversation = conversation, regex_map = self.regex_map)
+            if conditionChoice and state["json_output"]:
+                ret = {"name": conditionChoice, "arguments": state["json_output"]}
+                yield FunctionCall(ret)
+            return
+        except Exception as e:
+            self.logger.error(f"Error while running nonblocking checks: {e}", exc_info=True)
     
     async def respond(
             self,
@@ -268,6 +254,7 @@ class ChatGPTAgent(RespondAgent[ChatGPTAgentConfig]):
 
         latest_agent_response = ''.join(all_messages)
         await self.run_nonblocking_checks()
+            
         self.logger.info(f"[{self.agent_config.call_type}:{self.agent_config.current_call_id}] Agent: {latest_agent_response}")
 
     async def transfer_call(self, telephony_id):
