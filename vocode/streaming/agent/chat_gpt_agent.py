@@ -199,6 +199,7 @@ class ChatGPTAgent(RespondAgent[ChatGPTAgentConfig]):
             transcript_message = {"role": "user", "content": stringified_messages}
             combined_messages = [system_message, transcript_message]
             chat_parameters = self.get_chat_parameters(messages=combined_messages)
+            chat_parameters["temperature"] = 0
             response = await self.aclient.chat.completions.create(**chat_parameters)
             tool_classification = response.choices[0].message.content.lower().strip()
             if tool_classification in [tool["function"]["name"].lower() for tool in tools]:
