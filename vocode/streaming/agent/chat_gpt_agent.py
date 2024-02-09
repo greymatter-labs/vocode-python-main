@@ -5,7 +5,6 @@ import logging
 from typing import Any, Dict, List, Optional, Tuple, Union
 import aiohttp
 
-import sglang as sgl
 import openai
 from openai import AzureOpenAI, AsyncAzureOpenAI, OpenAI, AsyncOpenAI
 from typing import AsyncGenerator, Optional, Tuple
@@ -47,17 +46,7 @@ class ChatGPTAgent(RespondAgent[ChatGPTAgentConfig]):
         super().__init__(
             agent_config=agent_config, action_factory=action_factory, logger=logger
         )
-        sgl.set_default_backend(sgl.RuntimeEndpoint("https://9a12fb58e0d3934c.ngrok.app"))
-        regex_map = {
-            "send_message": r"{\n    \"one-sentence-message\": \"[\\w\\d\\s\\.,\\?!]{1,300}\"\n}",
-            "transfer_call": r"{\n    \"transfer_reason\": \"[\\w\\d\\s\\.,\\?!]{1,120}\"\n}"
-        }
 
-        #remove keys we won't use
-        for key in list(regex_map.keys()):
-            if key not in self.agent_config.transcript_analyzer_func:
-                del regex_map[key]
-        self.regex_map = regex_map
         if agent_config.azure_params:
             self.aclient = AsyncAzureOpenAI(api_version=agent_config.azure_params.api_version,
                                             api_key=getenv("AZURE_OPENAI_API_KEY"),
@@ -148,29 +137,89 @@ class ChatGPTAgent(RespondAgent[ChatGPTAgentConfig]):
         self.transcript = transcript
 
     async def run_nonblocking_checks(self):
+        tools = [
+            {
+                "type": "function",
+                "function": {
+                    "name": "send_message",
+                    "description": "Send a message/ notification to the receiver.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "message_to_pass": {
+                                "type": "string",
+                                "description": "The message to pass, limited to 300 characters"
+                            }
+                        },
+                        "required": ["message_to_pass"]
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "transfer_call",
+                    "description": "Transfer the call with a reason",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "transfer_reason": {
+                                "type": "string",
+                                "description": "The reason for transferring the call, limited to 120 characters"
+                            }
+                        },
+                        "required": ["transfer_reason"]
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "end_call",
+                    "description": "End the call with a reason",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "end_reason": {
+                                "type": "string",
+                                "description": "The reason for ending the call, limited to 120 characters"
+                            }
+                        },
+                        "required": ["end_reason"]
+                    }
+                }
+            }
+        ]
         try:
-            @sgl.function
-            def function_call(s, conversation, regex_map):
-                s += "You will be provided a conditions to choose from and a conversation. Please classify which condition applies to the provided conversation.\nConditions:\n" + str(list(regex_map.keys())) + "\nConversation:\n" + conversation + "\n" + "The assistant has decided to perform the following action:\n"
-                condition = "Classification:\n" + sgl.gen("condition", choices=list(regex_map.keys()).append("continue helping"), stop="\n") + "\n"
-                s += condition
-                s += "Next, you will fill in the details for the action taken.\n"
-                conditionChoice = None
-                for con in list(regex_map.keys()):
-                    if str(con).lower() in s["condition"].lower():
-                        conditionChoice = con
-                        s += sgl.gen("json_output", max_tokens=500, regex=regex_map[con], stop="\n\n") + "\n"
-                    else:
-                        continue
-                return s, conditionChoice
-            conversation = self.transcript.to_string()
-            state, conditionChoice = function_call(conversation = conversation, regex_map = self.regex_map)
-            if conditionChoice and state["json_output"]:
-                ret = {"name": conditionChoice, "arguments": state["json_output"]}
-                yield FunctionCall(ret)
-            return
+            tool_descriptions = [f"'{tool['function']['name']}': {tool['function']['description']} (Required params: {', '.join(tool['function']['parameters']['required'])})" for tool in tools]
+            pretty_tool_descriptions = ', '.join(tool_descriptions)
+            stringified_messages = self.transcript.to_string()
+            preamble = f"""You will be provided with a conversational transcript between a caller and the receiver's assistant. During the conversation, the assistant has the following actions it can take: {pretty_tool_descriptions}.\n Your task is to infer whether, currently, the assistant is waiting for the caller to respond, or is immediately going to execute an action without waiting for a response. Return the action name from the list provided if the assistant is executing an action. If the assistant is waiting for a response, return 'None'. Return a single word."""
+            system_message = {"role": "system", "content": preamble}
+            transcript_message = {"role": "user", "content": stringified_messages}
+            combined_messages = [system_message, transcript_message]
+            chat_parameters = self.get_chat_parameters(messages=combined_messages)
+            response = await self.aclient.chat.completions.create(**chat_parameters)
+            tool_classification = response.choices[0].message.content.lower().strip()
+            if tool_classification in [tool["function"]["name"].lower() for tool in tools]:
+                self.logger.info(f"Tool classification: {tool_classification}")
+                chat = format_openai_chat_messages_from_transcript(self.transcript)
+                toolResponse = await self.aclient.chat.completions.create(
+                    model="meetkai/functionary-small-v2.2",
+                    messages=chat,
+                    tools=tools,
+                    tool_choice="auto"
+                )
+                toolResponse = toolResponse.choices[0]
+                message_content = toolResponse.message.content
+                tool_call = toolResponse.message.tool_calls[0]
+                if tool_call:
+                    yield FunctionCall({"name": tool_call.function.name, "arguments": tool_call.function.arguments})
+            else:
+                self.logger.info(f"Tool classification: None")
         except Exception as e:
-            self.logger.error(f"Error while running nonblocking checks: {e}", exc_info=True)
+            self.logger.error(f"An error occurred: {e}")
+        return
     
     async def respond(
             self,
