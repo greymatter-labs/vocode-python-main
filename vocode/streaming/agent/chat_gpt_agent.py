@@ -59,6 +59,7 @@ class ChatGPTAgent(RespondAgent[ChatGPTAgentConfig]):
             # mistral configs
             self.aclient = AsyncOpenAI(api_key="EMPTY", base_url=getenv("MISTRAL_API_BASE"))
             self.client = OpenAI(api_key="EMPTY", base_url=getenv("MISTRAL_API_BASE"))
+            self.fclient = AsyncOpenAI(api_key="functionary", base_url=getenv("FUNCTIONARY_API_BASE"))
 
             # openai.api_type = "open_ai"
             # openai.api_version = None
@@ -205,7 +206,7 @@ class ChatGPTAgent(RespondAgent[ChatGPTAgentConfig]):
             if tool_classification in [tool["function"]["name"].lower() for tool in tools]:
                 self.logger.info(f"Tool classification: {tool_classification}")
                 chat = format_openai_chat_messages_from_transcript(self.transcript)
-                toolResponse = await self.aclient.chat.completions.create(
+                toolResponse = await self.fclient.chat.completions.create(
                     model="meetkai/functionary-small-v2.2",
                     messages=chat,
                     tools=tools,
