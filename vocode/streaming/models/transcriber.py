@@ -29,13 +29,17 @@ class TranscriberType(str, Enum):
 
 class EndpointingType(str, Enum):
     BASE = "endpointing_base"
+    CLASSIFIER_BASED = "endpointing_classifier_based"
     TIME_BASED = "endpointing_time_based"
     PUNCTUATION_BASED = "endpointing_punctuation_based"
-
 
 class EndpointingConfig(TypedModel, type=EndpointingType.BASE):
     pass
 
+class ClassifierEndpointingConfig(TypedModel, type=EndpointingType.CLASSIFIER_BASED):
+    instructions: str
+    base_url: str
+    model_name: str
 
 class TimeEndpointingConfig(EndpointingConfig, type=EndpointingType.TIME_BASED):
     time_cutoff_seconds: float = 0.4
