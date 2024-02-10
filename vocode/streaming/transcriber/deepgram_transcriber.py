@@ -104,6 +104,7 @@ class DeepgramTranscriber(BaseAsyncTranscriber[DeepgramTranscriberConfig]):
             "sample_rate": self.transcriber_config.sampling_rate,
             "channels": 1,
             "interim_results": "true",
+            "vad_events": "true",
         }
         extra_params = {}
         if self.transcriber_config.language:
@@ -204,6 +205,15 @@ class DeepgramTranscriber(BaseAsyncTranscriber[DeepgramTranscriberConfig]):
                         self.logger.debug(f"Got error {e} in Deepgram receiver")
                         break
                     data = json.loads(msg)
+                    if data["type"] == "SpeechStarted":
+                        self.output_queue.put_nowait(
+                            Transcription(
+                                message="",
+                                confidence=1.0,
+                                is_final=False,
+                            )
+                        )
+                        continue
                     if (
                         not "is_final" in data
                     ):  # means we've finished receiving transcriptions
