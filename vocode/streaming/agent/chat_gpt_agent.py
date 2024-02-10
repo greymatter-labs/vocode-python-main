@@ -58,6 +58,7 @@ class ChatGPTAgent(RespondAgent[ChatGPTAgentConfig]):
             # mistral configs
             self.aclient = AsyncOpenAI(api_key="EMPTY", base_url=getenv("MISTRAL_API_BASE"))
             self.client = OpenAI(api_key="EMPTY", base_url=getenv("MISTRAL_API_BASE"))
+            self.fclient = AsyncOpenAI(api_key="functionary", base_url=getenv("FUNCTIONARY_API_BASE"))
 
             # openai.api_type = "open_ai"
             # openai.api_version = None
@@ -157,34 +158,121 @@ class ChatGPTAgent(RespondAgent[ChatGPTAgentConfig]):
 
         return true_conditions
 
-    async def run_nonblocking_checks(self):
-        if self.agent_config.transcript_analyzer_func == 'check for spam':
-            telephony_id = await get_telephony_id_from_internal_id(
-                call_id=self.agent_config.current_call_id,
-                call_type=self.agent_config.call_type,
-            )
-            try:
-                preamble = "You will be given a transcript between a caller and the receiver's assistant. Please classify if the call is a spam or an important conversation that should be transferred to the intended recipient. If it's spam, say 'HANGUP'. If you should transfer, say 'TRANSFER'. If you're not sure, or there's not enough data, say 'NOT SURE'"
-                system_message = {"role": "system", "content": preamble}
-                transcript_message = {"role": "user", "content": self.transcript.to_string()}
+    async def run_nonblocking_checks(self, latest_agent_response: str):
+        tools = [
+            # {
+            #     "type": "function",
+            #     "function": {
+            #         "name": "send_message",
+            #         "description": "Send a message/ notification to the receiver.",
+            #         "parameters": {
+            #             "type": "object",
+            #             "properties": {
+            #                 "message_to_pass": {
+            #                     "type": "string",
+            #                     "description": "The message to pass, limited to 300 characters"
+            #                 }
+            #             },
+            #             "required": ["message_to_pass"]
+            #         }
+            #     }
+            # },
+            {
+                "type": "function",
+                "function": {
+                    "name": "transfer_call",
+                    "description": "Transfer the call with a reason",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "transfer_reason": {
+                                "type": "string",
+                                "description": "The reason for transferring the call, limited to 120 characters"
+                            }
+                        },
+                        "required": ["transfer_reason"]
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "hangup_call",
+                    "description": "Hangup the call if the assistant says goodbye",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "end_reason": {
+                                "type": "string",
+                                "description": "The reason for ending the call, limited to 120 characters"
+                            }
+                        },
+                        "required": ["end_reason"]
+                    }
+                }
+            }
+        ]
+        try:
+            tool_descriptions = [f"'{tool['function']['name']}': {tool['function']['description']} (Required params: {', '.join(tool['function']['parameters']['required'])})" for tool in tools]
+            pretty_tool_descriptions = ', '.join(tool_descriptions)
+            chat = format_openai_chat_messages_from_transcript(self.transcript)[1:]
+            chat[-1] = {'role': 'assistant', 'content': latest_agent_response}
+            stringified_messages = str(chat)
+            self.logger.info(f"The whole converted transcript is {stringified_messages}")
+            preamble = f"""You will be provided with a conversational transcript between a caller and the receiver's assistant. During the conversation, the assistant has the following actions it can take: {pretty_tool_descriptions}.\n Your task is to infer whether, currently, the assistant is waiting for the caller to respond, or is immediately going to execute an action without waiting for a response. Return the action name from the list provided if the assistant is executing an action. If the assistant is waiting for a response, return 'None'. Return a single word."""
+            system_message = {"role": "system", "content": preamble}
+            transcript_message = {"role": "user", "content": stringified_messages}
+            combined_messages = [system_message, transcript_message]
+            chat_parameters = self.get_chat_parameters(messages=combined_messages)
+            chat_parameters["temperature"] = 0
+            response = await self.aclient.chat.completions.create(**chat_parameters)
+            tool_classification = response.choices[0].message.content.lower().strip()
+            self.logger.info(f"Tool classification: {tool_classification}")
+            if tool_classification in [tool["function"]["name"].lower() for tool in tools]:
+                tool_response = await self.fclient.chat.completions.create(
+                    model="meetkai/functionary-small-v2.2",
+                    messages=chat,
+                    tools=tools,
+                    tool_choice="auto"
+                )
+                tool_response = tool_response.choices[0]
+                message_content = tool_response.message.content
+                tool_call = tool_response.message.tool_calls[0]
+                if tool_call:
+                    return FunctionCall(name=tool_call.function.name, arguments=tool_call.function.arguments)
+        except Exception as e:
+            self.logger.error(f"An error occurred: {e}")
 
-                combined_messages = [system_message, transcript_message]
-                chat_parameters = self.get_chat_parameters(messages=combined_messages)
-                response = await self.aclient.chat.completions.create(**chat_parameters)
+        return None
 
-                spam_classification = response.choices[0].message.content
-
-                if "TRANSFER" in spam_classification:
-                    self.logger.info("I am now transferring the call")
-                    await self.transfer_call(telephony_id=telephony_id)
-                elif "HANGUP" in spam_classification:
-                    self.logger.info(f"I am now hanging up because this call {self.agent_config.current_call_id} is spam")
-                    await hangup_twilio_call(call_sid=telephony_id, call_type=self.agent_config.call_type)
-                else:
-                    self.logger.info("I'm not sure if this call is spam yet")
-            except Exception as e:
-                self.logger.error(f"An error occurred: {e}")
-        return
+    # async def run_nonblocking_checks(self):
+    #     if self.agent_config.transcript_analyzer_func == 'check for spam':
+    #         telephony_id = await get_telephony_id_from_internal_id(
+    #             call_id=self.agent_config.current_call_id,
+    #             call_type=self.agent_config.call_type,
+    #         )
+    #         try:
+    #             preamble = "You will be given a transcript between a caller and the receiver's assistant. Please classify if the call is a spam or an important conversation that should be transferred to the intended recipient. If it's spam, say 'HANGUP'. If you should transfer, say 'TRANSFER'. If you're not sure, or there's not enough data, say 'NOT SURE'"
+    #             system_message = {"role": "system", "content": preamble}
+    #             transcript_message = {"role": "user", "content": self.transcript.to_string()}
+    #
+    #             combined_messages = [system_message, transcript_message]
+    #             chat_parameters = self.get_chat_parameters(messages=combined_messages)
+    #             response = await self.aclient.chat.completions.create(**chat_parameters)
+    #
+    #             spam_classification = response.choices[0].message.content
+    #
+    #             if "TRANSFER" in spam_classification:
+    #                 self.logger.info("I am now transferring the call")
+    #                 await self.transfer_call(telephony_id=telephony_id)
+    #             elif "HANGUP" in spam_classification:
+    #                 self.logger.info(f"I am now hanging up because this call {self.agent_config.current_call_id} is spam")
+    #                 await hangup_twilio_call(call_sid=telephony_id, call_type=self.agent_config.call_type)
+    #             else:
+    #                 self.logger.info("I'm not sure if this call is spam yet")
+    #         except Exception as e:
+    #             self.logger.error(f"An error occurred: {e}")
+    #     return
     
     async def respond(
             self,
@@ -267,7 +355,11 @@ class ChatGPTAgent(RespondAgent[ChatGPTAgentConfig]):
             yield message, True
 
         latest_agent_response = ''.join(all_messages)
-        await self.run_nonblocking_checks()
+
+        result = await self.run_nonblocking_checks(latest_agent_response=latest_agent_response)
+        if result:
+            yield result, True
+
         self.logger.info(f"[{self.agent_config.call_type}:{self.agent_config.current_call_id}] Agent: {latest_agent_response}")
 
     async def transfer_call(self, telephony_id):
