@@ -2,6 +2,7 @@ import asyncio
 import json
 import logging
 from typing import Optional
+from openai import AsyncOpenAI
 import websockets
 from websockets.client import WebSocketClientProtocol
 import audioop
@@ -14,6 +15,7 @@ from vocode.streaming.transcriber.base_transcriber import (
     meter,
 )
 from vocode.streaming.models.transcriber import (
+    ClassifierEndpointingConfig,
     DeepgramTranscriberConfig,
     EndpointingConfig,
     EndpointingType,
@@ -124,6 +126,39 @@ class DeepgramTranscriber(BaseAsyncTranscriber[DeepgramTranscriberConfig]):
             extra_params["punctuate"] = "true"
         url_params.update(extra_params)
         return f"wss://api.deepgram.com/v1/listen?{urlencode(url_params)}"
+    
+    #this function will return how long the time silence for endpointing should be
+    async def classify_transcript(self, transcript: str):
+        self.aclient = AsyncOpenAI(api_key="EMPTY", base_url=getenv("MISTRAL_API_BASE"))
+        preamble = "Your task is to classify whether a provided user message is complete or the user is still typing. Regardless of grammatical correctness, the message should be considered complete if it is a full thought or question. If the message is incomplete, the user is 'typing'. If the message complete the user is 'sending'. If the message completeness if ambiguous, the user is 'thinking'. Based on which is demonstrated in the provided message, return either 'typing', 'sending', or 'thinking'."
+        userMessage = f"The user message is: {transcript}"
+        messages = [
+            {
+                "role": "system",
+                "content": preamble
+            },
+            {
+                "role": "user",
+                "content": userMessage
+            }
+        ]
+        parameters = {
+            "messages": messages,
+            "max_tokens": 5,
+            "temperature": 0,
+            "stop": ["User:", "\n", "<|im_end|>", "?"],
+        }
+        response = await self.aclient.chat.completions.create(**parameters)
+        parsed = response.choices[0].message.content.lower().strip()
+        if "typing" in parsed:
+            return 1000 
+        elif "sending" in parsed:
+            return 0
+        elif "thinking" in parsed:
+            return 200
+        else:
+            return 100 #arbitrary
+
 
     def is_speech_final(
         self, current_buffer: str, deepgram_response: dict, time_silent: float
@@ -158,6 +193,18 @@ class DeepgramTranscriber(BaseAsyncTranscriber[DeepgramTranscriberConfig]):
                 and (time_silent + deepgram_response["duration"])
                 > self.transcriber_config.endpointing_config.time_cutoff_seconds
             )
+        elif isinstance(
+            self.transcriber_config.endpointing_config, ClassifierEndpointingConfig
+        ):
+            classification = asyncio.run(self.classify_transcript(transcript))
+            #same as punctuation based, but we need to classify the transcript and not use the punctuation at all or the is_final
+            if transcript and len(transcript) >= 2:
+                return (time_silent + deepgram_response["duration"]) > classification
+            else:
+                return (time_silent + deepgram_response["duration"]) > self.transcriber_config.endpointing_config.time_cutoff_seconds
+
+
+
         raise Exception("Endpointing config not supported")
 
     def calculate_time_silent(self, data: dict):
