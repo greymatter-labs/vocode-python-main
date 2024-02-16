@@ -253,7 +253,7 @@ class DeepgramTranscriber(BaseAsyncTranscriber[DeepgramTranscriberConfig]):
                     confidence = top_choice["confidence"]
                     self.output_queue.put_nowait(
                         Transcription(
-                            message=buffer,
+                            message=top_choice["transcript"],
                             confidence=confidence,
                             is_final=False,
                             time_silent=time_silent,

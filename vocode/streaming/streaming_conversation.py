@@ -37,6 +37,13 @@ from vocode.streaming.models.agent import ChatGPTAgentConfig, FillerAudioConfig
 from vocode.streaming.models.synthesizer import (
     SentimentConfig,
 )
+
+from vocode.streaming.agent.utils import (
+    format_openai_chat_messages_from_transcript,
+    collate_response_async,
+    openai_get_tokens,
+    vector_db_result_to_openai_chat_message,
+)
 from vocode.streaming.constants import (
     TEXT_TO_SPEECH_CHUNK_SIZE_SECONDS,
     PER_CHUNK_ALLOWANCE_SECONDS,
@@ -129,21 +136,25 @@ class StreamingConversation(Generic[OutputDeviceType]):
             self.time_silent = 0.0
             self.buffer_avg_confidence = 0.0
             self.num_buffer_utterances = 0
+            self.is_final = False
 
         def get_expected_silence_duration(self, transcript: str):
             self.openai_client = OpenAI(
                 api_key="EMPTY", base_url=getenv("MISTRAL_API_BASE")
             )
-            preamble = """You are an amazing live transcript classifier! Your task is to classify, with provided confidence, whether a provided message transcript is: 'complete', 'incomplete' or 'garbled'. The message should be considered 'complete' if it is a full thought or question. The message is 'incomplete' if there is still more the user might add. Finally, the message is 'garbled' if it appears to be a complete transcription attempt but, despite best efforts, the meaning is unclear.
+            preamble = """You are an amazing live transcript classifier! You will be provided a contextual message and a reply. Your task is to classify, with provided confidence, whether a the provided reply is: 'complete' or 'incomplete'. The reply should be considered 'complete' if it would be considered a valid response to the context message. The message is 'incomplete' if the response is not valid given the context.
 
-Based on which class is demonstrated in the provided message transcript, return the confidence level of your classification on a scale of 1-100 with 100 being the most confident followed by a space followed by either 'complete', 'incomplete', or 'garbled'.
+Based on which class is demonstrated in the provided message and reply transcript, return the confidence level of your classification on a scale of 1-100 with 100 representing a valid response followed by a space followed by either 'complete', 'incomplete'.
 
 The exact format to return is:
 <confidence level> <classification>"""
             user_message = f"{transcript}"
             messages = [
                 {"role": "system", "content": preamble},
-                {"role": "user", "content": user_message},
+                {
+                    "role": "user",
+                    "content": user_message,
+                },
             ]
             parameters = {
                 "model": "TheBloke/Nous-Hermes-2-Mixtral-8x7B-DPO-AWQ",
@@ -159,32 +170,74 @@ The exact format to return is:
                 filter(str.isdigit, response.choices[0].message.content)
             )
             duration_to_return = 0.1
+            logging.error(f"Got classification: {classification}.")
             if "incomplete" in classification.lower():
                 duration_to_return = (
                     float(silence_duration_1_to_100) / INCOMPLETE_SCALING_FACTOR / 100.0
                 )
             elif "complete" in classification.lower():
                 duration_to_return = 1.0 - (float(silence_duration_1_to_100) / 100.0)
-            return duration_to_return * MAX_SILENCE_DURATION
+            else:
+                logging.error(
+                    f"Unexpected classification: {classification}. Returning max silence duration"
+                )
+                duration_to_return = MAX_SILENCE_DURATION
+            return duration_to_return
 
         async def process(self, transcription: Transcription):
             self.conversation.mark_last_action_timestamp()
+            # self.time_silent += transcription.time_silent
             if transcription.message.strip() == "":
-                self.conversation.logger.info("Ignoring empty transcription")
+                self.conversation.logger.debug("Ignoring empty transcription")
                 return
-            actual_silence_duration = self.transcription.time_silent
+            if self.is_final:
+                self.conversation.logger.debug(
+                    "Ignoring transcription since we are in-flight"
+                )
+                return
+            self.time_silent += transcription.time_silent
+            actual_silence_duration = self.time_silent
 
             confidence = transcription.confidence
             if confidence > 0.0:
-                expected_silence_duration = self.get_expected_silence_duration(
-                    self.buffer + " " + transcription.message.strip()
+                current_message = transcription.message.strip()
+                currentBufferPlusMessage = f"{self.buffer} {current_message}"
+                previousAgentMessage = next(
+                    (
+                        message["content"]
+                        for message in reversed(
+                            format_openai_chat_messages_from_transcript(
+                                self.conversation.transcript
+                            )
+                        )
+                        if message["role"] == "assistant"
+                    ),
+                    None,
                 )
+                prettyPrinted = (
+                    f"Context: {previousAgentMessage} Reply: {currentBufferPlusMessage}"
+                )
+                if len(previousAgentMessage) == 0:
+                    self.conversation.logger.debug(
+                        f"Ignoring message that doesn't come after agent message. {prettyPrinted}"
+                    )
+                    self.buffer = ""
+                    self.buffer_avg_confidence = 0.0
+                    self.num_buffer_utterances = 0
+                    self.time_silent = 0.0
+                    return
+                expected_silence_duration = self.get_expected_silence_duration(
+                    currentBufferPlusMessage
+                )
+                is_final = actual_silence_duration >= expected_silence_duration
+                if is_final:
+                    self.conversation.transcriber.mute()
                 # log the message classified as well as the expected silence duration and the actual silence duration
                 self.conversation.logger.info(
-                    f"Message: {transcription.message.strip()} Expected Silence: {expected_silence_duration} Actual Silence: {actual_silence_duration}"
+                    f"Message: {prettyPrinted} Expected Silence: {expected_silence_duration} Actual Silence: {actual_silence_duration} Is Final: {is_final}"
                 )
 
-                self.buffer = f"{self.buffer} {transcription.message.strip()}"
+                self.buffer = currentBufferPlusMessage
                 if self.buffer_avg_confidence == 0.0:
                     self.buffer_avg_confidence = confidence
                 else:
@@ -194,20 +247,19 @@ The exact format to return is:
                     ) * (self.num_buffer_utterances / (self.num_buffer_utterances + 1))
                 self.num_buffer_utterances += 1
 
-                is_final = actual_silence_duration >= expected_silence_duration
-                if not is_final:
-                    self.buffer += " " + transcription.message.strip()
-                    self.time_silent += actual_silence_duration
-                    return
-                else:
-                    transcription.message = (
-                        self.buffer + " " + transcription.message.strip()
-                    )
+                if is_final and not self.is_final:  # already in flight if so
+                    self.conversation.transcriber.mute()
+                    self.is_final = is_final
+                    transcription.message = self.buffer
                     self.buffer = ""
                     self.conversation.logger.info(
                         f"Got transcription with confidence: {transcription.confidence} "
                         f"[{self.agent.agent_config.call_type}:{self.agent.agent_config.current_call_id}] Lead:{transcription.message}"
                     )
+                    self.buffer_avg_confidence = 0.0
+                    self.num_buffer_utterances = 0
+                    self.time_silent = 0.0
+
                     if (
                         not self.conversation.is_human_speaking
                         and self.conversation.is_interrupt(transcription)
@@ -223,7 +275,6 @@ The exact format to return is:
                         self.conversation.current_transcription_is_interrupt
                     )
                     self.conversation.is_human_speaking = not is_final
-                    self.conversation.transcriber.mute()
                     # we use getattr here to avoid the dependency cycle between VonageCall and StreamingConversation
                     event = self.interruptible_event_factory.create_interruptible_event(
                         TranscriptionAgentInput(
@@ -234,8 +285,9 @@ The exact format to return is:
                         )
                     )
                     self.output_queue.put_nowait(event)
-            else:
-                self.time_silent += actual_silence_duration
+                    self.is_final = False
+            # else:
+            #     self.time_silent += actual_silence_duration
 
     class FillerAudioWorker(InterruptibleAgentResponseWorker):
         """
