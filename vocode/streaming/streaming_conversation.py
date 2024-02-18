@@ -217,6 +217,10 @@ The exact format to return is:
                     )
                 )
                 self.output_queue.put_nowait(event)
+                self.conversation.logger.info(
+                    f"Got transcription with confidence: {transcription.confidence} "
+                    f"[{self.agent.agent_config.call_type}:{self.agent.agent_config.current_call_id}] Lead:{transcription.message}"
+                )
                 self.conversation.logger.info("Transcription event put in output queue")
 
         async def process(self, transcription: Transcription):
@@ -242,7 +246,7 @@ The exact format to return is:
             self.buffer = f"{self.buffer} {transcription.message.strip()}"
             self.conversation.logger.info(f"Buffer updated: {self.buffer}")
 
-            previousAgentMessage = next(
+            previous_agent_message = next(
                 (
                     message["content"]
                     for message in reversed(
@@ -254,12 +258,12 @@ The exact format to return is:
                 ),
                 "The conversation has just started. There are no previous agent messages.",
             )
-            prettyPrinted = f"Context: {previousAgentMessage} Reply: {self.buffer}"
+            pretty_printed = f"Context: {previous_agent_message} Reply: {self.buffer}"
             self.conversation.logger.info(
-                f"Formatted message for silence duration prediction: {prettyPrinted}"
+                f"Formatted message for silence duration prediction: {pretty_printed}"
             )
             expected_silence_duration = self.get_expected_silence_duration(
-                prettyPrinted
+                pretty_printed
             )
             self.conversation.logger.info(
                 f"Expected silence duration: {expected_silence_duration}s"
@@ -298,8 +302,8 @@ The exact format to return is:
                 )
                 asyncio.create_task(
                     self._buffer_check(
-                        self.buffer, expected_silence_duration
-                    )  # we put the whole thing in to wait extra
+                        self.buffer, expected_silence_duration-self.time_silent
+                    )
                 )
 
     class FillerAudioWorker(InterruptibleAgentResponseWorker):
