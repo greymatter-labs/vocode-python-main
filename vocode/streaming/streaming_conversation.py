@@ -136,15 +136,13 @@ class StreamingConversation(Generic[OutputDeviceType]):
             self.time_silent = 0.0
             self.buffer_avg_confidence = 0.0
             self.num_buffer_utterances = 0
-            self.is_final = False
+            self.is_final = True  # this flag controls if we are accepting new transcriptions, it is regulated by the agent
 
         def get_expected_silence_duration(self, transcript: str):
-            self.openai_client = OpenAI(
-                api_key="EMPTY", base_url=getenv("MISTRAL_API_BASE")
-            )
-            preamble = """You are an amazing live transcript classifier! You will be provided a contextual message and a reply. Your task is to classify, with provided confidence, whether a the provided reply is: 'complete' or 'incomplete'. The reply should be considered 'complete' if it would be considered a valid response to the context message. The message is 'incomplete' if the response is not valid given the context.
+            self.openai_client = OpenAI(api_key="EMPTY", base_url=getenv("AI_API_BASE"))
+            preamble = """You are an amazing live transcript classifier! You will be provided a contextual message and a reply. Your task is to classify, with provided confidence, whether a the provided reply is: 'complete' or 'incomplete'. The reply should be considered 'complete' if it would be considered a valid reply to the context message. The message is 'incomplete' if the reply is likely truncated or is not complete given the context.
 
-Based on which class is demonstrated in the provided message and reply transcript, return the confidence level of your classification on a scale of 1-100 with 100 representing a valid response followed by a space followed by either 'complete', 'incomplete'.
+Based on which class is demonstrated in the provided message and reply transcript, return the confidence level of your classification on a scale of 1-100 with 100 representing full confidence in your chosen classification followed by a space followed by your classifiaction: either 'complete' or 'incomplete'.
 
 The exact format to return is:
 <confidence level> <classification>"""
@@ -170,13 +168,19 @@ The exact format to return is:
                 filter(str.isdigit, response.choices[0].message.content)
             )
             duration_to_return = 0.1
-            logging.error(f"Got classification: {classification}.")
+            logging.error(
+                f"Got classification: {classification} and duration: {silence_duration_1_to_100}"
+            )
             if "incomplete" in classification.lower():
                 duration_to_return = (
-                    float(silence_duration_1_to_100) / INCOMPLETE_SCALING_FACTOR / 100.0
-                )
+                    (float(silence_duration_1_to_100) / 100.0) * MAX_SILENCE_DURATION
+                ) * INCOMPLETE_SCALING_FACTOR
             elif "complete" in classification.lower():
-                duration_to_return = 1.0 - (float(silence_duration_1_to_100) / 100.0)
+                duration_to_return = (
+                    1.0
+                    - ((float(silence_duration_1_to_100) / 100.0))
+                    * MAX_SILENCE_DURATION
+                )
             else:
                 logging.error(
                     f"Unexpected classification: {classification}. Returning max silence duration"
@@ -184,97 +188,97 @@ The exact format to return is:
                 duration_to_return = MAX_SILENCE_DURATION
             return duration_to_return
 
+        async def _buffer_check(self, initial_buffer, expected_silence_duration):
+            await asyncio.sleep(expected_silence_duration)
+            if initial_buffer == self.buffer and not self.is_final:
+                self.conversation.logger.info(
+                    f"Buffer: {self.buffer} unchanged after {expected_silence_duration}s, marking as final"
+                )
+                self.is_final = True
+                self.conversation.transcriber.mute()
+                transcription = Transcription(
+                    message=self.buffer,
+                    confidence=1.0,  # Assuming full confidence as it's not provided
+                    is_final=True,
+                    time_silent=self.time_silent,
+                )
+                self.buffer = ""
+                self.time_silent = 0.0
+                self.conversation.logger.info(
+                    "Transcriber muted, buffer cleared, and time silent reset"
+                )
+                # we use getattr here to avoid the dependency cycle between VonageCall and StreamingConversation
+                event = self.interruptible_event_factory.create_interruptible_event(
+                    TranscriptionAgentInput(
+                        transcription=transcription,
+                        conversation_id=self.conversation.id,
+                        vonage_uuid=getattr(self.conversation, "vonage_uuid", None),
+                        twilio_sid=getattr(self.conversation, "twilio_sid", None),
+                    )
+                )
+                self.output_queue.put_nowait(event)
+                self.conversation.logger.info("Transcription event put in output queue")
+
         async def process(self, transcription: Transcription):
             self.conversation.mark_last_action_timestamp()
-            # self.time_silent += transcription.time_silent
-            if transcription.message.strip() == "":
-                self.conversation.logger.debug("Ignoring empty transcription")
-                return
+            self.conversation.logger.info(
+                f"Processing transcription: {transcription.message}"
+            )
             if self.is_final:
                 self.conversation.logger.debug(
                     "Ignoring transcription since we are in-flight"
                 )
                 return
-            self.time_silent += transcription.time_silent
-            actual_silence_duration = self.time_silent
+            if len(self.buffer) > 0:
+                # only accumulate silence if the buffer is not empty
+                self.time_silent += transcription.time_silent
+            self.conversation.logger.info(f"Time silent: {self.time_silent}s")
+            if transcription.message.strip() == "":
+                self.conversation.logger.debug("Ignoring empty transcription")
+                return
+            else:
+                # if we detect a non-empty transcription, we reset the time silent
+                self.time_silent = 0.0
+            self.buffer = f"{self.buffer} {transcription.message.strip()}"
+            self.conversation.logger.info(f"Buffer updated: {self.buffer}")
 
-            confidence = transcription.confidence
-            if confidence > 0.0:
-                current_message = transcription.message.strip()
-                currentBufferPlusMessage = f"{self.buffer} {current_message}"
-                previousAgentMessage = next(
-                    (
-                        message["content"]
-                        for message in reversed(
-                            format_openai_chat_messages_from_transcript(
-                                self.conversation.transcript
-                            )
+            previousAgentMessage = next(
+                (
+                    message["content"]
+                    for message in reversed(
+                        format_openai_chat_messages_from_transcript(
+                            self.conversation.transcript
                         )
-                        if message["role"] == "assistant"
-                    ),
-                    None,
-                )
-                prettyPrinted = (
-                    f"Context: {previousAgentMessage} Reply: {currentBufferPlusMessage}"
-                )
-                if len(previousAgentMessage) == 0:
-                    self.conversation.logger.debug(
-                        f"Ignoring message that doesn't come after agent message. {prettyPrinted}"
                     )
-                    self.buffer = ""
-                    self.buffer_avg_confidence = 0.0
-                    self.num_buffer_utterances = 0
-                    self.time_silent = 0.0
-                    return
-                expected_silence_duration = self.get_expected_silence_duration(
-                    currentBufferPlusMessage
-                )
-                is_final = actual_silence_duration >= expected_silence_duration
-                if is_final:
-                    self.conversation.transcriber.mute()
-                # log the message classified as well as the expected silence duration and the actual silence duration
+                    if message["role"] == "assistant"
+                ),
+                "The conversation has just started. There are no previous agent messages.",
+            )
+            prettyPrinted = f"Context: {previousAgentMessage} Reply: {self.buffer}"
+            self.conversation.logger.info(
+                f"Formatted message for silence duration prediction: {prettyPrinted}"
+            )
+            expected_silence_duration = self.get_expected_silence_duration(
+                prettyPrinted
+            )
+            self.conversation.logger.info(
+                f"Expected silence duration: {expected_silence_duration}s"
+            )
+
+            if self.time_silent >= expected_silence_duration:
                 self.conversation.logger.info(
-                    f"Message: {prettyPrinted} Expected Silence: {expected_silence_duration} Actual Silence: {actual_silence_duration} Is Final: {is_final}"
+                    "Time silent exceeded expected silence duration"
                 )
-
-                self.buffer = currentBufferPlusMessage
-                if self.buffer_avg_confidence == 0.0:
-                    self.buffer_avg_confidence = confidence
-                else:
-                    self.buffer_avg_confidence = (
-                        self.buffer_avg_confidence
-                        + confidence / (self.num_buffer_utterances)
-                    ) * (self.num_buffer_utterances / (self.num_buffer_utterances + 1))
-                self.num_buffer_utterances += 1
-
-                if is_final and not self.is_final:  # already in flight if so
+                if not self.is_final:
+                    self.conversation.logger.info("Marking transcription as final")
+                    self.is_final = True
                     self.conversation.transcriber.mute()
-                    self.is_final = is_final
                     transcription.message = self.buffer
                     self.buffer = ""
-                    self.conversation.logger.info(
-                        f"Got transcription with confidence: {transcription.confidence} "
-                        f"[{self.agent.agent_config.call_type}:{self.agent.agent_config.current_call_id}] Lead:{transcription.message}"
-                    )
-                    self.buffer_avg_confidence = 0.0
-                    self.num_buffer_utterances = 0
                     self.time_silent = 0.0
-
-                    if (
-                        not self.conversation.is_human_speaking
-                        and self.conversation.is_interrupt(transcription)
-                    ):
-                        self.conversation.current_transcription_is_interrupt = (
-                            self.conversation.broadcast_interrupt()
-                        )
-                        if self.conversation.current_transcription_is_interrupt:
-                            self.conversation.logger.debug("sending interrupt")
-                        self.conversation.logger.debug("Human started speaking")
-
-                    transcription.is_interrupt = (
-                        self.conversation.current_transcription_is_interrupt
+                    self.conversation.logger.info(
+                        "Transcriber muted, buffer cleared, and time silent reset"
                     )
-                    self.conversation.is_human_speaking = not is_final
                     # we use getattr here to avoid the dependency cycle between VonageCall and StreamingConversation
                     event = self.interruptible_event_factory.create_interruptible_event(
                         TranscriptionAgentInput(
@@ -285,9 +289,18 @@ The exact format to return is:
                         )
                     )
                     self.output_queue.put_nowait(event)
-                    self.is_final = False
-            # else:
-            #     self.time_silent += actual_silence_duration
+                    self.conversation.logger.info(
+                        "Transcription event put in output queue"
+                    )
+            else:
+                self.conversation.logger.info(
+                    "Time silent has not exceeded expected silence duration, starting buffer check"
+                )
+                asyncio.create_task(
+                    self._buffer_check(
+                        self.buffer, expected_silence_duration
+                    )  # we put the whole thing in to wait extra
+                )
 
     class FillerAudioWorker(InterruptibleAgentResponseWorker):
         """
@@ -644,6 +657,8 @@ The exact format to return is:
         self.check_for_idle_task = asyncio.create_task(self.check_for_idle())
         if len(self.events_manager.subscriptions) > 0:
             self.events_task = asyncio.create_task(self.events_manager.start())
+        # set transcriber is final to false
+        self.transcriptions_worker.is_final = False
 
     async def send_initial_message(self, initial_message: BaseMessage):
         # TODO: configure if initial message is interruptible
@@ -757,6 +772,8 @@ The exact format to return is:
         if self.transcriber.get_transcriber_config().mute_during_speech:
             self.logger.debug("Muting transcriber")
             self.transcriber.mute()
+            # disable transcriptionworker with is_final
+            self.transcriptions_worker.is_final = True
         message_sent = message
         cut_off = False
         chunk_size = seconds_per_chunk * get_chunk_size_per_second(
@@ -765,6 +782,7 @@ The exact format to return is:
         )
         chunk_idx = 0
         seconds_spoken = 0
+
         async for chunk_result in synthesis_result.chunk_generator:
             start_time = time.time()
             speech_length_seconds = seconds_per_chunk * (
@@ -806,6 +824,7 @@ The exact format to return is:
         if self.transcriber.get_transcriber_config().mute_during_speech:
             self.logger.debug("Unmuting transcriber")
             self.transcriber.unmute()
+            self.transcriptions_worker.is_final = False
         if transcript_message:
             transcript_message.text = message_sent
         return message_sent, cut_off

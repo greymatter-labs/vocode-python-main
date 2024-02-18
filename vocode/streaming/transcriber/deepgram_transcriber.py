@@ -67,9 +67,7 @@ class DeepgramTranscriber(BaseAsyncTranscriber[DeepgramTranscriberConfig]):
         self.is_ready = False
         self.logger = logger or logging.getLogger(__name__)
         self.audio_cursor = 0.0
-        self.openai_client = OpenAI(
-            api_key="EMPTY", base_url=getenv("MISTRAL_API_BASE")
-        )
+        self.openai_client = OpenAI(api_key="EMPTY", base_url=getenv("AI_API_BASE"))
 
     async def _run_loop(self):
         restarts = 0
@@ -111,8 +109,6 @@ class DeepgramTranscriber(BaseAsyncTranscriber[DeepgramTranscriberConfig]):
             "encoding": encoding,
             "sample_rate": self.transcriber_config.sampling_rate,
             "channels": 1,
-            "interim_results": "true",
-            "vad_events": "true",
         }
         extra_params = {}
         if self.transcriber_config.language:
