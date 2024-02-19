@@ -64,10 +64,8 @@ class ChatGPTAgent(RespondAgent[ChatGPTAgentConfig]):
             )
         else:
             # mistral configs
-            self.aclient = AsyncOpenAI(
-                api_key="EMPTY", base_url=getenv("MISTRAL_API_BASE")
-            )
-            self.client = OpenAI(api_key="EMPTY", base_url=getenv("MISTRAL_API_BASE"))
+            self.aclient = AsyncOpenAI(api_key="EMPTY", base_url=getenv("AI_API_BASE"))
+            self.client = OpenAI(api_key="EMPTY", base_url=getenv("AI_API_BASE"))
 
         self.client = OpenAI(api_key="EMPTY", base_url=getenv("MISTRAL_API_BASE"))
         self.fclient = AsyncOpenAI(
