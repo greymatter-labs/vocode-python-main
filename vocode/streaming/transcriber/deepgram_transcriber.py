@@ -130,6 +130,42 @@ class DeepgramTranscriber(BaseAsyncTranscriber[DeepgramTranscriberConfig]):
         url_params.update(extra_params)
         return f"wss://api.deepgram.com/v1/listen?{urlencode(url_params)}"
 
+    # This function will return how long the time silence for endpointing should be
+    def get_classify_endpointing_silence_duration(self, transcript: str):
+        preamble = """You are an amazing live transcript classifier! Your task is to classify, with provided confidence, whether a provided message transcript is: 'complete', 'incomplete' or 'garbled'. The message should be considered 'complete' if it is a full thought or question. The message is 'incomplete' if there is still more the user might add. Finally, the message is 'garbled' if it appears to be a complete transcription attempt but, despite best efforts, the meaning is unclear.
+
+Based on which class is demonstrated in the provided message transcript, return the confidence level of your classification on a scale of 1-100 with 100 being the most confident followed by a space followed by either 'complete', 'incomplete', or 'garbled'.
+
+The exact format to return is:
+<confidence level> <classification>"""
+        user_message = f"{transcript}"
+        messages = [
+            {"role": "system", "content": preamble},
+            {"role": "user", "content": user_message},
+        ]
+        parameters = {
+            "model": "Qwen/Qwen1.5-72B-Chat-GPTQ-Int4",
+            "messages": messages,
+            "max_tokens": 5,
+            "temperature": 0,
+            "stop": ["User:", "\n", "<|im_end|>", "?"],
+        }
+
+        response = self.openai_client.chat.completions.create(**parameters)
+
+        classification = (response.choices[0].message.content.split(" "))[-1]
+        silence_duration_1_to_100 = "".join(
+            filter(str.isdigit, response.choices[0].message.content)
+        )
+        duration_to_return = 0.1
+        if "incomplete" in classification.lower():
+            duration_to_return = (
+                float(silence_duration_1_to_100) / INCOMPLETE_SCALING_FACTOR / 100.0
+            )
+        elif "complete" in classification.lower():
+            duration_to_return = 1.0 - (float(silence_duration_1_to_100) / 100.0)
+        return duration_to_return * MAX_SILENCE_DURATION
+
     def is_speech_final(
         self, current_buffer: str, deepgram_response: dict, time_silent: float
     ):
