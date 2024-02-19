@@ -181,17 +181,20 @@ class ChatGPTAgent(RespondAgent[ChatGPTAgentConfig]):
                 pretty_tool_descriptions = ', '.join(tool_descriptions)
                 chat = self.prepare_chat(latest_agent_response)
                 stringified_messages = str(chat)
-
                 system_message, transcript_message = self.prepare_messages(pretty_tool_descriptions, stringified_messages)
                 chat_parameters = self.get_chat_parameters(messages=[system_message, transcript_message])
+                chat_parameters["model"] = "Qwen/Qwen1.5-72B-Chat-GPTQ-Int4"
+
+                # check whether we should be executing an API call
                 response = await self.aclient.chat.completions.create(**chat_parameters)
                 tool_classification = self.get_tool_classification(response, tools)
 
+                # figure out the correct tool classification to use
                 if tool_classification:
                     return await self.handle_tool_response(chat, tools)
             except Exception as e:
                 self.logger.error(f"An error occurred: {e}")
-                return None
+        return
 
     def get_tools(self):
         return [
@@ -199,7 +202,7 @@ class ChatGPTAgent(RespondAgent[ChatGPTAgentConfig]):
                 "type": "function",
                 "function": {
                     "name": "transfer_call",
-                    "description": "Transfer the call with a reason",
+                    "description": "Triggered when the agent agrees to transfer the call",
                     "parameters": {
                         "type": "object",
                         "properties": {
@@ -367,28 +370,9 @@ class ChatGPTAgent(RespondAgent[ChatGPTAgentConfig]):
 
         if len(all_messages) > 0:
             latest_agent_response = " ".join(filter(None, all_messages))
-            await self.run_nonblocking_checks(latest_agent_response=latest_agent_response)
+            api_function_call = await self.run_nonblocking_checks(latest_agent_response=latest_agent_response)
+            if api_function_call:
+                yield api_function_call, True
             self.logger.info(
                 f"[{self.agent_config.call_type}:{self.agent_config.current_call_id}] Agent: {latest_agent_response}"
             )
-
-    async def transfer_call(self, telephony_id):
-        if self.agent_config.call_type == CallType.INBOUND:
-            company_phone_number = self.agent_config.to_phone_number
-        elif self.agent_config.call_type == CallType.OUTBOUND:
-            company_phone_number = self.agent_config.from_phone_number
-        else:
-            raise ValueError(
-                f"There is no assigned call type for call {self.agent_config.current_call_id}"
-            )
-
-        phone_number_transfer_to = await get_company_primary_phone_number(
-            phone_number=company_phone_number
-        )
-
-        # transfer to the primary number associated with each company; the phone number being called into is
-        # associated to a singular assigned company
-        await transfer_call(
-            telephony_call_sid=telephony_id,
-            phone_number_transfer_to=phone_number_transfer_to,
-        )
