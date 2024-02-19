@@ -677,6 +677,10 @@ class StreamingConversation(Generic[OutputDeviceType]):
             self.transcriber.unmute()
         if transcript_message:
             transcript_message.text = message_sent
+        if isinstance(self.agent, ChatGPTAgent):
+            if self.agent.pending_action:
+                self.agent.yield_action(self.agent.pending_action)
+                self.agent.pending_action = None
         return message_sent, cut_off
 
     def mark_terminated(self):

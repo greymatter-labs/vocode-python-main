@@ -44,6 +44,7 @@ class ChatGPTAgent(RespondAgent[ChatGPTAgentConfig]):
         logger: Optional[logging.Logger] = None,
         openai_api_key: Optional[str] = None,
         vector_db_factory=VectorDBFactory(),
+        pending_action: Optional[FunctionCall] = None,
     ):
         super().__init__(
             agent_config=agent_config, action_factory=action_factory, logger=logger
@@ -68,14 +69,19 @@ class ChatGPTAgent(RespondAgent[ChatGPTAgentConfig]):
             )
             self.client = OpenAI(api_key="EMPTY", base_url=getenv("MISTRAL_API_BASE"))
 
-            # openai.api_type = "open_ai"
-            # openai.api_version = None
+        self.client = OpenAI(api_key="EMPTY", base_url=getenv("MISTRAL_API_BASE"))
+        self.fclient = AsyncOpenAI(
+            api_key="functionary", base_url=getenv("FUNCTIONARY_API_BASE")
+        )
 
-            # chat gpt configs
-            # openai.api_type = "open_ai"
-            # openai.api_base = "https://api.openai.com/v1"
-            # openai.api_version = None
-            # openai.api_key = openai_api_key or getenv("OPENAI_API_KEY")
+        # openai.api_type = "open_ai"
+        # openai.api_version = None
+
+        # chat gpt configs
+        # openai.api_type = "open_ai"
+        # openai.api_base = "https://api.openai.com/v1"
+        # openai.api_version = None
+        # openai.api_key = openai_api_key or getenv("OPENAI_API_KEY")
 
         if not self.client.api_key:
             raise ValueError("OPENAI_API_KEY must be set in environment or passed in")
@@ -174,41 +180,115 @@ class ChatGPTAgent(RespondAgent[ChatGPTAgentConfig]):
 
         return true_conditions
 
-    async def run_nonblocking_checks(self):
-        if self.agent_config.transcript_analyzer_func == "check for spam":
-            telephony_id = await get_telephony_id_from_internal_id(
-                call_id=self.agent_config.current_call_id,
-                call_type=self.agent_config.call_type,
-            )
+    # make a function that yields a function call
+    def yield_function_call(self, function_call: FunctionCall):
+        yield function_call, False
+
+    async def run_nonblocking_checks(self, latest_agent_response: str):
+        tools = self.get_tools()
+        if self.agent_config.actions:
             try:
-                preamble = "You will be given a transcript between a caller and the receiver's assistant. Please classify if the call is a spam or an important conversation that should be transferred to the intended recipient. If it's spam, say 'HANGUP'. If you should transfer, say 'TRANSFER'. If you're not sure, or there's not enough data, say 'NOT SURE'"
-                system_message = {"role": "system", "content": preamble}
-                transcript_message = {
-                    "role": "user",
-                    "content": self.transcript.to_string(),
-                }
+                tool_descriptions = self.format_tool_descriptions(tools)
+                pretty_tool_descriptions = ", ".join(tool_descriptions)
+                chat = self.prepare_chat(latest_agent_response)
+                stringified_messages = str(chat)
 
-                combined_messages = [system_message, transcript_message]
-                chat_parameters = self.get_chat_parameters(messages=combined_messages)
+                system_message, transcript_message = self.prepare_messages(
+                    pretty_tool_descriptions, stringified_messages
+                )
+                chat_parameters = self.get_chat_parameters(
+                    messages=[system_message, transcript_message]
+                )
                 response = await self.aclient.chat.completions.create(**chat_parameters)
+                tool_classification = self.get_tool_classification(response, tools)
 
-                spam_classification = response.choices[0].message.content
-
-                if "TRANSFER" in spam_classification:
-                    self.logger.info("I am now transferring the call")
-                    await self.transfer_call(telephony_id=telephony_id)
-                elif "HANGUP" in spam_classification:
-                    self.logger.info(
-                        f"I am now hanging up because this call {self.agent_config.current_call_id} is spam"
-                    )
-                    await hangup_twilio_call(
-                        call_sid=telephony_id, call_type=self.agent_config.call_type
-                    )
-                else:
-                    self.logger.info("I'm not sure if this call is spam yet")
+                if tool_classification:
+                    await self.handle_tool_response(chat, tools)
             except Exception as e:
                 self.logger.error(f"An error occurred: {e}")
-        return
+                return None
+
+    def get_tools(self):
+        return [
+            {
+                "type": "function",
+                "function": {
+                    "name": "transfer_call",
+                    "description": "Transfer the call with a reason",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "transfer_reason": {
+                                "type": "string",
+                                "description": "The reason for transferring the call, limited to 120 characters",
+                            }
+                        },
+                        "required": ["transfer_reason"],
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "hangup_call",
+                    "description": "Hangup the call if the assistant says goodbye",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "end_reason": {
+                                "type": "string",
+                                "description": "The reason for ending the call, limited to 120 characters",
+                            }
+                        },
+                        "required": ["end_reason"],
+                    },
+                },
+            },
+        ]
+
+    def format_tool_descriptions(self, tools):
+        return [
+            f"'{tool['function']['name']}': {tool['function']['description']} (Required params: {', '.join(tool['function']['parameters']['required'])})"
+            for tool in tools
+        ]
+
+    def prepare_chat(self, latest_agent_response):
+        chat = format_openai_chat_messages_from_transcript(self.transcript)[1:]
+        chat[-1] = {"role": "assistant", "content": latest_agent_response}
+        return chat
+
+    def prepare_messages(self, pretty_tool_descriptions, stringified_messages):
+        preamble = f"""You will be provided with a conversational transcript between a caller and the receiver's 
+        assistant. During the conversation, the assistant has the following actions it can 
+        take: {pretty_tool_descriptions}.\n 
+        Your task is to infer whether, currently, the assistant is waiting for the caller to respond, or is 
+        immediately going to execute an action without waiting for a response. Return the action name from the list 
+        provided if the assistant is executing an action. If the assistant is waiting for a response, return 'None'. 
+        Return a single word."""
+        system_message = {"role": "system", "content": preamble}
+        transcript_message = {"role": "user", "content": stringified_messages}
+        return system_message, transcript_message
+
+    def get_tool_classification(self, response, tools):
+        tool_classification = response.choices[0].message.content.lower().strip()
+        self.logger.info(f"Tool classification: {tool_classification}")
+        return tool_classification in [
+            tool["function"]["name"].lower() for tool in tools
+        ]
+
+    async def handle_tool_response(self, chat, tools):
+        tool_response = await self.fclient.chat.completions.create(
+            model="meetkai/functionary-small-v2.2",
+            messages=chat,
+            tools=tools,
+            tool_choice="auto",
+        )
+        tool_response = tool_response.choices[0]
+        if tool_response.message.tool_calls:
+            tool_call = tool_response.message.tool_calls[0]
+            self.pending_action = FunctionCall(
+                name=tool_call.function.name, arguments=tool_call.function.arguments
+            )
 
     async def respond(
         self,
@@ -306,7 +386,9 @@ class ChatGPTAgent(RespondAgent[ChatGPTAgentConfig]):
 
         if len(all_messages) > 0:
             latest_agent_response = " ".join(filter(None, all_messages))
-            await self.run_nonblocking_checks()
+            await self.run_nonblocking_checks(
+                latest_agent_response=latest_agent_response
+            )
             self.logger.info(
                 f"[{self.agent_config.call_type}:{self.agent_config.current_call_id}] Agent: {latest_agent_response}"
             )
