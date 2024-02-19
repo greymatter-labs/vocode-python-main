@@ -204,9 +204,6 @@ The exact format to return is:
                 )
                 self.buffer = ""
                 self.time_silent = 0.0
-                self.conversation.logger.info(
-                    "Transcriber muted, buffer cleared, and time silent reset"
-                )
                 # we use getattr here to avoid the dependency cycle between VonageCall and StreamingConversation
                 event = self.interruptible_event_factory.create_interruptible_event(
                     TranscriptionAgentInput(
@@ -225,9 +222,6 @@ The exact format to return is:
 
         async def process(self, transcription: Transcription):
             self.conversation.mark_last_action_timestamp()
-            self.conversation.logger.info(
-                f"Processing transcription: {transcription.message}"
-            )
             if self.is_final:
                 self.conversation.logger.debug(
                     "Ignoring transcription since we are in-flight"
@@ -244,7 +238,6 @@ The exact format to return is:
                 # if we detect a non-empty transcription, we reset the time silent
                 self.time_silent = 0.0
             self.buffer = f"{self.buffer} {transcription.message.strip()}"
-            self.conversation.logger.info(f"Buffer updated: {self.buffer}")
 
             previous_agent_message = next(
                 (
@@ -259,30 +252,18 @@ The exact format to return is:
                 "The conversation has just started. There are no previous agent messages.",
             )
             pretty_printed = f"Context: {previous_agent_message} Reply: {self.buffer}"
-            self.conversation.logger.info(
-                f"Formatted message for silence duration prediction: {pretty_printed}"
-            )
+
             expected_silence_duration = self.get_expected_silence_duration(
                 pretty_printed
             )
-            self.conversation.logger.info(
-                f"Expected silence duration: {expected_silence_duration}s"
-            )
 
             if self.time_silent >= expected_silence_duration:
-                self.conversation.logger.info(
-                    "Time silent exceeded expected silence duration"
-                )
                 if not self.is_final:
-                    self.conversation.logger.info("Marking transcription as final")
                     self.is_final = True
                     self.conversation.transcriber.mute()
                     transcription.message = self.buffer
                     self.buffer = ""
                     self.time_silent = 0.0
-                    self.conversation.logger.info(
-                        "Transcriber muted, buffer cleared, and time silent reset"
-                    )
                     # we use getattr here to avoid the dependency cycle between VonageCall and StreamingConversation
                     event = self.interruptible_event_factory.create_interruptible_event(
                         TranscriptionAgentInput(
@@ -298,11 +279,11 @@ The exact format to return is:
                     )
             else:
                 self.conversation.logger.info(
-                    "Time silent has not exceeded expected silence duration, starting buffer check"
+                    "Transcription possibly incomplete, starting buffer check"
                 )
                 asyncio.create_task(
                     self._buffer_check(
-                        self.buffer, expected_silence_duration-self.time_silent
+                        self.buffer, expected_silence_duration - self.time_silent
                     )
                 )
 
