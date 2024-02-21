@@ -416,7 +416,11 @@ class ChatGPTAgent(RespondAgent[ChatGPTAgentConfig]):
                                         ):
                                             message = choice["delta"]["content"]
                                             # if it contains any punctuation besides a comma, yield the buffer and the message and reset it
-                                            if any(p in message for p in ".!?"):
+                                            # also check if, on split by space, it is longer than 2 words
+                                            if (
+                                                any(p in message for p in ".!?")
+                                                and len(message.split(" ")) > 2
+                                            ):
                                                 messageBuffer += message
                                                 all_messages.append(messageBuffer)
                                                 yield messageBuffer, True
@@ -427,6 +431,10 @@ class ChatGPTAgent(RespondAgent[ChatGPTAgentConfig]):
                                                 "finish_reason" in choice
                                                 and choice["finish_reason"] == "stop"
                                             ):
+                                                if len(messageBuffer) > 0:
+                                                    all_messages.append(messageBuffer)
+                                                    yield messageBuffer, True
+                                                    messageBuffer = ""
                                                 break
                             except json.JSONDecodeError:
                                 # self.logger.error(
