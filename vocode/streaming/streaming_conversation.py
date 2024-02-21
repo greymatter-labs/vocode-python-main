@@ -854,11 +854,29 @@ If Speaker B did not completely respond to Speaker A, return "bad". Otherwise, i
             self.transcriptions_worker.is_final = False
         if transcript_message:
             transcript_message.text = message_sent
-        # check if we should execute an action after it has been spoken
-        if isinstance(self.agent, ChatGPTAgent):
-            if self.agent.agent_config.pending_action:
-                self.agent.yield_function_call(self.agent.pending_action)
-                self.agent.pending_action = None
+
+            # check if we should execute an action after it has been spoken
+            if isinstance(self.agent, ChatGPTAgent):
+                self.logger.info(
+                    f"The pending action is {self.agent.agent_config.pending_action}"
+                    f" and the current transcript text is {transcript_message.text}"
+                )
+                if self.agent.agent_config.pending_action:
+                    await self.agent.call_function(
+                        self.agent.agent_config.pending_action,
+                        TranscriptionAgentInput(
+                            transcription=Transcription(
+                                message=transcript_message.text,
+                                confidence=1.0,
+                                is_final=True,
+                                time_silent=0.0,
+                            ),
+                            conversation_id=self.id,
+                            vonage_uuid=getattr(self, "vonage_uuid", None),
+                            twilio_sid=getattr(self, "twilio_sid", None),
+                        ),
+                    )
+                    self.agent.pending_action = None
         return message_sent, cut_off
 
     def mark_terminated(self):
