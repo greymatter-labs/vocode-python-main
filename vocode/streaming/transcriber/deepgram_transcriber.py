@@ -110,6 +110,7 @@ class DeepgramTranscriber(BaseAsyncTranscriber[DeepgramTranscriberConfig]):
             "channels": 1,
             "vad_events": "true",
             "interim_results": "true",
+            "filler_words": "true",
         }
         extra_params = {}
         if self.transcriber_config.language:

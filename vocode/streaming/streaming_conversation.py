@@ -167,9 +167,10 @@ class StreamingConversation(Generic[OutputDeviceType]):
                     and self.buffer[0]["start"] == new_results[0]["start"]
                 ):
                     self.buffer = new_results
-                for new_word in new_results:
-                    self._update_or_add_word(new_word)
-                self._merge_and_clean_buffer()
+                else:
+                    for new_word in new_results:
+                        self._update_or_add_word(new_word)
+                    self._merge_and_clean_buffer()
 
         def _update_or_add_word(self, new_word):
             overlap_indices = []
@@ -1160,6 +1161,8 @@ The user will send you the dialogue and you must return a single word, either: "
                         num_interrupts += 1
             except queue.Empty:
                 break
+        self.transcriber.unmute()
+        self.transcriptions_worker.is_final = False
         self.agent.clear_task_queue()
         self.agent_responses_worker.clear_task_queue()
         self.synthesis_results_worker.clear_task_queue()
@@ -1244,7 +1247,7 @@ The user will send you the dialogue and you must return a single word, either: "
             # Proceed if no buffer check task is found
             self.logger.debug("No buffer check task found, proceeding without waiting.")
 
-        held_buffer = self.transcriptions_worker.buffer
+        held_buffer = self.transcriptions_worker.buffer.to_message()
 
         # Log the start of sending synthesized speech to the output device
         self.logger.debug("Sending in synth buffer")
@@ -1284,6 +1287,7 @@ The user will send you the dialogue and you must return a single word, either: "
             self.logger.info(
                 f"[{self.agent.agent_config.call_type}:{self.agent.agent_config.current_call_id}] Agent: {message_sent}"
             )
+            self.logger.info(f"Responding to {held_buffer}")
 
         # If a transcript message is provided, update its text with the message sent
         if transcript_message:
