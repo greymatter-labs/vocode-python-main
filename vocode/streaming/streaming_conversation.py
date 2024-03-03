@@ -262,132 +262,85 @@ class StreamingConversation(Generic[OutputDeviceType]):
                 ),
                 "The conversation has just started. There are no previous agent messages.",
             )
-            pretty_printed = f"""Speaker A: {previous_agent_message}
-Speaker B: {buffer}"""
+
             # Define a constant for max silence time
             MAX_SILENCE_TIME = MAX_SILENCE_DURATION
 
-            # Define the prompt for the classification task
-            prompt = [
-                f"""<|im_start|>system 
-Analyze the provided dialogue and classify whether Speaker B provided a good or bad response to Speaker A. For instance, if Speaker A asks for a X and Y and Speaker B only provides Y, the response is bad. If Speaker B provides both X and Y, the response is good.
-For instance, let's say Speaker A says "Can I have your phone number?" and Speaker B responds with "650434". This would be a bad response because the phone number is incomplete.
-If Speaker A were to say "What's your date of birth?" and Speaker B were to respond with "january 1st" this would be a bad response because the date is incomplete.
-If Speaker A were to say "Why are you calling?" and Speaker B were to respond with "hello im calling" this would be a bad response because the response is incomplete.
-If Speaker A were to say "What's your favorite color?" and Speaker B were to respond with "blue" this would be a good response because the response is complete.
-If Speaker A were to say "What's your favorite color?" and Speaker B were to respond with "its been blue ever since i was little" this would actually be a bad response because the response implies they are going to continue talking about their favorite color.
-If Speaker A were to say "How are you doing today?" and Speaker B were to respond with "ugh shit went down on the way to work" this would also be a bad response because there is an implication they are going to expand on that.
-
-The user will send you the dialogue and you must return a single word, either: "good" or "bad".<|im_end|>
-<|im_start|>user 
-{pretty_printed}<|im_end|>
-<|im_start|>assistant
-""",
-            ]
-
-            # Get the model to use for the completion
-            model = getenv("AI_MODEL_NAME_LARGE")
-
             # Prepare the data for the POST request
             data = {
-                "model": model,
-                "prompt": prompt,
-                "max_tokens": 1,
-                "temperature": 1,
-                "logprobs": 10,
+                "question": previous_agent_message,
+                "response": buffer,
             }
 
             # Prepare headers for the POST request
             headers = {
                 "Content-Type": "application/json",
-                "Authorization": f"Bearer 'EMPTY'",
             }
-            base_url = getenv("AI_API_BASE")
-
-            if pretty_printed in self.silenceCache:
-                self.conversation.logger.info(
-                    f"Using cached silence duration for {pretty_printed}"
-                )
-                self.silenceCache[pretty_printed] = (
-                    self.silenceCache[pretty_printed] * 0.5
-                )
-                return self.silenceCache[pretty_printed] / 3
-            elif len(buffer.strip().split()) == 1:
-                self.conversation.logger.info(
-                    f"Single word buffer, waiting two seconds."
-                )
-                self.silenceCache[pretty_printed] = 5.0
-                return 2.0
-
+            self.conversation.logger.debug(
+                f"Sending classification request with data: {data}"
+            )
             # Perform the POST request to classify the dialogue asynchronously
             async with aiohttp.ClientSession() as session:
                 async with session.post(
-                    f"{base_url}/completions", headers=headers, json=data
+                    "http://148.64.105.83:58000/inference/", headers=headers, json=data
                 ) as response:
                     if response.status == 200:
                         response_data = await response.json()
-                        # Extract the content and the log probabilities
-                        content = response_data["choices"][0]["text"].strip()
-                        top_logprobs = response_data["choices"][0]["logprobs"][
-                            "top_logprobs"
-                        ][0]
+                        classification = response_data["classification"]
+                        confidence = response_data["confidence"]
 
-                        # Initialize a dictionary to hold the sum of log probabilities for 'bad' and 'good'
-                        summed_logprobs = {"bad": 0, "good": 0}
-
-                        # Sum the log probabilities for each classification starting with 'b' or 'g'
-                        for classification, logprob in top_logprobs.items():
-                            if classification.strip().lower().startswith("ba"):
-                                summed_logprobs["bad"] += math.exp(logprob)
-                            elif classification.strip().lower().startswith("go"):
-                                summed_logprobs["good"] += math.exp(logprob)
-
-                        # Determine the most likely classification based on the summed log probabilities
-                        if summed_logprobs["bad"] > summed_logprobs["good"]:
-                            final_classification = "bad"
-                            confidence = summed_logprobs["bad"] / (
-                                summed_logprobs["bad"] + summed_logprobs["good"]
+                        # Handle the classification cases and calculate expected silence duration
+                        if classification == "paused":
+                            # In the paused case, we do the filler word and wait based on confidence
+                            expected_silence_duration = confidence * MAX_SILENCE_TIME
+                            self.last_classification = "paused"
+                            self.conversation.logger.debug(
+                                f"Classification: {classification}, Confidence: {confidence}, Expected silence: {expected_silence_duration}"
                             )
-                        else:
-                            final_classification = "good"
-                            confidence = summed_logprobs["good"] / (
-                                summed_logprobs["good"] + summed_logprobs["bad"]
+                            self.conversation.logger.debug(
+                                f"It's been {time.time() - self.last_filler_time} seconds since the last filler"
                             )
-
-                        # Send out filler audio for "mmhm" to the output device
-                        if final_classification == "bad":
-                            expected_silence_duration = (
-                                confidence**20 * MAX_SILENCE_TIME
-                            )
-                            self.last_classification = "bad"
-                            if self.last_classification == "bad":
+                            # only do it if more than 2.5 seconds have passed since the last one
+                            if (
+                                time.time() - self.last_filler_time > 4
+                                and time.time() - self.last_affirmative_time > 4
+                                and confidence > 0.85
+                                and len(buffer.strip().split()) > 3
+                            ):
                                 self.conversation.logger.debug(
-                                    f"It's been {time.time() - self.last_filler_time} seconds since the last filler"
+                                    "Sending filler audio for pause"
                                 )
-                                # only do it if more than 2.5 seconds have passed since the last one
-                                if (
-                                    time.time() - self.last_filler_time > 3
-                                    and time.time() - self.last_affirmative_time > 4
-                                    and confidence**200 > 0.85
-                                ):
-                                    self.conversation.agent_responses_worker.send_filler_audio(
-                                        asyncio.Event()
-                                    )
-                                    self.last_filler_time = time.time()
-                        else:
+                                self.conversation.agent_responses_worker.send_filler_audio(
+                                    asyncio.Event()
+                                )
+                                self.last_filler_time = time.time()
+                            return expected_silence_duration
+                        elif classification == "full":
+                            # In the full case, it's a good response and we wait based on inverted confidence
                             expected_silence_duration = (
-                                1 - confidence**200
+                                1 - confidence
                             ) * MAX_SILENCE_TIME
-                            self.last_classification = "good"
-                        self.conversation.logger.debug(
-                            f"Dialogue classified as {final_classification} with confidence {round(confidence * 100, 2)}%"
-                        )
-                        # Return the result and the expected silence duration
-                        self.silenceCache[pretty_printed] = expected_silence_duration
-                        return round(expected_silence_duration, 2)
+                            self.last_classification = "full"
+                            self.conversation.logger.debug(
+                                f"Classification: {classification}, Confidence: {confidence}, Expected silence: {expected_silence_duration}"
+                            )
+                            return expected_silence_duration
+                        elif classification == "truncated":
+                            # In the truncated case, we say no filler word and we wait on confidence
+                            expected_silence_duration = confidence * MAX_SILENCE_TIME
+                            self.last_classification = "truncated"
+                            self.conversation.logger.debug(
+                                f"Classification: {classification}, Confidence: {confidence}, Expected silence: {expected_silence_duration}"
+                            )
+                            return expected_silence_duration
+                        else:
+                            self.conversation.logger.error(
+                                f"Unexpected classification received: {classification}"
+                            )
+                            return 0.0
                     else:
-                        logging.error(
-                            f"Failed to classify the dialogue: {response.status} - {await response.text()}"
+                        self.conversation.logger.error(
+                            f"Failed to get classification, status code: {response.status}"
                         )
                         return 0.0
 
@@ -417,35 +370,22 @@ The user will send you the dialogue and you must return a single word, either: "
             self.conversation.logger.info(
                 f"Classification took: {elapsed_time_duration}\nSleep duration: {self.current_sleep_time}"
             )
-            if (
-                self.current_sleep_time >= 0.1  # last edit
-                # and time.time() - self.last_filler_time > 1.5
-                and len(initial_buffer.strip().split()) > 2
-            ):
-                # choose the affirmative phrase
-                self.chosen_affirmative_phrase = random.choice(
-                    self.conversation.synthesizer.affirmative_audios
-                ).message.text
-                # Create an interruptible event with the transcription data
-                event = self.interruptible_event_factory.create_interruptible_event(
-                    payload=TranscriptionAgentInput(
-                        transcription=transcription,
-                        affirmative_phrase=self.chosen_affirmative_phrase,
-                        conversation_id=self.conversation.id,
-                        vonage_uuid=getattr(self.conversation, "vonage_uuid", None),
-                        twilio_sid=getattr(self.conversation, "twilio_sid", None),
-                    ),
-                )
-            else:
-                # Create an interruptible event with the transcription data
-                event = self.interruptible_event_factory.create_interruptible_event(
-                    payload=TranscriptionAgentInput(
-                        transcription=transcription,
-                        conversation_id=self.conversation.id,
-                        vonage_uuid=getattr(self.conversation, "vonage_uuid", None),
-                        twilio_sid=getattr(self.conversation, "twilio_sid", None),
-                    ),
-                )
+            # choose the affirmative phrase
+            self.chosen_affirmative_phrase = random.choice(
+                self.conversation.synthesizer.affirmative_audios
+            ).message.text
+
+            # Create an interruptible event with the transcription data
+            event = self.interruptible_event_factory.create_interruptible_event(
+                payload=TranscriptionAgentInput(
+                    transcription=transcription,
+                    affirmative_phrase=self.chosen_affirmative_phrase,
+                    conversation_id=self.conversation.id,
+                    vonage_uuid=getattr(self.conversation, "vonage_uuid", None),
+                    twilio_sid=getattr(self.conversation, "twilio_sid", None),
+                ),
+            )
+
             sleeping_time = self.current_sleep_time
 
             # Place the event in the output queue for further processing
@@ -469,11 +409,13 @@ The user will send you the dialogue and you must return a single word, either: "
                     and len(initial_buffer.strip().split()) > 3
                     and time.time() - self.last_affirmative_time > 3
                     and not self.triggered_affirmative
+                    and self.last_classification == "full"
                 ) or (
-                    self.time_silent > 1.5
+                    self.time_silent > 0.5
                     and not self.triggered_affirmative
                     and time.time() - self.last_filler_time > 1.5
                     and time.time() - self.last_affirmative_time > 1.5
+                    and self.last_classification == "full"
                 ):
                     self.triggered_affirmative = True
 
@@ -495,9 +437,10 @@ The user will send you the dialogue and you must return a single word, either: "
                     )
                     self.current_sleep_time = 0.02
                     if (
-                        not self.triggered_affirmative
-                        and time.time() - self.last_filler_time > 2.0
+                        # self.time_silent > 0.5
+                        time.time() - self.last_filler_time > 1.0
                         and time.time() - self.last_affirmative_time > 2.0
+                        # and self.time_silent > 0.5
                     ):
                         self.triggered_affirmative = True
                         self.conversation.agent_responses_worker.send_affirmative_audio(
@@ -517,13 +460,14 @@ The user will send you the dialogue and you must return a single word, either: "
                     time_since_last_log = 0.0
                 if self.synthesis_done:
                     # self.conversation.logger.info("Synthesis done, still sleeping")
-                    self.last_affirmative_time = time.time()
                     if (
-                        time.time() - self.last_filler_time > 2.0
+                        time.time() - self.last_filler_time > 1.0
                         and time.time() - self.last_affirmative_time > 2.0
-                        and not self.triggered_affirmative
+                        and self.time_silent > 0.5
+                        # and not self.last_classification == "paused"
                     ):
                         self.triggered_affirmative = True
+                        self.last_affirmative_time = time.time()
 
                         # self.conversation.logger.info(
                         #     f"Sending affirmative audio, sleeping time: {self.current_sleep_time}"
@@ -535,6 +479,7 @@ The user will send you the dialogue and you must return a single word, either: "
                             asyncio.Event(),
                             phrase=self.chosen_affirmative_phrase,
                         )
+                        self.last_affirmative_time = time.time()
 
             self.conversation.logger.info(f"Marking as send")
             self.ready_to_send = BufferStatus.SEND
@@ -782,24 +727,13 @@ The user will send you the dialogue and you must return a single word, either: "
                         self.conversation.filler_audio_worker.interrupt_current_filler_audio()
                     ):
                         await self.conversation.filler_audio_worker.wait_for_filler_audio_to_finish()
-                if str(agent_response_message.message) in self.convoCache:
-                    self.conversation.logger.info(
-                        f"Using cached synthesis result for {str(agent_response_message.message)}"
-                    )
-                    synthesis_result = self.convoCache[
-                        str(agent_response_message.message)
-                    ]
-                else:
-                    synthesis_result = (
-                        await self.conversation.synthesizer.create_speech(
-                            agent_response_message.message,
-                            self.chunk_size,
-                            bot_sentiment=self.conversation.bot_sentiment,
-                        )
-                    )
-                    self.convoCache[str(agent_response_message.message)] = (
-                        synthesis_result
-                    )
+
+                synthesis_result = await self.conversation.synthesizer.create_speech(
+                    agent_response_message.message,
+                    self.chunk_size,
+                    bot_sentiment=self.conversation.bot_sentiment,
+                )
+                self.convoCache[str(agent_response_message.message)] = synthesis_result
                 self.produce_interruptible_agent_response_event_nonblocking(
                     (agent_response_message.message, synthesis_result),
                     is_interruptible=item.is_interruptible,
@@ -881,6 +815,9 @@ The user will send you the dialogue and you must return a single word, either: "
                     return
 
                 # Once the speech output is complete, publish the transcript message with the actual content spoken.
+                transcript_message.text = transcript_message.text.replace("um, ", "")
+                # split on < and truncate there
+                transcript_message.text = transcript_message.text.split("<")[0].strip()
                 self.conversation.transcript.maybe_publish_transcript_event_from_message(
                     message=transcript_message,
                     conversation_id=self.conversation.id,
@@ -1158,7 +1095,7 @@ The user will send you the dialogue and you must return a single word, either: "
             except queue.Empty:
                 break
         self.transcriber.unmute()
-        self.transcriptions_worker.is_final = False
+        self.transcriptions_worker.block_inputs = False
         self.agent.clear_task_queue()
         self.agent_responses_worker.clear_task_queue()
         self.synthesis_results_worker.clear_task_queue()
@@ -1227,12 +1164,12 @@ The user will send you the dialogue and you must return a single word, either: "
                 if self.transcriptions_worker.buffer_check_task.cancelled():
                     self.logger.debug("Buffer check task was cancelled.")
                     return "", False
-                # Handle non-send status after buffer check completion
-                elif self.transcriptions_worker.ready_to_send != BufferStatus.SEND:
-                    self.logger.debug(
-                        "Buffer check completed but buffer status is not SEND."
-                    )
-                    return "", False
+                # # Handle non-send status after buffer check completion
+                # elif self.transcriptions_worker.ready_to_send != BufferStatus.SEND:
+                #     self.logger.debug(
+                #         "Buffer check completed but buffer status is not SEND."
+                #     )
+                #     return "", False
             except asyncio.CancelledError:
                 # Handle external cancellation of the buffer check task
                 self.logger.debug(
@@ -1297,13 +1234,20 @@ The user will send you the dialogue and you must return a single word, either: "
         # Reset the synthesis done flag and prepare for the next synthesis
         self.transcriptions_worker.synthesis_done = False
 
-        # Unmute the transcriber after speech synthesis if it was muted
-        if self.transcriber.get_transcriber_config().mute_during_speech:
-            self.logger.debug("Unmuting transcriber")
-            self.transcriber.unmute()
-
         # Reset the transcription worker's flags and buffer status
-        self.transcriptions_worker.block_inputs = False
+        # check if there is more in the queue making this one be called again, if so, dont unblock
+        if (
+            self.synthesis_results_queue.qsize() == 0
+            and self.agent_responses_worker.input_queue.qsize() == 0
+            and self.agent_responses_worker.output_queue.qsize() == 0
+            and self.agent.get_input_queue().qsize() == 0
+            and self.agent.get_output_queue().qsize() == 0
+        ):
+            self.transcriptions_worker.block_inputs = False
+            # Unmute the transcriber after speech synthesis if it was muted
+            if self.transcriber.get_transcriber_config().mute_during_speech:
+                self.logger.debug("Unmuting transcriber")
+                self.transcriber.unmute()
         self.transcriptions_worker.ready_to_send = BufferStatus.DISCARD
         if transcript_message:
             transcript_message.text = message_sent

@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+import random
 
 from typing import Any, Dict, List, Optional, Tuple, Union
 
@@ -357,90 +358,100 @@ class ChatGPTAgent(RespondAgent[ChatGPTAgentConfig]):
         affirmative_phrase: Optional[str],
         conversation_id: str,
         is_interrupt: bool = False,
+        stream_output: bool = True,
     ) -> AsyncGenerator[Tuple[Union[str, FunctionCall], bool], None]:
         if is_interrupt and self.agent_config.cut_off_response:
             cut_off_response = self.get_cut_off_response()
             yield cut_off_response, False
             return
         assert self.transcript is not None
-        chat_parameters = {}
         self.logger.debug(f"COMPLETION IS RESPONDING")
 
-        if self.agent_config.vector_db_config:
-            try:
-                vector_db_search_args = {
-                    "query": self.transcript.get_last_user_message()[1],
-                }
-
-                has_vector_config_namespace = getattr(
-                    self.agent_config.vector_db_config, "namespace", None
-                )
-                if has_vector_config_namespace:
-                    vector_db_search_args[
-                        "namespace"
-                    ] = self.agent_config.vector_db_config.namespace.lower().replace(
-                        " ", "_"
-                    )
-
-                docs_with_scores = await self.vector_db.similarity_search_with_score(
-                    **vector_db_search_args
-                )
-                docs_with_scores_str = "\n\n".join(
-                    [
-                        "Document: "
-                        + doc[0].metadata["source"]
-                        + f" (Confidence: {doc[1]})\n"
-                        + doc[0].lc_kwargs["page_content"].replace(r"\n", "\n")
-                        for doc in docs_with_scores
-                    ]
-                )
-                vector_db_result = f"Found {len(docs_with_scores)} similar documents:\n{docs_with_scores_str}"
-                formatted_completion = format_openai_chat_completion_from_transcript(
-                    self.transcript, self.agent_config.prompt_preamble
-                )
-                messages = format_openai_chat_messages_from_transcript(
-                    self.transcript, self.agent_config.prompt_preamble
-                )
-                messages.insert(
-                    -1, vector_db_result_to_openai_chat_message(vector_db_result)
-                )
-                chat_parameters = self.get_chat_parameters(messages)
-            except Exception as e:
-                self.logger.error(f"Error while hitting vector db: {e}", exc_info=True)
-                chat_parameters = self.get_chat_parameters()
-        else:
-            chat_parameters = self.get_completion_parameters(
-                affirmative_phrase=affirmative_phrase
-            )
+        chat_parameters = self.get_completion_parameters(
+            affirmative_phrase=affirmative_phrase
+        )
 
         # Prepare headers and data for the POST request
         headers = {
             "Content-Type": "application/json",
             "Authorization": f"Bearer 'EMPTY'",
         }
-        data = {
-            "model": chat_parameters["model"],
-            "prompt": chat_parameters["prompt"],
-            "stream": False,
-            "stop": ["?", "\n"],
-            "max_tokens": 100,
-            "include_stop_str_in_output": True,
-        }
+        prompt_buffer = chat_parameters["prompt"]
+        completion_buffer = ""
+        punctuation_marks = [".", ",", "!", "?"]
+        tokens_to_generate = 30
+        max_tokens = 100
+        stop = punctuation_marks + ["\n"]
+
         async with aiohttp.ClientSession() as session:
             base_url = getenv("AI_API_BASE")
-            async with session.post(
-                f"{base_url}/completions", headers=headers, json=data
-            ) as response:
-                if response.status == 200:
-                    response_data = await response.json()
-                    # Extract the content and the log probabilities
-                    content = response_data["choices"][0]["text"].strip()
-                    yield content, True
-                    content = f"{affirmative_phrase} {content}"
-                else:
-                    self.logger.error(
-                        f"Error while streaming from OpenAI: {response.status}"
-                    )
+            while max_tokens > 0:
+                data = {
+                    "model": chat_parameters["model"],
+                    "prompt": prompt_buffer + completion_buffer,
+                    "stream": False,
+                    "stop": stop,
+                    "max_tokens": tokens_to_generate,
+                    "include_stop_str_in_output": True,
+                }
+                async with session.post(
+                    f"{base_url}/completions", headers=headers, json=data
+                ) as response:
+                    if response.status == 200:
+                        response_data = await response.json()
+                        content = response_data["choices"][0]["text"].strip()
+                        completion_buffer += content
+                        max_tokens -= tokens_to_generate
+
+                        # Fake a generator by yielding segments one by one
+                        while completion_buffer:
+                            segment = ""
+                            for punctuation in punctuation_marks:
+                                if punctuation in completion_buffer:
+                                    segment, _, completion_buffer = (
+                                        completion_buffer.partition(punctuation)
+                                    )
+                                    segment += punctuation
+                                    break
+                            if (
+                                not segment
+                            ):  # No punctuation found, take the whole buffer
+                                segment = completion_buffer
+                                completion_buffer = ""
+                            prompt_buffer += segment
+                            if stream_output:
+                                # Add random stuff to the segment if it's too short and doesn't end with a question mark or newline
+                                if len(segment.split(" ")) < 3 and segment[-1] not in [
+                                    "?",
+                                    "\n",
+                                ]:
+                                    random_filler = random.choice(
+                                        [
+                                            "um,",
+                                        ]
+                                    )
+                                    segment = f"{random_filler} {segment}"
+
+                                self.logger.debug(f"Yielding segment: {segment}")
+                                yield segment, False
+
+                                # If the segment ends in a question mark or newline, return
+                                if segment[-1] in ["?", "\n"]:
+                                    return
+                                else:
+                                    # if it didn't end in a question mark, set stop to just a question mark
+                                    stop = ["?"]
+
+                    else:
+                        self.logger.error(
+                            f"Error while streaming from OpenAI: {response.status}"
+                        )
+                        break
+
+            # # After the loop, yield any remaining content
+            # if stream_output and completion_buffer:
+            #     self.logger.debug(f"Yielding remaining content: {completion_buffer}")
+            #     yield completion_buffer, True
 
     async def generate_response(
         self,
