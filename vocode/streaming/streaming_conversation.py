@@ -411,7 +411,7 @@ class StreamingConversation(Generic[OutputDeviceType]):
                     and not self.triggered_affirmative
                     and self.last_classification == "full"
                 ) or (
-                    self.time_silent > 0.5
+                    self.time_silent > 0.7
                     and not self.triggered_affirmative
                     and time.time() - self.last_filler_time > 1.5
                     and time.time() - self.last_affirmative_time > 1.5
@@ -1220,11 +1220,6 @@ class StreamingConversation(Generic[OutputDeviceType]):
 
         # Update the message sent with the actual content spoken
         message_sent = synthesis_result.get_message_up_to(len(speech_data) / chunk_size)
-        if message_sent and not cut_off:
-            self.logger.info(
-                f"[{self.agent.agent_config.call_type}:{self.agent.agent_config.current_call_id}] Agent: {message_sent}"
-            )
-            self.logger.info(f"Responding to {held_buffer}")
 
         # If a transcript message is provided, update its text with the message sent
         if transcript_message:
@@ -1242,7 +1237,28 @@ class StreamingConversation(Generic[OutputDeviceType]):
             and self.agent_responses_worker.output_queue.qsize() == 0
             and self.agent.get_input_queue().qsize() == 0
             and self.agent.get_output_queue().qsize() == 0
+            # it must also end in punctuation
         ):
+            if (
+                message_sent
+                and not cut_off
+                and message_sent.strip()[-1] in [".", "!", "?"]
+            ):
+
+                last_agent_message = next(
+                    (
+                        message["content"]
+                        for message in reversed(
+                            format_openai_chat_messages_from_transcript(self.transcript)
+                        )
+                        if message["role"] == "assistant"
+                    ),
+                    None,
+                )
+                self.logger.info(
+                    f"[{self.agent.agent_config.call_type}:{self.agent.agent_config.current_call_id}] Agent: {last_agent_message}"
+                )
+                self.logger.info(f"Responding to {held_buffer}")
             self.transcriptions_worker.block_inputs = False
             # Unmute the transcriber after speech synthesis if it was muted
             if self.transcriber.get_transcriber_config().mute_during_speech:

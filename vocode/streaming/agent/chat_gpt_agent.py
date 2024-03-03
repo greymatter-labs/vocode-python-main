@@ -379,7 +379,7 @@ class ChatGPTAgent(RespondAgent[ChatGPTAgentConfig]):
         prompt_buffer = chat_parameters["prompt"]
         completion_buffer = ""
         punctuation_marks = [".", ",", "!", "?"]
-        tokens_to_generate = 30
+        tokens_to_generate = 60
         max_tokens = 100
         stop = punctuation_marks + ["\n"]
 
