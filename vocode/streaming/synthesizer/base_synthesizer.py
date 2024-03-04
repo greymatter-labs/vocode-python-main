@@ -30,7 +30,11 @@ from vocode.streaming.models.message import BaseMessage
 from vocode.streaming.synthesizer.miniaudio_worker import MiniaudioWorker
 from vocode.streaming.utils import convert_wav, get_chunk_size_per_second
 from vocode.streaming.models.audio_encoding import AudioEncoding
-from vocode.streaming.models.synthesizer import SynthesizerConfig
+from vocode.streaming.models.synthesizer import (
+    AZURE_SYNTHESIZER_DEFAULT_VOICE_MALE,
+    SynthesizerConfig,
+)
+
 
 FILLER_PHRASES = [
     BaseMessage(text="Hmm?"),
@@ -192,6 +196,15 @@ class BaseSynthesizer(Generic[SynthesizerConfigType]):
             self.affirmative_audios = await self.get_phrase_affirmative_audios()
         elif filler_audio_config.use_typing_noise:
             self.affirmative_audios = [self.get_typing_noise_filler_audio()]
+
+    async def set_voice(self, agent_gender: str):
+
+        if agent_gender.strip().lower() == "male":
+            self.synthesizer_config.__setattr__(
+                "voice_name", AZURE_SYNTHESIZER_DEFAULT_VOICE_MALE
+            )
+        else:
+            pass
 
     async def get_phrase_filler_audios(self) -> List[FillerAudio]:
         return []
