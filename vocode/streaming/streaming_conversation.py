@@ -1019,54 +1019,6 @@ The user will send you the dialogue and you must return a single word, either: "
     def create_state_manager(self) -> ConversationStateManager:
         return ConversationStateManager(conversation=self)
 
-    async def set_voice(self, prompt_preamble: Optional[str] = None):
-        fclient = AsyncOpenAI(api_key="functionary", base_url=getenv("AI_API_BASE"))
-
-        tools = [
-            {
-                "type": "function",
-                "function": {
-                    "name": "get_agent_gender",
-                    "description": "Determines the gender of the agent based on the agent's name",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "agent_name": {
-                                "type": "string",
-                                "description": "The name of the agent for which to determine the gender",
-                            },
-                            "gender": {
-                                "type": "string",
-                                "description": "The gender of the agent: [male,female]",
-                            },
-                        },
-                        "required": ["agent_name", "gender"],
-                    },
-                },
-            }
-        ]
-        messages = [
-            {
-                "role": "system",
-                "content": """You will be provided an agent profile. Your task is to identify the name of the agent and determine their gender based on their name.
-                return the classification and name in the specified format.""",
-            },
-            {"role": "user", "content": prompt_preamble},
-        ]
-        tool_response = await fclient.chat.completions.create(
-            model="meetkai/functionary-small-v2.2",
-            messages=messages,
-            tools=tools,
-            tool_choice={"type": "function", "function": {"name": "get_agent_gender"}},
-        )
-        tool_response_data = (
-            tool_response.choices[0].message.tool_calls[0].function.arguments
-        )
-        agent_gender = json.loads(tool_response_data)["gender"]
-        self.logger.debug(f"Extracted agent gender: {agent_gender}")
-
-        await self.synthesizer.set_voice(agent_gender)
-
     async def start(self, mark_ready: Optional[Callable[[], Awaitable[None]]] = None):
         self.transcriber.start()
         self.transcriber.mute()
@@ -1106,11 +1058,7 @@ The user will send you the dialogue and you must return a single word, either: "
             prompt_preamble = self.agent.get_agent_config().prompt_preamble
             self.logger.debug(f"Prompt Preamble: {prompt_preamble}")
 
-            set_voice_task = asyncio.create_task(self.set_voice(prompt_preamble))
-
-            await asyncio.gather(
-                filler_audio_task, affirmative_audio_task, set_voice_task
-            )
+            await asyncio.gather(filler_audio_task, affirmative_audio_task)
 
         self.agent.start()
         initial_message = self.agent.get_agent_config().initial_message
