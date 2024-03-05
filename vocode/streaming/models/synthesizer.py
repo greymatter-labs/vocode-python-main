@@ -53,7 +53,7 @@ class SynthesizerConfig(TypedModel, type=SynthesizerType.BASE.value):
         return cls(
             sampling_rate=output_device.sampling_rate,
             audio_encoding=output_device.audio_encoding,
-            **kwargs
+            **kwargs,
         )
 
     # TODO(EPD-186): switch to from_twilio_output_device and from_vonage_output_device
@@ -62,7 +62,7 @@ class SynthesizerConfig(TypedModel, type=SynthesizerType.BASE.value):
         return cls(
             sampling_rate=DEFAULT_SAMPLING_RATE,
             audio_encoding=DEFAULT_AUDIO_ENCODING,
-            **kwargs
+            **kwargs,
         )
 
     @classmethod
@@ -70,19 +70,19 @@ class SynthesizerConfig(TypedModel, type=SynthesizerType.BASE.value):
         return cls(
             sampling_rate=output_audio_config.sampling_rate,
             audio_encoding=output_audio_config.audio_encoding,
-            **kwargs
+            **kwargs,
         )
 
 
-AZURE_SYNTHESIZER_DEFAULT_VOICE_MALE = "MannieNeural"
-# AZURE_SYNTHESIZER_DEFAULT_VOICE_FEMALE = "en-US-AriaNeural"
-AZURE_SYNTHESIZER_DEFAULT_VOICE_NAME = "HaroldAINeural"
 AZURE_SYNTHESIZER_DEFAULT_PITCH = 0
 AZURE_SYNTHESIZER_DEFAULT_RATE = 15
 
 
 class AzureSynthesizerConfig(SynthesizerConfig, type=SynthesizerType.AZURE.value):
-    voice_name: str = AZURE_SYNTHESIZER_DEFAULT_VOICE_NAME
+    voice_name: Optional[str] = None
+    azure_speech_key: Optional[str] = None
+    azure_speech_region: Optional[str] = None
+    azure_endpoint_id: Optional[str] = None
     pitch: int = AZURE_SYNTHESIZER_DEFAULT_PITCH
     rate: int = AZURE_SYNTHESIZER_DEFAULT_RATE
     language_code: str = "en-US"
