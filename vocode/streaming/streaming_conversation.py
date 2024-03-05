@@ -189,7 +189,7 @@ class StreamingConversation(Generic[OutputDeviceType]):
 
             self.buffer.sort(key=lambda x: x["start"])
 
-        def _is_overlap(self, word1, word2, tolerance=0.1):
+        def _is_overlap(self, word1, word2, tolerance=0.05):
             # Adjust the start and end times of the words by a tolerance to account for slight shifts
             adjusted_word1_start = word1["start"] - tolerance
             adjusted_word1_end = word1["end"] + tolerance
@@ -690,9 +690,14 @@ class StreamingConversation(Generic[OutputDeviceType]):
                 "nine",
                 "zero",
             ]
-            if any(
-                digit in self.conversation.transcriptions_worker.buffer.to_message()
-                for digit in digits
+            if (
+                sum(
+                    self.conversation.transcriptions_worker.buffer.to_message().count(
+                        digit
+                    )
+                    for digit in digits
+                )
+                < 4
             ):
                 return
             assert self.conversation.filler_audio_worker is not None
@@ -738,10 +743,32 @@ class StreamingConversation(Generic[OutputDeviceType]):
                 "eight",
                 "nine",
                 "zero",
+                "ten",
+                "twenty",
+                "thirty",
+                "forty",
+                "fifty",
+                "sixty",
+                "seventy",
+                "eighty",
+                "ninety",
+                "hundred",
             ]
-            if any(
-                digit in self.conversation.transcriptions_worker.buffer.to_message()
-                for digit in digits
+            if (
+                sum(
+                    self.conversation.transcriptions_worker.buffer.to_message().count(
+                        digit
+                    )
+                    for digit in digits
+                )
+                < 4
+                and sum(
+                    self.conversation.transcriptions_worker.buffer.to_message().count(
+                        digit
+                    )
+                    for digit in digits
+                )
+                > 1
             ):
                 return
             assert self.conversation.filler_audio_worker is not None
@@ -885,7 +912,11 @@ class StreamingConversation(Generic[OutputDeviceType]):
                     return
 
                 # Once the speech output is complete, publish the transcript message with the actual content spoken.
-                transcript_message.text = transcript_message.text.replace("um, ", "")
+                transcript_message.text = (
+                    transcript_message.text.replace("Hmm...", "")
+                    .replace("So... like...", "")
+                    .replace("So... um...", "")
+                )
                 # split on < and truncate there
                 transcript_message.text = transcript_message.text.split("<")[0].strip()
                 self.conversation.transcript.maybe_publish_transcript_event_from_message(
@@ -1302,18 +1333,13 @@ class StreamingConversation(Generic[OutputDeviceType]):
         # Reset the transcription worker's flags and buffer status
         # check if there is more in the queue making this one be called again, if so, dont unblock
         if (
-            self.synthesis_results_queue.qsize() == 0
-            and self.agent_responses_worker.input_queue.qsize() == 0
+            self.agent_responses_worker.input_queue.qsize() == 0
             and self.agent_responses_worker.output_queue.qsize() == 0
             and self.agent.get_input_queue().qsize() == 0
             and self.agent.get_output_queue().qsize() == 0
             # it must also end in punctuation
         ):
-            if (
-                message_sent
-                and not cut_off
-                and message_sent.strip()[-1] in [".", "!", "?"]
-            ):
+            if message_sent and not cut_off and message_sent.strip()[-1] not in [","]:
 
                 last_agent_message = next(
                     (
@@ -1329,11 +1355,11 @@ class StreamingConversation(Generic[OutputDeviceType]):
                     f"[{self.agent.agent_config.call_type}:{self.agent.agent_config.current_call_id}] Agent: {last_agent_message}"
                 )
                 self.logger.info(f"Responding to {held_buffer}")
-            self.transcriptions_worker.block_inputs = False
-            # Unmute the transcriber after speech synthesis if it was muted
-            if self.transcriber.get_transcriber_config().mute_during_speech:
-                self.logger.debug("Unmuting transcriber")
-                self.transcriber.unmute()
+                self.transcriptions_worker.block_inputs = False
+                # Unmute the transcriber after speech synthesis if it was muted
+                if self.transcriber.get_transcriber_config().mute_during_speech:
+                    self.logger.debug("Unmuting transcriber")
+                    self.transcriber.unmute()
         self.transcriptions_worker.ready_to_send = BufferStatus.DISCARD
         if transcript_message:
             transcript_message.text = message_sent

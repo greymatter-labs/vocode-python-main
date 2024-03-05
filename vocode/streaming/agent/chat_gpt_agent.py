@@ -360,37 +360,85 @@ class ChatGPTAgent(RespondAgent[ChatGPTAgentConfig]):
         is_interrupt: bool = False,
         stream_output: bool = True,
     ) -> AsyncGenerator[Tuple[Union[str, FunctionCall], bool], None]:
-        if is_interrupt and self.agent_config.cut_off_response:
-            cut_off_response = self.get_cut_off_response()
-            yield cut_off_response, False
-            return
+        digits = [
+            "zero",
+            "one",
+            "two",
+            "three",
+            "four",
+            "five",
+            "six",
+            "seven",
+            "eight",
+            "nine",
+        ]
+        # replace all written numbers with digits
+        current_index = -1
+        count = 0
+
         assert self.transcript is not None
         self.logger.debug(f"COMPLETION IS RESPONDING")
-
         chat_parameters = self.get_completion_parameters(
             affirmative_phrase=affirmative_phrase
         )
-
         # Prepare headers and data for the POST request
         headers = {
             "Content-Type": "application/json",
             "Authorization": f"Bearer 'EMPTY'",
         }
         prompt_buffer = chat_parameters["prompt"]
-        completion_buffer = ""
-        punctuation_marks = [".", ",", "!", "?"]
-        tokens_to_generate = 60
-        max_tokens = 100
-        stop = punctuation_marks + ["\n"]
+        words = prompt_buffer.split()
+        new_words = []
+        largest_seq = 0
+        current_seq = 0
+        last_digit_index = -1
+        for i, word in enumerate(words):
+            post = ""
+            if "<|im_end|>" in word:
+                pre = word.split("<|im_end|>")[0]
+                post = "<|im_end|>" + word.split("<|im_end|>")[1]
+                word = pre
+            if word.lower() in digits:
+                digit_str = str(digits.index(word.lower()))
+                digit_str += post
+                new_words.append(digit_str)
+                current_seq += 1
+                if current_seq > largest_seq:
+                    largest_seq = current_seq
+                    last_digit_index = i
+            else:
+                new_words.append(word + post)
+                current_seq = 0
+        if last_digit_index != -1:
+            sequence_start = last_digit_index - largest_seq + 1
+            insert_index = sum(len(w) + 1 for w in new_words[:sequence_start])
+            if largest_seq == 10:
+                number_sentence = f"(with {largest_seq} digits):"
+            else:
+                number_sentence = f"(with only {largest_seq} digits)"
+            if largest_seq > 3:  # only provide nu
+                prompt_buffer = (
+                    " ".join(new_words[:sequence_start])
+                    + f" {number_sentence} "
+                    + " ".join(new_words[sequence_start:])
+                )
+        else:
+            prompt_buffer = " ".join(new_words)
 
+        prompt_buffer = prompt_buffer.replace("  ", " ")
+        completion_buffer = ""
+        tokens_to_generate = 120
+        max_tokens = 120
+        stop = ["?"]
         async with aiohttp.ClientSession() as session:
             base_url = getenv("AI_API_BASE")
-            while max_tokens > 0:
+            # Generate the first chunk
+            while True:
                 data = {
                     "model": chat_parameters["model"],
-                    "prompt": prompt_buffer + completion_buffer,
+                    "prompt": prompt_buffer,
                     "stream": False,
-                    "stop": stop,
+                    "stop": [".", "?", "\n", ":"],
                     "max_tokens": tokens_to_generate,
                     "include_stop_str_in_output": True,
                 }
@@ -400,58 +448,59 @@ class ChatGPTAgent(RespondAgent[ChatGPTAgentConfig]):
                     if response.status == 200:
                         response_data = await response.json()
                         content = response_data["choices"][0]["text"].strip()
-                        completion_buffer += content
-                        max_tokens -= tokens_to_generate
-
-                        # Fake a generator by yielding segments one by one
-                        while completion_buffer:
-                            segment = ""
-                            for punctuation in punctuation_marks:
-                                if punctuation in completion_buffer:
-                                    segment, _, completion_buffer = (
-                                        completion_buffer.partition(punctuation)
-                                    )
-                                    segment += punctuation
-                                    break
-                            if (
-                                not segment
-                            ):  # No punctuation found, take the whole buffer
-                                segment = completion_buffer
-                                completion_buffer = ""
-                            prompt_buffer += segment
+                        prompt_buffer += " " + content
+                        prompt_buffer = prompt_buffer.strip().replace("  ", " ")
+                        if (
+                            content.endswith("?")
+                            or content.endswith("\n")
+                            or content.endswith(".")
+                            or content.endswith(":")
+                        ) and len(content.split()) > 2:
                             if stream_output:
-                                # Add random stuff to the segment if it's too short and doesn't end with a question mark or newline
-                                if len(segment.split(" ")) < 3 and segment[-1] not in [
-                                    "?",
-                                    "\n",
-                                ]:
-                                    random_filler = random.choice(
-                                        [
-                                            "um,",
-                                        ]
-                                    )
-                                    segment = f"{random_filler} {segment}"
-
-                                self.logger.debug(f"Yielding segment: {segment}")
-                                yield segment, False
-
-                                # If the segment ends in a question mark or newline, return
-                                if segment[-1] in ["?", "\n"]:
-                                    return
-                                else:
-                                    # if it didn't end in a question mark, set stop to just a question mark
-                                    stop = ["?"]
-
+                                self.logger.debug(f"Yielding first chunk: {content}")
+                            yield (completion_buffer + " " + content), False
+                            completion_buffer = ""
+                            if content.endswith("?"):
+                                return
+                            break
+                        else:
+                            self.logger.debug(f"Got chunk: {content}")
+                            completion_buffer += content
                     else:
                         self.logger.error(
-                            f"Error while streaming from OpenAI: {response.status}"
+                            f"Error while streaming from OpenAI1: {str(response)}"
                         )
-                        break
+                        return
+            # Generate the second chunk
+            data = {
+                "model": chat_parameters["model"],
+                "prompt": prompt_buffer,
+                "stream": False,
+                "stop": ["?"],
+                "max_tokens": max_tokens,
+                "include_stop_str_in_output": True,
+            }
+            self.logger.debug(f"Prompt buffer: {prompt_buffer}")
+            self.logger.debug(f"data: {data}")
+            async with session.post(
+                f"{base_url}/completions", headers=headers, json=data
+            ) as response:
+                if response.status == 200:
+                    response_data = await response.json()
+                    content = response_data["choices"][0]["text"].strip()
+                    prompt_buffer += content
+                    if stream_output:
+                        self.logger.debug(f"Yielding second chunk: {content}")
+                        # if its shorter than one word, add an uh in front of it
+                        if len(content.split()) < 2:
+                            chosen_word = random.choice("uh... um... er...".split())
+                            content = chosen_word + " " + content
+                        yield content, False
+                else:
 
-            # # After the loop, yield any remaining content
-            # if stream_output and completion_buffer:
-            #     self.logger.debug(f"Yielding remaining content: {completion_buffer}")
-            #     yield completion_buffer, True
+                    self.logger.error(
+                        f"Error while streaming from OpenAI2: {str(response)}"
+                    )
 
     async def generate_response(
         self,
