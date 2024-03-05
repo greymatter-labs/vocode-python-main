@@ -1044,11 +1044,6 @@ The user will send you the dialogue and you must return a single word, either: "
                 self.filler_audio_config = typing.cast(
                     FillerAudioConfig, self.agent.get_agent_config().send_filler_audio
                 )
-
-            self.logger.debug(
-                f"Synthesizer Config: {self.synthesizer.get_synthesizer_config()}"
-            )
-
             filler_audio_task = asyncio.create_task(
                 self.synthesizer.set_filler_audios(self.filler_audio_config)
             )
