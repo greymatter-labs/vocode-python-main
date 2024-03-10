@@ -28,12 +28,13 @@ SENTENCE_ENDINGS = [".", "!", "?", "\n"]
 import requests
 import uuid
 import json
+from vocode import getenv
 
 
 def translate_message(
     logger, messageString: str, sourceLanguage: str, targetLanguage: str
 ) -> str:
-    key = "4e0374b8770b4711b23a608602675194"
+    key = getenv("AZURE_TRANSLATE_KEY")
     endpoint = "https://api.cognitive.microsofttranslator.com"
     location = "westus3"
 
