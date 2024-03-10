@@ -853,7 +853,7 @@ class StreamingConversation(Generic[OutputDeviceType]):
                     )
                     if "hindi" in prompt_preamble.lower():
                         self.conversation.logger.debug(
-                            f"Translating message from Hindi to English{agent_response_message.message.text}"
+                            f"Translating message from English to Hindi {agent_response_message.message.text}"
                         )
                         translated_message = translate_message(
                             self.conversation.logger,
@@ -861,18 +861,16 @@ class StreamingConversation(Generic[OutputDeviceType]):
                             "en-US",
                             "hi",
                         )
-                        # create base message
-                        translated_message = Message(
-                            text=translated_message,
-                            sender=Sender.BOT,
-                        )
+                        current_message = agent_response_message.message.text + ""
+                        agent_response_message.message.text = translated_message
                         synthesis_result = (
                             await self.conversation.synthesizer.create_speech(
-                                translated_message,
+                                agent_response_message.message,
                                 self.chunk_size,
                                 bot_sentiment=self.conversation.bot_sentiment,
                             )
                         )
+                        agent_response_message.message.text = current_message
                     else:
                         synthesis_result = (
                             await self.conversation.synthesizer.create_speech(
@@ -881,12 +879,15 @@ class StreamingConversation(Generic[OutputDeviceType]):
                                 bot_sentiment=self.conversation.bot_sentiment,
                             )
                         )
-                self.convoCache[str(agent_response_message.message)] = synthesis_result
-                self.produce_interruptible_agent_response_event_nonblocking(
-                    (agent_response_message.message, synthesis_result),
-                    is_interruptible=item.is_interruptible,
-                    agent_response_tracker=item.agent_response_tracker,
-                )
+                    self.produce_interruptible_agent_response_event_nonblocking(
+                        (agent_response_message.message, synthesis_result),
+                        is_interruptible=item.is_interruptible,
+                        agent_response_tracker=item.agent_response_tracker,
+                    )
+                else:
+                    self.conversation.logger.debug(
+                        f"SYNTH: WAS NOT CHATGPT AGENT, {agent_response_message.message.text}"
+                    )
             except asyncio.CancelledError:
                 pass
 

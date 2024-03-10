@@ -95,15 +95,12 @@ class AzureSynthesizer(BaseSynthesizer[AzureSynthesizerConfig]):
             raise ValueError(
                 "Please set AZURE_SPEECH_REGION environment variable or pass it as a parameter"
             )
-        if azure_endpoint_id:
-            speech_config.endpoint_id = azure_endpoint_id
-
-            raise ValueError(
-                "Please set AZURE_ENDPOINT_ID environment variable or pass it as a parameter"
-            )
         speech_config = speechsdk.SpeechConfig(
             subscription=azure_speech_key, region=azure_speech_region
         )
+        if azure_endpoint_id:
+            speech_config.endpoint_id = azure_endpoint_id
+
         speech_config.speech_synthesis_voice_name = "PlaygroundLiteNeural"
         if self.synthesizer_config.audio_encoding == AudioEncoding.LINEAR16:
             if self.synthesizer_config.sampling_rate == 44100:
