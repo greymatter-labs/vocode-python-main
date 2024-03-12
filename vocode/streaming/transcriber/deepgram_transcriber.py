@@ -1,7 +1,10 @@
+import aiohttp
 import asyncio
+import io
 import json
 import logging
 from typing import Optional
+import wave
 
 from openai import AsyncOpenAI, OpenAI
 import websockets
@@ -67,6 +70,8 @@ class DeepgramTranscriber(BaseAsyncTranscriber[DeepgramTranscriberConfig]):
         self.logger = logger or logging.getLogger(__name__)
         self.audio_cursor = 0.0
         self.openai_client = OpenAI(api_key="EMPTY", base_url=getenv("AI_API_BASE"))
+        self.is_final = False
+        self.detected_language = "en"
 
     async def _run_loop(self):
         restarts = 0
@@ -132,42 +137,6 @@ class DeepgramTranscriber(BaseAsyncTranscriber[DeepgramTranscriberConfig]):
         url_params.update(extra_params)
         return f"wss://api.deepgram.com/v1/listen?{urlencode(url_params)}"
 
-    # This function will return how long the time silence for endpointing should be
-    def get_classify_endpointing_silence_duration(self, transcript: str):
-        preamble = """You are an amazing live transcript classifier! Your task is to classify, with provided confidence, whether a provided message transcript is: 'complete', 'incomplete' or 'garbled'. The message should be considered 'complete' if it is a full thought or question. The message is 'incomplete' if there is still more the user might add. Finally, the message is 'garbled' if it appears to be a complete transcription attempt but, despite best efforts, the meaning is unclear.
-
-Based on which class is demonstrated in the provided message transcript, return the confidence level of your classification on a scale of 1-100 with 100 being the most confident followed by a space followed by either 'complete', 'incomplete', or 'garbled'.
-
-The exact format to return is:
-<confidence level> <classification>"""
-        user_message = f"{transcript}"
-        messages = [
-            {"role": "system", "content": preamble},
-            {"role": "user", "content": user_message},
-        ]
-        parameters = {
-            "model": "Qwen/Qwen1.5-72B-Chat-GPTQ-Int4",
-            "messages": messages,
-            "max_tokens": 5,
-            "temperature": 0,
-            "stop": ["User:", "\n", "<|im_end|>", "?"],
-        }
-
-        response = self.openai_client.chat.completions.create(**parameters)
-
-        classification = (response.choices[0].message.content.split(" "))[-1]
-        silence_duration_1_to_100 = "".join(
-            filter(str.isdigit, response.choices[0].message.content)
-        )
-        duration_to_return = 0.1
-        if "incomplete" in classification.lower():
-            duration_to_return = (
-                float(silence_duration_1_to_100) / INCOMPLETE_SCALING_FACTOR / 100.0
-            )
-        elif "complete" in classification.lower():
-            duration_to_return = 1.0 - (float(silence_duration_1_to_100) / 100.0)
-        return duration_to_return * MAX_SILENCE_DURATION
-
     def is_speech_final(
         self, current_buffer: str, deepgram_response: dict, time_silent: float
     ):
@@ -218,9 +187,71 @@ The exact format to return is:
             return end - words[-1]["end"]
         return data["duration"]
 
+    # dont need
+    # async def classify_audio(self, audio_buffer):
+    #     # Convert the audio buffer to a WAV file in memory
+    #     with io.BytesIO() as audio_io:
+    #         wav_file = wave.open(audio_io, "wb")
+    #         num_channels = 1
+    #         sample_width = 2
+    #         wav_file.setnchannels(num_channels)
+    #         wav_file.setsampwidth(sample_width)
+    #         wav_file.setframerate(self.transcriber_config.sampling_rate)
+    #         wav_file.writeframes(audio_buffer)
+    #         wav_file.close()
+    #         audio_io.seek(0)
+
+    #         # Prepare the request to Deepgram
+    #         headers = {
+    #             "Authorization": f"Token {self.api_key}",
+    #             "Content-Type": "audio/wav",
+    #         }
+    #         params = {"model": "nova-2-general", "detect_language": "true"}
+    #         # Create a session if it doesn't exist
+    #         if not hasattr(self, "session") or self.session.closed:
+    #             self.session = aiohttp.ClientSession()
+    #         async with self.session.post(
+    #             "https://api.deepgram.com/v1/listen",
+    #             headers=headers,
+    #             params=params,
+    #             data=audio_io.read(),
+    #         ) as response:
+
+    #             # Parse the response from Deepgram
+    #             if response.status == 200:
+    #                 response_data = await response.json()
+    #                 detected_language = response_data["results"]["channels"][0][
+    #                     "detected_language"
+    #                 ]
+    #                 language_confidence = response_data["results"]["channels"][0][
+    #                     "language_confidence"
+    #                 ]
+    #                 # Log the detected language and confidence
+    #                 self.logger.info(
+    #                     f"Detected language: {detected_language} with confidence: {language_confidence}"
+    #                 )
+    #                 if detected_language != self.detected_language:
+    #                     self.detected_language = detected_language
+    #                     # set the language to the detected language
+    #                     self.transcriber_config.language = detected_language
+    #                     # rerun loop
+    #                     self._ended = True
+    #                     # sleep for 25 ms
+    #                     await asyncio.sleep(0.025)
+    #                     # self.is_ready = False
+    #                     self.logger.info("Detected language, restarting transcriber")
+    #                     self._ended = False
+
+    #                     asyncio.create_task(self._run_loop())
+    #             else:
+    #                 self.logger.error(
+    #                     f"Failed to classify audio with status code: {response.status}"
+    #                 )
+
     async def process(self):
         self.audio_cursor = 0.0
         extra_headers = {"Authorization": f"Token {self.api_key}"}
+        self.buffer = b""
 
         async with websockets.connect(
             self.get_deepgram_url(), extra_headers=extra_headers
@@ -232,14 +263,18 @@ The exact format to return is:
                         data = await asyncio.wait_for(self.input_queue.get(), 5)
                     except asyncio.exceptions.TimeoutError:
                         break
-                    num_channels = 1
-                    sample_width = 2
-                    self.audio_cursor += len(data) / (
-                        self.transcriber_config.sampling_rate
-                        * num_channels
-                        * sample_width
-                    )
                     await ws.send(data)
+
+                    # num_channels = 1
+                    # sample_width = 2
+                    # frame_duration = len(data) / (
+                    #     self.transcriber_config.sampling_rate
+                    #     * num_channels
+                    #     * sample_width
+                    # )
+                    # self.audio_cursor += frame_duration
+                    # #remove equivalent amount from buffer before adding
+                    # self.buffer += data
                 self.logger.debug("Terminating Deepgram transcriber sender")
 
             async def receiver(ws: WebSocketClientProtocol):
@@ -269,6 +304,7 @@ The exact format to return is:
                         not "is_final" in data
                     ):  # means we've finished receiving transcriptions
                         break
+                    self.is_final = data["is_final"]
                     cur_max_latency = self.audio_cursor - transcript_cursor
                     transcript_cursor = data["start"] + data["duration"]
                     cur_min_latency = self.audio_cursor - transcript_cursor

@@ -40,6 +40,7 @@ from vocode.streaming.utils.goodbye_model import GoodbyeModel
 
 from vocode.streaming.models.agent import ChatGPTAgentConfig, FillerAudioConfig
 from vocode.streaming.models.synthesizer import (
+    AzureSynthesizerConfig,
     SentimentConfig,
 )
 
@@ -247,6 +248,7 @@ class StreamingConversation(Generic[OutputDeviceType]):
             self.chosen_affirmative_phrase = None
             self.triggered_affirmative = False
             self.chosen_filler_phrase = None
+            self.last_detected_language = "en"
 
         async def get_expected_silence_duration(self, buffer: str) -> float:
             previous_agent_message = next(
@@ -510,6 +512,26 @@ class StreamingConversation(Generic[OutputDeviceType]):
                 )
                 return
 
+            if self.conversation.transcriptions_worker.last_detected_language and (
+                self.last_detected_language
+                != self.conversation.transcriptions_worker.last_detected_language
+            ):
+                self.last_detected_language = (
+                    self.conversation.transcriptions_worker.last_detected_language
+                )
+                self.conversation.logger.info(
+                    f"Switching to: {self.last_detected_language}"
+                )
+                if isinstance(
+                    self.conversation.synthesizer.synthesizer_config,
+                    AzureSynthesizerConfig,
+                ):
+                    self.conversation.synthesizer.set_language(
+                        self.last_detected_language, self.agent.agent_config
+                    )
+                self.conversation.synthesizer.set_language(
+                    self.last_detected_language, self.agent.agent_config.gender
+                )
             # Mark the timestamp of the last action
             self.conversation.mark_last_action_timestamp()
 
@@ -851,15 +873,18 @@ class StreamingConversation(Generic[OutputDeviceType]):
                     prompt_preamble = (
                         self.conversation.agent.agent_config.prompt_preamble
                     )
-                    if "hindi" in prompt_preamble.lower():
+                    if (
+                        self.conversation.transcriptions_worker.last_detected_language
+                        != "en"
+                    ):
                         self.conversation.logger.debug(
-                            f"Translating message from English to Hindi {agent_response_message.message.text}"
+                            f"Translating message: {agent_response_message.message.text}\n from {self.conversation.transcriptions_worker.last_detected_language} to en"
                         )
                         translated_message = translate_message(
                             self.conversation.logger,
                             agent_response_message.message.text,
                             "en-US",
-                            "hi",
+                            self.conversation.transcriptions_worker.last_detected_language,
                         )
                         current_message = agent_response_message.message.text + ""
                         agent_response_message.message.text = translated_message
