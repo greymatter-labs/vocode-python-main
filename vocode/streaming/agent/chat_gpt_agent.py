@@ -54,10 +54,12 @@ class ChatGPTAgent(RespondAgent[ChatGPTAgentConfig]):
         logger: Optional[logging.Logger] = None,
         openai_api_key: Optional[str] = None,
         vector_db_factory=VectorDBFactory(),
+        language="en",
     ):
         super().__init__(
             agent_config=agent_config, action_factory=action_factory, logger=logger
         )
+        self.language = language
 
         self.agent_config.pending_action = None
         if agent_config.azure_params:
@@ -509,7 +511,7 @@ class ChatGPTAgent(RespondAgent[ChatGPTAgentConfig]):
         # get the preamble
         preamble = self.agent_config.prompt_preamble
 
-        if "hindi" in preamble.lower():
+        if self.language != "en":
             # Modify the transcript for the latest user message that matches human_input
             latest_human_message = next(
                 (
@@ -521,7 +523,7 @@ class ChatGPTAgent(RespondAgent[ChatGPTAgentConfig]):
             )
             if latest_human_message:
                 translated_message = translate_message(
-                    self.logger, latest_human_message.text, "hi", "en-US"
+                    self.logger, latest_human_message.text, self.language, "en-US"
                 )
                 latest_human_message.text = translated_message
 

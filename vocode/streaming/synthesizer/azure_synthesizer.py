@@ -136,6 +136,52 @@ class AzureSynthesizer(BaseSynthesizer[AzureSynthesizerConfig]):
         self.rate = self.synthesizer_config.rate
         self.thread_pool_executor = ThreadPoolExecutor(max_workers=1)
         self.logger = logger or logging.getLogger(__name__)
+        self.speech_config = speech_config
+
+    async def set_language(
+        self,
+        language_code: str,
+        gender: str,
+    ):
+        # Mapping of language codes and genders to voice names
+        voices = {
+            "es": {
+                "female": "es-MX-DaliaNeural",
+                "male": "es-MX-JorgeNeural",
+            },
+            "hi": {
+                "female": "hi-IN-SwaraNeural",
+                "male": "hi-IN-MadhurNeural",
+            },
+            "en": {
+                "female": "en-US-AvaNeural",
+                "male": "en-US-AndrewNeural",
+            },
+            "it": {
+                "female": "it-IT-ElsaNeural",
+                "male": "it-IT-DiegoNeural",
+            },
+        }
+
+        # Extract the base language code (first two characters)
+        base_language_code = language_code.split("-")[0]
+
+        # Select the appropriate voice based on language and gender
+        voice_name = voices.get(base_language_code, {}).get(gender.lower())
+
+        if voice_name:
+            self.speech_config.speech_synthesis_voice_name = voice_name
+            self.speech_config.speech_synthesis_language = language_code
+            self.synthesizer = speechsdk.SpeechSynthesizer(
+                speech_config=self.speech_config, audio_config=None
+            )
+            self.logger.debug(
+                f"Setting language to {language_code} with voice {voice_name}"
+            )
+        else:
+            self.logger.error(
+                f"Unsupported language code '{language_code}' or gender '{gender}'"
+            )
 
     async def get_phrase_filler_audios(self) -> List[FillerAudio]:
         filler_phrase_audios = []
