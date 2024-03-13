@@ -720,6 +720,7 @@ class ChatGPTAgent(RespondAgent[ChatGPTAgentConfig]):
             latest_agent_response += item[0]
             yield item
             yielded += item[0]
+            count += 1
             if item[1]:
                 break
         while count == 0 or len(yielded) == 0:
