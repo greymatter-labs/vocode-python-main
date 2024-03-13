@@ -397,7 +397,7 @@ class StreamingConversation(Generic[OutputDeviceType]):
             # Place the event in the output queue for further processing
             self.output_queue.put_nowait(event)
 
-            self.conversation.logger.info("Transcription event put in output queue")
+            self.conversation.logger.info(f"Transcription event {event} put in output queue")
 
             # Set the buffer status to HOLD, indicating we're not ready to send it yet
             self.ready_to_send = BufferStatus.HOLD
@@ -446,12 +446,17 @@ class StreamingConversation(Generic[OutputDeviceType]):
                         phrase=self.chosen_affirmative_phrase,
                     )
                     self.last_affirmative_time = time.time()
+                self.conversation.logger.info(f"THE SYNTHESIS DONE IS {self.synthesis_done} and "
+                             f"the self.current_sleep_time is {self.current_sleep_time}")
                 if not self.synthesis_done and self.current_sleep_time < 0.02:
 
                     self.conversation.logger.debug(
                         f"Added sleep for synthesis to finish..."
                     )
                     self.current_sleep_time = 0.02
+                    self.conversation.logger.info(f"the time is {time.time()}, last filler time is "
+                                 f"{self.last_filler_time}, "
+                                 f"last_affirmative_time is {self.last_affirmative_time}")
                     if (
                         not self.triggered_affirmative
                         and time.time() - self.last_filler_time > 1.0
@@ -501,6 +506,7 @@ class StreamingConversation(Generic[OutputDeviceType]):
             self.ready_to_send = BufferStatus.SEND
 
         async def process(self, transcription: Transcription):
+            self.conversation.logger.info(f"processing transcripption {transcription}")
             # Ignore the transcription if we are currently in-flight (i.e., the agent is speaking)
             # log the current transcript
 
@@ -1425,14 +1431,15 @@ class StreamingConversation(Generic[OutputDeviceType]):
             )
         await asyncio.sleep(sleep_time)
 
+        num_speech_chunks = len(speech_data) / chunk_size
         # Log the successful sending of speech data
-        self.logger.debug(f"Sent speech data with size {len(speech_data)}")
+        self.logger.debug(f"Sent speech data with size {len(speech_data)}. num chunks: {num_speech_chunks} ; chunk size: {chunk_size}")
 
         # Update the last action timestamp after sending speech
         self.mark_last_action_timestamp()
 
         # Update the message sent with the actual content spoken
-        message_sent = synthesis_result.get_message_up_to(len(speech_data) / chunk_size)
+        message_sent = synthesis_result.get_message_up_to(num_speech_chunks)
 
         # If a transcript message is provided, update its text with the message sent
         if transcript_message:
