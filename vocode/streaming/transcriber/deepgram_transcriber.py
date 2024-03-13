@@ -286,6 +286,7 @@ The exact format to return is:
                     time_silent = self.calculate_time_silent(data)
                     top_choice = data["channel"]["alternatives"][0]
                     confidence = top_choice["confidence"]
+                    self.logger.info(f"The top_choice is {top_choice}, data is {data}, is_final is {is_final}, time_silent is {time_silent}, confidence is {confidence}")
                     self.output_queue.put_nowait(
                         Transcription(
                             message=json.dumps(

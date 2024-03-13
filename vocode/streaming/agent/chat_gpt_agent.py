@@ -530,8 +530,7 @@ class ChatGPTAgent(RespondAgent[ChatGPTAgentConfig]):
 
         assert self.transcript is not None
         # log the transcript
-        self.logger.debug(f"TRANSCRIPT: {self.transcript}")
-        self.logger.debug(f"COMPLETION IS RESPONDING")
+        self.logger.debug(f"COMPLETION IS RESPONDING to {self.transcript}")
         if affirmative_phrase:
             chat_parameters = self.get_completion_parameters(
                 affirmative_phrase=affirmative_phrase
@@ -591,6 +590,7 @@ class ChatGPTAgent(RespondAgent[ChatGPTAgentConfig]):
         latest_agent_response = ""
 
         async def stream_response():
+            self.logger.debug(f"STARTING STREAM RESPONSE. stream is {stream_output}")
             sentence_buffer = ""
             async with aiohttp.ClientSession() as session:
                 base_url = getenv("AI_API_BASE")
@@ -619,6 +619,7 @@ class ChatGPTAgent(RespondAgent[ChatGPTAgentConfig]):
                                 )
                                 try:
                                     completion_data = json.loads(json_str)
+                                    self.logger.info(f"COMPLETION DATA IS {completion_data}")
                                     if (
                                         "choices" in completion_data
                                         and completion_data["choices"]
@@ -651,6 +652,7 @@ class ChatGPTAgent(RespondAgent[ChatGPTAgentConfig]):
                                                     > 2
                                                 ):
                                                     if stream_output:
+                                                        self.logger.info(f"YIELDING STREAM_OUTPUT {sentence_buffer}")
                                                         yield sentence_buffer, False
                                                     sentence_buffer = ""  # Reset the buffer after yielding
                                 except json.JSONDecodeError:
@@ -662,6 +664,7 @@ class ChatGPTAgent(RespondAgent[ChatGPTAgentConfig]):
                         # If there's any remaining text in the buffer, yield it
                         if sentence_buffer and len(sentence_buffer.strip()) > 0:
                             if stream_output:
+                                self.logger.info(f"YIELDING sentence_buffer and len {sentence_buffer}")
                                 yield sentence_buffer, False
 
                         # Final yield to indicate the end of the stream
