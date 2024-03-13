@@ -635,13 +635,9 @@ class ChatGPTAgent(RespondAgent[ChatGPTAgentConfig]):
                                                 last_message += completion_text
                                                 # Check if the buffer ends with a punctuation
                                                 if (
-                                                    sentence_buffer.strip().endswith(
-                                                        (
-                                                            ".",
-                                                            "!",
-                                                            "?",
-                                                            ":\n",
-                                                        )
+                                                    any(
+                                                        p in sentence_buffer
+                                                        for p in ".!?"
                                                     )
                                                     and len(
                                                         sentence_buffer.strip().split(
@@ -653,6 +649,19 @@ class ChatGPTAgent(RespondAgent[ChatGPTAgentConfig]):
                                                     if stream_output:
                                                         yield sentence_buffer, False
                                                     sentence_buffer = ""  # Reset the buffer after yielding
+                                                if (
+                                                    (
+                                                        "finish_reason" in choice
+                                                        and choice["finish_reason"]
+                                                        == "stop"
+                                                    )
+                                                    or "?" in completion_text
+                                                    or "?" in sentence_buffer
+                                                ):
+                                                    if stream_output:
+                                                        yield sentence_buffer, True
+                                                    sentence_buffer = ""
+                                                    return
                                 except json.JSONDecodeError:
                                     self.logger.error("Failed to decode JSON response.")
                                     continue
@@ -662,12 +671,13 @@ class ChatGPTAgent(RespondAgent[ChatGPTAgentConfig]):
                         # If there's any remaining text in the buffer, yield it
                         if sentence_buffer and len(sentence_buffer.strip()) > 0:
                             if stream_output:
-                                yield sentence_buffer, False
+                                yield sentence_buffer, True
 
                         # Final yield to indicate the end of the stream
-                        # yield "", False
+                        if stream_output:
+                            yield "", True  # Indicate the end of the stream
                         # log what we sent out
-                        # self.logger.info(f"Sent out: {last_message}")
+                        self.logger.info(f"Sent out: {last_message}")
                     else:
                         self.logger.error(
                             f"Error while streaming from OpenAI: {str(response)}"
@@ -675,9 +685,21 @@ class ChatGPTAgent(RespondAgent[ChatGPTAgentConfig]):
                         return
 
         # Call the stream_response coroutine and yield from it
+        count = 0
         async for item in stream_response():
             latest_agent_response += item[0]
+            count += 1
             yield item
+            if item[1]:
+                break
+        while count == 0:
+            self.logger.error(f"No response from the agent, trying again: {count}")
+            async for item in stream_response():
+                latest_agent_response += item[0]
+                count += 1
+                yield item
+                if item[1]:
+                    break
         # Run the nonblocking checks in the background
         if self.agent_config.actions:
             asyncio.create_task(
@@ -782,7 +804,7 @@ class ChatGPTAgent(RespondAgent[ChatGPTAgentConfig]):
                                             # also check if, on split by space, it is longer than 2 words
                                             if (
                                                 any(p in message for p in ".!?")
-                                                and len(message.split(" ")) > 2
+                                                and len(message.strip().split(" ")) > 2
                                             ):
                                                 messageBuffer += message
                                                 all_messages.append(messageBuffer)
@@ -793,6 +815,8 @@ class ChatGPTAgent(RespondAgent[ChatGPTAgentConfig]):
                                             if (
                                                 "finish_reason" in choice
                                                 and choice["finish_reason"] == "stop"
+                                                or "?" in message
+                                                or "?" in messageBuffer
                                             ):
                                                 if len(messageBuffer.strip()) > 0:
                                                     all_messages.append(messageBuffer)
