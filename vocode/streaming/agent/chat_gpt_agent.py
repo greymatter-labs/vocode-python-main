@@ -395,6 +395,40 @@ class ChatGPTAgent(RespondAgent[ChatGPTAgentConfig]):
                     },
                 },
             },
+            {
+                "type": "function",
+                "function": {
+                    "name": "get_memo",
+                    "description": "Gets the memo from the user",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "phone_number": {
+                                "type": "string",
+                                "description": "The phone number of the user",
+                            }
+                        },
+                        "required": ["phone_number"],
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "save_memo",
+                    "description": "Saves a memo for the user",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "memo_content": {
+                                "type": "string",
+                                "description": "The memo content to save for the user",
+                            },
+                        },
+                        "required": ["memo_content"],
+                    },
+                },
+            },
         ]
 
     def format_tool_descriptions(self, tools):
