@@ -13,6 +13,8 @@ class ActionType(str, Enum):
     SEARCH_ONLINE = "search_online"
     SEND_TEXT = "send_text"
     SEND_EMAIL = "send_email"
+    GET_MEMO = "get_memo"
+    SAVE_MEMO = "save_memo"
 
 
 class ActionConfig(TypedModel, type=ActionType.BASE):
