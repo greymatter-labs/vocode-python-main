@@ -15,16 +15,15 @@ from vocode.streaming.models.actions import (
 
 class SendTextActionConfig(ActionConfig, type=ActionType.SEND_TEXT):
     to_phone: str
-    message: str
     from_phone: str
 
 
 class SendTextParameters(BaseModel):
-    pass
+    message: str
 
 
 class SendTextResponse(BaseModel):
-    response: str = Field(None, description="The response received from the recipient")
+    status: str = Field(None, description="The response received from the recipient")
 
 
 class SendText(
@@ -87,9 +86,10 @@ class SendText(
     async def run(
         self, action_input: ActionInput[SendTextParameters]
     ) -> ActionOutput[SendTextResponse]:
-        await self.send_text(self.action_config.to_phone, self.action_config.message)
+        message = action_input.params.message
+        await self.send_text(self.action_config.to_phone, message)
         # response = await self.wait_for_response(self.action_config.to_phone)
         return ActionOutput(
             action_type=action_input.action_config.type,
-            response=SendTextResponse(response="Message has been sent successfully."),
+            response=SendTextResponse(status="Message has been sent successfully."),
         )
