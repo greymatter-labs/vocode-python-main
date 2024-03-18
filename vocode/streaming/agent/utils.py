@@ -1,3 +1,5 @@
+from transformers import AutoTokenizer, AutoModelForCausalLM, BitsAndBytesConfig
+
 from copy import deepcopy
 import re
 from typing import (
@@ -177,7 +179,7 @@ def format_openai_chat_messages_from_transcript(
     transcript: Transcript, prompt_preamble: Optional[str] = None
 ) -> List[dict]:
     chat_messages: List[Dict[str, Optional[Any]]] = (
-        [{"role": "system", "content": prompt_preamble}] if prompt_preamble else []
+        [{"role": "user", "content": prompt_preamble}] if prompt_preamble else []
     )
 
     # merge consecutive bot messages
@@ -277,55 +279,128 @@ def format_tool_completion_from_transcript(
 
 
 def format_openai_chat_completion_from_transcript(
-    transcript: Transcript, prompt_preamble: Optional[str] = None
+    tokenizer: AutoTokenizer,
+    transcript: Transcript,
+    prompt_preamble: Optional[str] = None,
 ) -> str:
-    formatted_conversation = ""
+    # Initialize the messages list
+    messages = []
+
+    # Add the prompt preamble if it exists
     if prompt_preamble:
-        formatted_conversation += f"<|im_start|>system\n{prompt_preamble}<|im_end|>\n"
+        messages.append({"role": "system", "content": prompt_preamble})
+        # add a blank user message
+        messages.append({"role": "user", "content": "Begin."})
 
-    # merge consecutive bot messages
-    new_event_logs: List[EventLog] = []
-    idx = 0
-    while idx < len(transcript.event_logs):
-        bot_messages_buffer: List[Message] = []
-        current_log = transcript.event_logs[idx]
-        while isinstance(current_log, Message) and current_log.sender == Sender.BOT:
-            bot_messages_buffer.append(current_log)
-            idx += 1
-            try:
-                current_log = transcript.event_logs[idx]
-            except IndexError:
-                break
-
-        if bot_messages_buffer:
-            merged_bot_message = deepcopy(bot_messages_buffer[-1])
-            merged_bot_message.text = " ".join(
-                event_log.text
-                for event_log in bot_messages_buffer
-                if event_log.text.strip()
-            )
-            if merged_bot_message.text.strip():
-                new_event_logs.append(merged_bot_message)
-        else:
-            if (
-                isinstance(current_log, Message) and current_log.text.strip()
-            ) or isinstance(current_log, (ActionStart, ActionFinish)):
-                new_event_logs.append(current_log)
-            idx += 1
-
-    for event_log in new_event_logs:
-        if isinstance(event_log, Message):
+    # Convert event logs to messages format, including ActionStart and ActionFinish
+    for event_log in transcript.event_logs:
+        if isinstance(event_log, Message) and event_log.text.strip():
             role = "assistant" if event_log.sender == Sender.BOT else "user"
-            if event_log.text.strip():
-                formatted_conversation += (
-                    f"<|im_start|>{role}\n{event_log.text}<|im_end|>\n"
-                )
+            messages.append({"role": role, "content": event_log.text})
         elif isinstance(event_log, ActionStart):
-            formatted_conversation += f"<|im_start|>user\nSYSTEM: Submitted: Function call: {event_log.action_type} with arguments {event_log.action_input.params.json()}\nDo not answer the user's associated query until a response is received from the system.<|im_end|>\n"
+            messages.append(
+                {
+                    "role": "user",
+                    "content": f"Submitted: Function call: {event_log.action_type} with arguments {event_log.action_input.params.json()}\nDo not answer the user's associated query until a response is received from the system.",
+                }
+            )
         elif isinstance(event_log, ActionFinish):
-            formatted_conversation += f"<|im_start|>user\nSYSTEM: Completed: Function {event_log.action_type}.\nResponse was: {event_log.action_output.response.json()}\nNow you can use the response in the conversation.<|im_end|>\n"
+            messages.append(
+                {
+                    "role": "user",
+                    "content": f"Completed: Function {event_log.action_type}.\nResponse was: {event_log.action_output.response.json()}\nNow you can use the response in the conversation.",
+                }
+            )
 
-    return formatted_conversation.strip()
+    # Merge consecutive messages from the same sender
+    merged_messages = []
+    idx = 0
+    while idx < len(messages):
+        current_message = messages[idx]
+        message_buffer = [current_message["content"]]
+        idx += 1
+        while idx < len(messages) and messages[idx]["role"] == current_message["role"]:
+            message_buffer.append(messages[idx]["content"])
+            idx += 1
+
+        merged_content = " ".join(message_buffer)
+        merged_messages.append(
+            {"role": current_message["role"], "content": merged_content}
+        )
+
+    try:
+        # Use the tokenizer to convert merged messages to text
+        input_ids = tokenizer.apply_chat_template(
+            merged_messages,
+            tokenize=False,
+            add_generation_prompt=True,
+        )
+    except Exception as e:
+        raise e
+
+    return input_ids, merged_messages
+
+
+def format_command_function_completion_from_transcript(
+    tokenizer: AutoTokenizer,
+    transcript: Transcript,
+    tools: List[Dict[str, Any]],
+    prompt_preamble: Optional[str] = None,
+) -> str:
+    # Initialize the messages list
+    messages = []
+
+    # Add the prompt preamble if it exists
+    if prompt_preamble:
+        messages.append({"role": "system", "content": prompt_preamble})
+        # add a blank user message
+        messages.append({"role": "user", "content": "Begin."})
+
+    # Convert event logs to messages format, including ActionStart and ActionFinish
+    for event_log in transcript.event_logs:
+        if isinstance(event_log, Message) and event_log.text.strip():
+            role = "assistant" if event_log.sender == Sender.BOT else "user"
+            messages.append({"role": role, "content": event_log.text})
+        elif isinstance(event_log, ActionStart):
+            messages.append(
+                {
+                    "role": "user",
+                    "content": f"Submitted: Function call: {event_log.action_type} with arguments {event_log.action_input.params.json()}\nDo not answer the user's associated query until a response is received from the system.",
+                }
+            )
+        elif isinstance(event_log, ActionFinish):
+            messages.append(
+                {
+                    "role": "user",
+                    "content": f"Completed: Function {event_log.action_type}.\nResponse was: {event_log.action_output.response.json()}\nNow you can use the response in the conversation.",
+                }
+            )
+
+    # Merge consecutive messages from the same sender
+    merged_messages = []
+    idx = 0
+    while idx < len(messages):
+        current_message = messages[idx]
+        message_buffer = [current_message["content"]]
+        idx += 1
+        while idx < len(messages) and messages[idx]["role"] == current_message["role"]:
+            message_buffer.append(messages[idx]["content"])
+            idx += 1
+
+        merged_content = " ".join(message_buffer)
+        merged_messages.append(
+            {"role": current_message["role"], "content": merged_content}
+        )
+
+    # Use the tokenizer to convert merged messages to text
+    input_ids = tokenizer.apply_tool_use_template(
+        merged_messages,
+        tools=tools,
+        tokenize=False,
+        add_generation_prompt=True,
+    )
+
+    return input_ids, merged_messages
 
 
 def vector_db_result_to_openai_chat_message(vector_db_result):

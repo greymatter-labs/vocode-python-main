@@ -34,6 +34,7 @@ from vocode.streaming.models.actions import (
 from vocode.streaming.models.agent import (
     AgentConfig,
     ChatGPTAgentConfig,
+    CommandAgentConfig,
     LLMAgentConfig,
 )
 from vocode.streaming.models.message import BaseMessage
@@ -126,7 +127,7 @@ class AbstractAgent(Generic[AgentConfigType]):
 
     def get_cut_off_response(self) -> str:
         assert isinstance(self.agent_config, LLMAgentConfig) or isinstance(
-            self.agent_config, ChatGPTAgentConfig
+            self.agent_config, CommandAgentConfig
         ), "Set cutoff response is only implemented in LLMAgent and ChatGPTAgent"
         assert self.agent_config.cut_off_response is not None
         on_cut_off_messages = self.agent_config.cut_off_response.messages
@@ -216,36 +217,38 @@ class RespondAgent(BaseAgent[AgentConfigType]):
             f"{tracer_name_start}.generate_first"  # type: ignore
         )
         if affirmative_phrase:
-            responses = self.generate_completion(
+            response = await self.generate_completion(
                 human_input=transcription.message,
                 affirmative_phrase=affirmative_phrase,
                 conversation_id=conversation_id,
                 is_interrupt=transcription.is_interrupt,
             )
         else:
-            responses = self.generate_completion(
+            response = await self.generate_completion(
                 human_input=transcription.message,
                 affirmative_phrase=None,
                 conversation_id=conversation_id,
                 is_interrupt=transcription.is_interrupt,
             )
-        is_first_response = True
         function_call = None
-        async for response, is_interruptible in responses:
-            self.logger.debug(f"Generated response: {response}")
-            if isinstance(response, FunctionCall):
-                function_call = response
-                continue
-            if is_first_response:
-                agent_span_first.end()
-                is_first_response = False
+
+        if isinstance(response, FunctionCall):
+            function_call = response
+            agent_span_first.end()
+        if isinstance(response[0], str):
             self.produce_interruptible_agent_response_event_nonblocking(
-                AgentResponseMessage(message=BaseMessage(text=response)),
-                is_interruptible=self.agent_config.allow_agent_to_be_cut_off
-                and is_interruptible,
+                AgentResponseMessage(message=BaseMessage(text=response[0])),
+                is_interruptible=False,
                 agent_response_tracker=agent_input.agent_response_tracker,
             )
-            await asyncio.sleep(0)
+        else:
+            self.logger.debug(
+                "No response generated: %s of type %s",
+                response[0],
+                type(response),
+            )
+
+        await asyncio.sleep(0)
         # TODO: implement should_stop for generate_responses
         agent_span.end()
         if function_call and self.agent_config.actions is not None:
@@ -467,7 +470,5 @@ class RespondAgent(BaseAgent[AgentConfigType]):
         conversation_id: str,
         is_interrupt: bool = False,
         stream_output: bool = True,
-    ) -> AsyncGenerator[
-        Tuple[Union[str, FunctionCall], bool], None
-    ]:  # tuple of the content and whether it is interruptible
+    ) -> str:
         raise NotImplementedError

@@ -88,8 +88,8 @@ class SendText(
         self, action_input: ActionInput[SendTextParameters]
     ) -> ActionOutput[SendTextResponse]:
         await self.send_text(self.action_config.to_phone, self.action_config.message)
-        response = await self.wait_for_response(self.action_config.to_phone)
+        # response = await self.wait_for_response(self.action_config.to_phone)
         return ActionOutput(
             action_type=action_input.action_config.type,
-            response=SendTextResponse(response=response),
+            response=SendTextResponse(response="Message has been sent successfully."),
         )
