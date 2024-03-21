@@ -64,6 +64,7 @@ class DeepgramTranscriber(BaseAsyncTranscriber[DeepgramTranscriberConfig]):
             )
         self._ended = False
         self.is_ready = False
+        self.data = []
         self.logger = logger or logging.getLogger(__name__)
         self.audio_cursor = 0.0
         self.openai_client = OpenAI(api_key="EMPTY", base_url=getenv("AI_API_BASE"))
@@ -221,12 +222,16 @@ The exact format to return is:
     async def process(self):
         self.audio_cursor = 0.0
         extra_headers = {"Authorization": f"Token {self.api_key}"}
+        silero_url = getenv("SILERO_URL")
+        self.logger.info(f"Connecting to {self.get_deepgram_url()}")
 
         async with websockets.connect(
             self.get_deepgram_url(), extra_headers=extra_headers
-        ) as ws:
+        ) as deepgram_ws, websockets.connect(silero_url) as silero_ws:
 
-            async def sender(ws: WebSocketClientProtocol):  # sends audio to websocket
+            async def sender(
+                deepgram_ws: WebSocketClientProtocol, silero_ws: WebSocketClientProtocol
+            ):
                 while not self._ended:
                     try:
                         data = await asyncio.wait_for(self.input_queue.get(), 5)
@@ -234,13 +239,16 @@ The exact format to return is:
                         break
                     num_channels = 1
                     sample_width = 2
+
                     self.audio_cursor += len(data) / (
                         self.transcriber_config.sampling_rate
                         * num_channels
                         * sample_width
                     )
-                    await ws.send(data)
-                self.logger.debug("Terminating Deepgram transcriber sender")
+                    # self.logger.info(f"Len of data: {len(data)}")
+                    await asyncio.gather(silero_ws.send(data), deepgram_ws.send(data))
+
+                self.logger.debug("Terminating sender")
 
             async def receiver(ws: WebSocketClientProtocol):
                 buffer = ""
@@ -298,4 +306,23 @@ The exact format to return is:
                     )
                 self.logger.debug("Terminating Deepgram transcriber receiver")
 
-            await asyncio.gather(sender(ws), receiver(ws))
+            async def silero_receiver(ws: WebSocketClientProtocol):
+                while not self._ended:
+                    try:
+                        msg = await ws.recv()
+                        data = json.loads(msg)
+                        vad_label = data["vad_label"]
+                        confidence = data["confidence"]
+                        if vad_label == 1:
+                            self.logger.info(f"Silero VAD label: {vad_label}")
+
+                    except Exception as e:
+                        self.logger.debug(f"Got error {e} in Silero receiver")
+                        break
+                self.logger.debug("Terminating Silero receiver")
+
+            await asyncio.gather(
+                sender(deepgram_ws, silero_ws),
+                receiver(deepgram_ws),
+                silero_receiver(silero_ws),
+            )
