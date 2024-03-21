@@ -239,8 +239,10 @@ class AzureSynthesizer(BaseSynthesizer[AzureSynthesizerConfig]):
             ssml_root = ElementTree.fromstring(
                 f'<speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" xmlns:mstts="http://www.w3.org/2001/mstts" xml:lang="en-US">'
             )
-            voice = ElementTree.SubElement(ssml_root, "voice", {"name": "DragonLatestNeural"})
-            tts_embedding = ElementTree.SubElement(ssml_root, "mstts:ttsembedding", {"speakerProfileId": self.synthesizer_config.azure_speaker_id})
+            voice = ElementTree.SubElement(ssml_root, "voice")
+            voice.set("name",  "DragonLatestNeural")
+            tts_embedding = ElementTree.SubElement(voice, "mstts:ttsembedding")
+            tts_embedding.set("speakerProfileId", self.synthesizer_config.azure_speaker_id)
             tts_embedding.text = message
             return ElementTree.tostring(ssml_root, encoding="unicode")
 
