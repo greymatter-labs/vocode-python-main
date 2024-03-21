@@ -96,6 +96,7 @@ class CommandAgent(RespondAgent[CommandAgentConfig]):
         self.conversation_id = None
         self.twilio_sid = None
         model_id = "CohereForAI/c4ai-command-r-v01"
+        self.no_tool_reason = ""
 
         self.agent_config.pending_action = None
         if agent_config.azure_params:
@@ -188,6 +189,7 @@ class CommandAgent(RespondAgent[CommandAgentConfig]):
         messages: Optional[List] = None,
         use_functions: bool = True,
         affirmative_phrase: Optional[str] = "",
+        reason: str = "",
         did_action: str = None,
     ):
         assert self.transcript is not None
@@ -197,6 +199,7 @@ class CommandAgent(RespondAgent[CommandAgentConfig]):
             self.transcript,
             self.agent_config.prompt_preamble,
             did_action=did_action,
+            reason=reason,
         )
         # log messages
         self.logger.debug(f"Messages: {messages}")
@@ -344,7 +347,7 @@ class CommandAgent(RespondAgent[CommandAgentConfig]):
                 "description": "Calls a standard (un-augmented) AI chatbot to generate a response given the conversation history",
                 "parameter_definitions": {
                     "no_api_reason": {
-                        "description": "The reason why an API call was not made",
+                        "description": "The reason why an API call was not made, for instance, if a piece of information was missing or if an action was not required",
                         "type": "str",
                         "required": True,
                     }
@@ -495,6 +498,9 @@ class CommandAgent(RespondAgent[CommandAgentConfig]):
                         self.logger.info(
                             f"No tool, model wants to directly respond: {tool_params}"
                         )
+                        self.logger.info(json.dumps(tool_params))
+                        if "no_api_reason" in tool_params:
+                            self.no_tool_reason = tool_params["no_api_reason"]
                         return None
 
                     if tool_name and tool_params is not None:
@@ -517,6 +523,7 @@ class CommandAgent(RespondAgent[CommandAgentConfig]):
                                 ),
                             )
                             self.can_send = False
+                            self.no_tool_reason = ""
                             return {
                                 "tool_name": tool_name,
                                 "tool_params": json.dumps(tool_params),
@@ -661,10 +668,14 @@ class CommandAgent(RespondAgent[CommandAgentConfig]):
         self.logger.debug(f"COMPLETION IS RESPONDING")
         if affirmative_phrase:
             chat_parameters = self.get_completion_parameters(
-                affirmative_phrase=affirmative_phrase, did_action=should_continue
+                affirmative_phrase=affirmative_phrase,
+                did_action=should_continue,
+                reason=self.no_tool_reason,
             )
         else:
-            chat_parameters = self.get_completion_parameters(did_action=should_continue)
+            chat_parameters = self.get_completion_parameters(
+                did_action=should_continue, reason=self.no_tool_reason
+            )
 
         prompt_buffer = chat_parameters["prompt"]
         # print number of new lines in the prompt buffer

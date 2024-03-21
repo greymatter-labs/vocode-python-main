@@ -315,6 +315,7 @@ def format_openai_chat_completion_from_transcript(
     transcript: Transcript,
     prompt_preamble: Optional[str] = None,
     did_action: str = None,
+    reason: str = "",
 ) -> str:
     # Initialize the messages list
     messages = []
@@ -376,6 +377,8 @@ def format_openai_chat_completion_from_transcript(
         #     input_ids += "<|START_OF_TURN_TOKEN|><|SYSTEM_TOKEN|>Agent did not perform an action.<|END_OF_TURN_TOKEN|>"
         # if not did_action:
         #     input_ids += f"<|START_OF_TURN_TOKEN|><|SYSTEM_TOKEN|>Agent performed an action: {did_action}<|END_OF_TURN_TOKEN|>"
+        if len(reason) > 0:
+            input_ids += f"<|START_OF_TURN_TOKEN|><|SYSTEM_TOKEN|>No action taken because: {reason}<|END_OF_TURN_TOKEN|>"
         input_ids += "<|START_OF_TURN_TOKEN|><|CHATBOT_TOKEN|>"
     except Exception as e:
         raise e
