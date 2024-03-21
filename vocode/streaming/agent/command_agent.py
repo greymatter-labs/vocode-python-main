@@ -506,7 +506,7 @@ class CommandAgent(RespondAgent[CommandAgentConfig]):
                     if tool_name and tool_params is not None:
                         try:
                             while not self.can_send:
-                                await asyncio.sleep(0.1)
+                                await asyncio.sleep(0.05)
                             await self.call_function(
                                 FunctionCall(
                                     name=tool_name, arguments=json.dumps(tool_params)
