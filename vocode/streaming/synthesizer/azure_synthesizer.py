@@ -235,7 +235,7 @@ class AzureSynthesizer(BaseSynthesizer[AzureSynthesizerConfig]):
         volume: int = 1,
         rate: int = 1,
     ) -> str:
-        if self.synthesizer_config.azure_speaker_id != 'none':
+        if self.synthesizer_config.azure_speaker_id:
             ssml_root = ElementTree.fromstring(
                 f'<speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" xmlns:mstts="http://www.w3.org/2001/mstts" xml:lang="en-US">'
             )
