@@ -3,7 +3,13 @@ import json
 import logging
 import random
 import string
-from transformers import AutoTokenizer, AutoModelForCausalLM, BitsAndBytesConfig
+import time
+from transformers import (
+    AutoTokenizer,
+    AutoModelForCausalLM,
+    BitsAndBytesConfig,
+    PreTrainedTokenizerFast,
+)
 
 from typing import Any, Dict, List, Optional, Tuple, Union
 
@@ -16,8 +22,13 @@ from pydantic import BaseModel
 
 from vocode import getenv
 from vocode.streaming.action.factory import ActionFactory
-from vocode.streaming.agent.base_agent import RespondAgent
-from vocode.streaming.models.actions import FunctionCall, FunctionFragment
+from vocode.streaming.agent.base_agent import (
+    AgentInput,
+    AgentResponseMessage,
+    RespondAgent,
+    TranscriptionAgentInput,
+)
+from vocode.streaming.models.actions import ActionInput, FunctionCall, FunctionFragment
 from vocode.streaming.models.agent import CommandAgentConfig
 from vocode.streaming.agent.utils import (
     format_command_function_completion_from_transcript,
@@ -29,6 +40,14 @@ from vocode.streaming.agent.utils import (
     vector_db_result_to_openai_chat_message,
     translate_message,
 )
+from vocode.streaming.transcriber.base_transcriber import (
+    Transcription,
+)
+from vocode.streaming.models.message import BaseMessage
+from vocode.streaming.action.phone_call_action import (
+    TwilioPhoneCallAction,
+    VonagePhoneCallAction,
+)
 from vocode.streaming.models.events import Sender
 from vocode.streaming.models.transcript import Transcript
 from vocode.streaming.vector_db.factory import VectorDBFactory
@@ -39,6 +58,8 @@ from telephony_app.utils.call_information_handler import (
     get_company_primary_phone_number,
     get_telephony_id_from_internal_id,
 )
+from pydantic import BaseModel, Field
+
 from telephony_app.utils.transfer_call_handler import transfer_call
 from telephony_app.utils.twilio_call_helper import hangup_twilio_call
 
@@ -46,6 +67,14 @@ HEADERS = {
     "Content-Type": "application/json",
     "Authorization": f"Bearer 'EMPTY'",
 }
+
+
+class EventLog(BaseModel):
+    sender: Sender
+    timestamp: float = Field(default_factory=time.time)
+
+    def to_string(self, include_timestamp: bool = False) -> str:
+        raise NotImplementedError
 
 
 class CommandAgent(RespondAgent[CommandAgentConfig]):
@@ -60,11 +89,13 @@ class CommandAgent(RespondAgent[CommandAgentConfig]):
         super().__init__(
             agent_config=agent_config, action_factory=action_factory, logger=logger
         )
-
-        model_id = "CohereForAI/c4ai-command-r-v01"
-        self.tokenizer = AutoTokenizer.from_pretrained(
-            model_id, trust_remote_code=True, use_fast=True
+        self.tokenizer: PreTrainedTokenizerFast = AutoTokenizer.from_pretrained(
+            "CohereForAI/c4ai-command-r-v01", trust_remote_code=True, use_fast=True
         )
+        self.can_send = False
+        self.conversation_id = None
+        self.twilio_sid = None
+        model_id = "CohereForAI/c4ai-command-r-v01"
 
         self.agent_config.pending_action = None
         if agent_config.azure_params:
@@ -157,11 +188,15 @@ class CommandAgent(RespondAgent[CommandAgentConfig]):
         messages: Optional[List] = None,
         use_functions: bool = True,
         affirmative_phrase: Optional[str] = "",
+        did_action: str = None,
     ):
         assert self.transcript is not None
-
+        # add an
         formatted_completion, messages = format_openai_chat_completion_from_transcript(
-            self.tokenizer, self.transcript, self.agent_config.prompt_preamble
+            self.tokenizer,
+            self.transcript,
+            self.agent_config.prompt_preamble,
+            did_action=did_action,
         )
         # log messages
         self.logger.debug(f"Messages: {messages}")
@@ -234,39 +269,39 @@ class CommandAgent(RespondAgent[CommandAgentConfig]):
 
     def get_tools(self):
         return [
-            # {
-            #     "name": "transfer_call",
-            #     "description": "Transfers when the agent agrees to transfer the call",
-            #     "parameter_definitions": {
-            #         "transfer_reason": {
-            #             "description": "The reason for transferring the call, limited to 120 characters",
-            #             "type": "str",
-            #             "required": True,
-            #         }
-            #     },
-            # },
-            # {
-            #     "name": "hangup_call",
-            #     "description": "Hangup the call if the assistant does not think the conversation is appropriate to continue",
-            #     "parameter_definitions": {
-            #         "end_reason": {
-            #             "description": "The reason for ending the call, limited to 120 characters",
-            #             "type": "str",
-            #             "required": True,
-            #         }
-            #     },
-            # },
-            # {
-            #     "name": "search_online",
-            #     "description": "Searches online when the agent says they will look something up",
-            #     "parameter_definitions": {
-            #         "query": {
-            #             "description": "The search query to be sent to the online search API",
-            #             "type": "str",
-            #             "required": True,
-            #         }
-            #     },
-            # },
+            {
+                "name": "transfer_call",
+                "description": "Transfers when the agent agrees to transfer the call",
+                "parameter_definitions": {
+                    "transfer_reason": {
+                        "description": "The reason for transferring the call, limited to 120 characters",
+                        "type": "str",
+                        "required": True,
+                    }
+                },
+            },
+            {
+                "name": "hangup_call",
+                "description": "Hangup the call if the assistant does not think the conversation is appropriate to continue",
+                "parameter_definitions": {
+                    "end_reason": {
+                        "description": "The reason for ending the call, limited to 120 characters",
+                        "type": "str",
+                        "required": True,
+                    }
+                },
+            },
+            {
+                "name": "search_online",
+                "description": "Searches online when the agent says they will look something up",
+                "parameter_definitions": {
+                    "query": {
+                        "description": "The search query to be sent to the online search API",
+                        "type": "str",
+                        "required": True,
+                    }
+                },
+            },
             {
                 "name": "send_text",
                 "description": "Triggered when the agent sends a text, only if they have been provided a valid phone number and a message to send.",
@@ -307,30 +342,90 @@ class CommandAgent(RespondAgent[CommandAgentConfig]):
             {
                 "name": "directly_answer",
                 "description": "Calls a standard (un-augmented) AI chatbot to generate a response given the conversation history",
-                "parameter_definitions": {},
+                "parameter_definitions": {
+                    "no_api_reason": {
+                        "description": "The reason why an API call was not made",
+                        "type": "str",
+                        "required": True,
+                    }
+                },
             },
         ]
 
-    async def run_nonblocking_checks(self, latest_agent_response: str):
-        if len(latest_agent_response) == 0:
-            self.logger.info(
-                "Skipping nonblocking checks as the agent response is empty"
+    async def call_function(self, function_call: FunctionCall, agent_input: AgentInput):
+        action_config = self._get_action_config(function_call.name)
+        if action_config is None:
+            self.logger.error(
+                f"Function {function_call.name} not found in agent config, skipping"
             )
             return
+        action = self.action_factory.create_action(action_config)
+        params = json.loads(function_call.arguments)
+        user_message_tracker = None
+        if "user_message" in params:
+            self.logger.info(f"User message: {params['user_message']}")
+            user_message = params["user_message"]
+            user_message_tracker = asyncio.Event()
+            self.produce_interruptible_agent_response_event_nonblocking(
+                AgentResponseMessage(message=BaseMessage(text=user_message)),
+                agent_response_tracker=user_message_tracker,
+            )
+        action_input: ActionInput
+        if isinstance(action, VonagePhoneCallAction):
+            assert (
+                agent_input.vonage_uuid is not None
+            ), "Cannot use VonagePhoneCallActionFactory unless the attached conversation is a VonageCall"
+            action_input = action.create_phone_call_action_input(
+                agent_input.conversation_id,
+                params,
+                agent_input.vonage_uuid,
+                user_message_tracker,
+            )
+        elif isinstance(action, TwilioPhoneCallAction):
+            assert (
+                agent_input.twilio_sid is not None
+            ), "Cannot use TwilioPhoneCallActionFactory unless the attached conversation is a TwilioCall"
+            action_input = action.create_phone_call_action_input(
+                agent_input.conversation_id,
+                params,
+                agent_input.twilio_sid,
+                user_message_tracker,
+            )
+        else:
+            action_input = action.create_action_input(
+                conversation_id=agent_input.conversation_id,
+                params=params,
+                user_message_tracker=user_message_tracker,
+            )
+        event = self.interruptible_event_factory.create_interruptible_event(
+            action_input, is_interruptible=action.is_interruptible
+        )
+        assert self.transcript is not None
+        # self.transcript.add_action_start_log(
+        #     action_input=action_input,
+        #     conversation_id=agent_input.conversation_id,
+        # )
+        self.actions_queue.put_nowait(event)
+        return
+
+    async def run_nonblocking_checks(
+        self, conversation_id
+    ) -> Optional[Dict]:  # returns None or a dict if model should be called
         tools = self.get_tools()
         if self.agent_config.actions:
-            messages, uselessmessagearray = (
-                format_command_function_completion_from_transcript(
-                    self.tokenizer,
-                    self.transcript,
-                    tools,
-                    self.agent_config.prompt_preamble,
-                )
+            messages, messageArray = format_command_function_completion_from_transcript(
+                self.tokenizer,
+                self.transcript.event_logs,
+                tools,
+                self.agent_config.prompt_preamble,
             )
             # print role of the latest message
-            self.logger.error(f"Role was: {messages[-1]}")
+            self.logger.error(f"Role was: {messageArray[-1]}")
             # tool_chat = self.prepare_chat_for_tool_check(latest_agent_response)
             self.logger.info(f"tool_chat was {messages}")
+            if "Function call:" in messageArray[-1]["content"]:
+                self.logger.info("Skipping tool use due to tool use.")
+                return None
 
             async def get_response(prompt_buffer) -> str:
                 self.logger.info(f"Prompt buffer: {prompt_buffer}")
@@ -378,38 +473,60 @@ class CommandAgent(RespondAgent[CommandAgentConfig]):
                     self.logger.error(
                         f"JSON DECODE ERROR: {e} with response: {response}"
                     )
-                    return
+                    return None
                 except Exception as e:
                     self.logger.error(
                         f"UNEXPECTED ERROR: {e} with response: {response}"
                     )
-                    return
+                    return None
 
                 if not isinstance(response_data, list) or not response_data:
                     self.logger.error(
                         f"RESPONSE FORMAT ERROR: Expected a list with data, got: {response_data}"
                     )
-                    return
+                    return None
 
                 self.logger.info(f"Response was: {response_data}")
-                tool_name = response_data[0].get("tool_name")
-                tool_params = response_data[0].get("parameters")
+                for tool in response_data:
+                    tool_name = tool.get("tool_name")
+                    tool_params = tool.get("parameters")
 
-                if tool_name == "directly_answer":
-                    self.logger.info("No tool, model wants to directly respond.")
-                elif tool_name and tool_params is not None:
-                    try:
-                        self.agent_config.pending_action = FunctionCall(
-                            name=tool_name, arguments=json.dumps(tool_params)
-                        )
+                    if tool_name == "directly_answer":
                         self.logger.info(
-                            f"Pending action: {self.agent_config.pending_action}"
+                            f"No tool, model wants to directly respond: {tool_params}"
                         )
-                    except Exception as e:
-                        self.logger.error(f"ERROR CREATING FUNCTION CALL: {e}")
-                else:
-                    self.logger.error("MISSING TOOL NAME OR PARAMETERS IN RESPONSE")
-            return
+                        return None
+
+                    if tool_name and tool_params is not None:
+                        try:
+                            while not self.can_send:
+                                await asyncio.sleep(0.1)
+                            await self.call_function(
+                                FunctionCall(
+                                    name=tool_name, arguments=json.dumps(tool_params)
+                                ),
+                                TranscriptionAgentInput(
+                                    transcription=Transcription(
+                                        message="I am doing that for you now.",
+                                        confidence=1.0,
+                                        is_final=True,
+                                        time_silent=0.0,
+                                    ),
+                                    conversation_id=self.conversation_id,
+                                    twilio_sid=self.twilio_sid,
+                                ),
+                            )
+                            self.can_send = False
+                            return {
+                                "tool_name": tool_name,
+                                "tool_params": json.dumps(tool_params),
+                            }
+
+                        except Exception as e:
+                            self.logger.error(f"ERROR CREATING FUNCTION CALL: {e}")
+                            break  # If there's an error, we stop processing further tools
+                return None
+            return None
 
     def prepare_chat(self, latest_agent_response):
         chat = format_openai_chat_messages_from_transcript(self.transcript)[1:]
@@ -450,29 +567,6 @@ class CommandAgent(RespondAgent[CommandAgentConfig]):
         ]
         return is_classified_tool, tool_classification
 
-    async def handle_tool_response(self, chat, tools, tool_classification):
-        self.logger.info(f"chat was {chat}")
-        # get the last 3 messages of the chat
-        chat = chat[1:]
-        tool_response = await self.fclient.chat.completions.create(
-            model="meetkai/functionary-small-v2.2",
-            messages=chat,
-            tools=tools,
-            tool_choice={"type": "function", "function": {"name": tool_classification}},
-        )
-        tool_response = tool_response.choices[0]
-        self.logger.info(f"The tool_response is {tool_response}")
-
-        if tool_response.message.tool_calls:
-            tool_call = tool_response.message.tool_calls[0]
-            self.agent_config.pending_action = FunctionCall(
-                name=tool_call.function.name, arguments=tool_call.function.arguments
-            )
-            self.logger.info(f"Pending action: {self.agent_config.pending_action}")
-        else:
-            self.agent_config.pending_action = None
-            self.logger.info("No pending action")
-
     async def respond(
         self,
         human_input,
@@ -502,6 +596,8 @@ class CommandAgent(RespondAgent[CommandAgentConfig]):
         is_interrupt: bool = False,
         stream_output: bool = True,
     ) -> str:
+        # if there arent equal event start and event finish wait
+
         digits = [
             "zero",
             "one",
@@ -540,15 +636,35 @@ class CommandAgent(RespondAgent[CommandAgentConfig]):
                 latest_human_message.text = translated_message
 
         assert self.transcript is not None
+
+        should_continue = None
+        if self.agent_config.actions:
+            should_continue = await self.run_nonblocking_checks(conversation_id)
+            should_continue = should_continue
+            if should_continue is not None:
+                self.logger.info(f"Should continue: {should_continue}")
+                # action_config = self._get_action_config(function_call.name)
+                name = should_continue["tool_name"]
+                params = eval(should_continue["tool_params"])
+                self.logger.info(f"Name: {name}, Params: {params}")
+                action_config = self._get_action_config(name)
+                action = self.action_factory.create_action(action_config)
+                action_input = action.create_action_input(
+                    conversation_id, params, user_message_tracker=None
+                )
+                self.transcript.add_action_start_log(
+                    action_input=action_input,
+                    conversation_id=conversation_id,
+                )
         # log the transcript
         self.logger.debug(f"TRANSCRIPT: {self.transcript}")
         self.logger.debug(f"COMPLETION IS RESPONDING")
         if affirmative_phrase:
             chat_parameters = self.get_completion_parameters(
-                affirmative_phrase=affirmative_phrase
+                affirmative_phrase=affirmative_phrase, did_action=should_continue
             )
         else:
-            chat_parameters = self.get_completion_parameters()
+            chat_parameters = self.get_completion_parameters(did_action=should_continue)
 
         prompt_buffer = chat_parameters["prompt"]
         # print number of new lines in the prompt buffer
@@ -601,7 +717,7 @@ class CommandAgent(RespondAgent[CommandAgentConfig]):
             prompt_buffer = chat_parameters["prompt"]
 
         async def get_response(prompt_buffer) -> str:
-            self.logger.info(f"Prompt buffer: {prompt_buffer}")
+            # self.logger.info(f"Prompt buffer: {prompt_buffer}")
             response_text = ""
             async with aiohttp.ClientSession() as session:
                 base_url = getenv("AI_API_BASE")
@@ -637,10 +753,11 @@ class CommandAgent(RespondAgent[CommandAgentConfig]):
             "<|END_OF_TURN_TOKEN|>", ""
         )
         # Run the nonblocking checks in the background
-        if self.agent_config.actions:
-            asyncio.create_task(
-                self.run_nonblocking_checks(latest_agent_response=latest_agent_response)
-            )
+        # if self.agent_config.actions:
+        #     asyncio.create_task(
+        #         self.run_nonblocking_checks(latest_agent_response=latest_agent_response)
+        #     )
+        self.can_send = False
         return latest_agent_response, True
 
     async def generate_response(

@@ -5,6 +5,8 @@ from aiohttp import BasicAuth
 from typing import Type
 from pydantic import BaseModel, Field
 from vocode.streaming.action.phone_call_action import TwilioPhoneCallAction
+from vocode.streaming.action.base_action import BaseAction
+
 from vocode.streaming.models.actions import (
     ActionConfig,
     ActionInput,
@@ -14,11 +16,11 @@ from vocode.streaming.models.actions import (
 
 
 class SendTextActionConfig(ActionConfig, type=ActionType.SEND_TEXT):
-    to_phone: str
     from_phone: str
 
 
 class SendTextParameters(BaseModel):
+    to_phone: str
     message: str
 
 
@@ -26,9 +28,7 @@ class SendTextResponse(BaseModel):
     status: str = Field(None, description="The response received from the recipient")
 
 
-class SendText(
-    TwilioPhoneCallAction[SendTextActionConfig, SendTextParameters, SendTextResponse]
-):
+class SendText(BaseAction[SendTextActionConfig, SendTextParameters, SendTextResponse]):
     description: str = (
         "sends a text message to a phone number and waits for a response for one minute or until one is received."
     )
@@ -87,9 +87,12 @@ class SendText(
         self, action_input: ActionInput[SendTextParameters]
     ) -> ActionOutput[SendTextResponse]:
         message = action_input.params.message
-        await self.send_text(self.action_config.to_phone, message)
+        to_phone = action_input.params.to_phone
+        await self.send_text(to_phone, message)
         # response = await self.wait_for_response(self.action_config.to_phone)
         return ActionOutput(
             action_type=action_input.action_config.type,
-            response=SendTextResponse(status="Message has been sent successfully."),
+            response=SendTextResponse(
+                status=f"Message to {to_phone} has been sent successfully with the content: '{message}'."
+            ),
         )

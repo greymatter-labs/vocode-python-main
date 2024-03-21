@@ -506,6 +506,8 @@ class StreamingConversation(Generic[OutputDeviceType]):
 
             self.conversation.logger.info(f"Marking as send")
             self.ready_to_send = BufferStatus.SEND
+            # releast the action, if there is one
+            self.conversation.agent.can_send = True
 
         async def process(self, transcription: Transcription):
             # Ignore the transcription if we are currently in-flight (i.e., the agent is speaking)
@@ -1150,6 +1152,9 @@ class StreamingConversation(Generic[OutputDeviceType]):
             await asyncio.gather(filler_audio_task, affirmative_audio_task)
 
         self.agent.start()
+        if isinstance(self.agent, CommandAgent):
+            self.agent.conversation_id = self.id
+            self.agent.twilio_sid = getattr(self, "twilio_sid", None)
         initial_message = self.agent.get_agent_config().initial_message
         if initial_message:
             asyncio.create_task(self.send_initial_message(initial_message))
@@ -1196,7 +1201,7 @@ class StreamingConversation(Generic[OutputDeviceType]):
                 self.logger.debug("Conversation idle for too long, terminating")
                 await self.terminate()
                 return
-            await asyncio.sleep(15)
+            await asyncio.sleep(60)
 
     async def track_bot_sentiment(self):
         """Updates self.bot_sentiment every second based on the current transcript"""
@@ -1371,36 +1376,6 @@ class StreamingConversation(Generic[OutputDeviceType]):
             ),
             None,
         )
-        # If a transcript message is provided, check if there is a pending action to execute
-        if transcript_message and isinstance(self.agent, CommandAgent):
-            self.logger.info(
-                f"The pending action is {self.agent.agent_config.pending_action}"
-                f" and the current transcript text is {transcript_message.text}"
-            )
-            # If a pending action exists, execute it and reset the pending action
-            if (
-                self.agent.agent_config.pending_action
-                and self.agent.agent_config.pending_action != "pending"
-            ):
-                asyncio.create_task(
-                    self.agent.call_function(
-                        self.agent.agent_config.pending_action,
-                        TranscriptionAgentInput(
-                            transcription=Transcription(
-                                message=last_agent_message,
-                                confidence=1.0,
-                                is_final=True,
-                                time_silent=0.0,
-                            ),
-                            conversation_id=self.id,
-                            vonage_uuid=getattr(self, "vonage_uuid", None),
-                            twilio_sid=getattr(self, "twilio_sid", None),
-                        ),
-                    )
-                )
-
-                self.agent.agent_config.pending_action = "pending"
-
         # Sleep for the duration of the speech minus the time already spent sending the data
         sleep_time = max(
             speech_length_seconds

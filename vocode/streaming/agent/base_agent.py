@@ -210,12 +210,16 @@ class RespondAgent(BaseAgent[AgentConfigType]):
     ) -> bool:
         conversation_id = agent_input.conversation_id
         tracer_name_start = await self.get_tracer_name_start()
+
         agent_span = tracer.start_span(
             f"{tracer_name_start}.generate_total"  # type: ignore
         )
         agent_span_first = tracer.start_span(
             f"{tracer_name_start}.generate_first"  # type: ignore
         )
+        if not transcription:
+            self.logger.debug("No transcription, skipping response generation")
+            return False
         if affirmative_phrase:
             response = await self.generate_completion(
                 human_input=transcription.message,
@@ -315,6 +319,7 @@ class RespondAgent(BaseAgent[AgentConfigType]):
                     self.agent_config.pending_action = None
                     # resetting pending action
                     self.logger.debug("Resetting pending action")
+                return
             else:
                 raise ValueError("Invalid AgentInput type")
 
@@ -328,6 +333,11 @@ class RespondAgent(BaseAgent[AgentConfigType]):
             ).affirmative_phrase
             self.logger.debug("Responding to transcription")
             should_stop = False
+            if "transcription" not in locals() or transcription is None:
+                # transcription = Transcription(
+                #     message="Is the action completed?", confidence=1.0, is_final=True
+                # )
+                return
             if phrase:
                 should_stop = await self.handle_generate_response(
                     transcription, agent_input, phrase
