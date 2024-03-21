@@ -246,7 +246,11 @@ class AzureSynthesizer(BaseSynthesizer[AzureSynthesizerConfig]):
         )
         voice = ElementTree.SubElement(ssml_root, "voice")
         voice.set("name", self.voice_name)
-        if self.synthesizer_config.language_code != "en-US":
+        if self.synthesizer_config.azure_speaker_id != 'none':
+            voice.set("name", "DragonLatestNeural")
+            tts_embedding = ElementTree.SubElement(ssml_root, "mstts:ttsembedding", {"speakerProfileId": self.synthesizer_config.azure_speaker_id})
+            voice_root = tts_embedding
+        elif self.synthesizer_config.language_code != "en-US":
             lang = ElementTree.SubElement(voice, "{%s}lang" % NAMESPACES.get(""))
             lang.set("xml:lang", self.synthesizer_config.language_code)
             voice_root = lang

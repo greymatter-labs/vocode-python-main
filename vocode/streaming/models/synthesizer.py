@@ -81,6 +81,7 @@ AZURE_SYNTHESIZER_DEFAULT_RATE = 15
 class AzureSynthesizerConfig(SynthesizerConfig, type=SynthesizerType.AZURE.value):
     voice_name: Optional[str] = None
     azure_speech_key: Optional[str] = None
+    azure_speaker_id: Optional[str] = None
     azure_speech_region: Optional[str] = None
     azure_endpoint_id: Optional[str] = None
     pitch: int = AZURE_SYNTHESIZER_DEFAULT_PITCH
