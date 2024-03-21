@@ -138,6 +138,9 @@ class AzureSynthesizer(BaseSynthesizer[AzureSynthesizerConfig]):
         self.logger = logger or logging.getLogger(__name__)
 
     async def get_phrase_filler_audios(self) -> List[FillerAudio]:
+        if self.synthesizer_config.azure_speaker_id:
+            return []
+
         filler_phrase_audios = []
         for filler_phrase in FILLER_PHRASES:
             cache_key = "-".join(
@@ -174,6 +177,9 @@ class AzureSynthesizer(BaseSynthesizer[AzureSynthesizerConfig]):
         return filler_phrase_audios
 
     async def get_phrase_affirmative_audios(self) -> List[FillerAudio]:
+        if self.synthesizer_config.azure_speaker_id:
+            return []
+
         affirmative_phrase_audios = []
         for affirmative_phrase in AFFIRMATIVE_PHRASES:
             cache_key = "-".join(
