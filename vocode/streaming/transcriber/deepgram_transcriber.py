@@ -223,7 +223,9 @@ The exact format to return is:
         self.audio_cursor = 0.0
         extra_headers = {"Authorization": f"Token {self.api_key}"}
         silero_url = getenv("SILERO_URL")
+
         self.logger.info(f"Connecting to {self.get_deepgram_url()}")
+        self.logger.info(f"Connecting to {silero_url}")
 
         async with websockets.connect(
             self.get_deepgram_url(), extra_headers=extra_headers
@@ -312,9 +314,15 @@ The exact format to return is:
                         msg = await ws.recv()
                         data = json.loads(msg)
                         vad_label = data["vad_label"]
-                        confidence = data["confidence"]
+                        # confidence = data["confidence"]
                         if vad_label == 1:
-                            self.logger.info(f"Silero VAD label: {vad_label}")
+                            self.output_queue.put_nowait(
+                                Transcription(
+                                    message="silero",
+                                    confidence=1.0,
+                                    is_final=False,
+                                )
+                            )
 
                     except Exception as e:
                         self.logger.debug(f"Got error {e} in Silero receiver")

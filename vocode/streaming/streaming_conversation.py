@@ -525,9 +525,8 @@ class StreamingConversation(Generic[OutputDeviceType]):
             if transcription.message.strip() == "vad":
                 if len(self.buffer) == 0:
                     self.conversation.logger.info("Ignoring vad, empty message.")
+                    # If a buffer check task is running, extend the current sleep time
                     return
-
-                # If a buffer check task is running, extend the current sleep time
                 if self.buffer_check_task and not self.buffer_check_task.done():
                     self.conversation.logger.info(
                         "Adding waiting chunk to buffer check task due to VAD"
@@ -544,8 +543,12 @@ class StreamingConversation(Generic[OutputDeviceType]):
                     # )
                     self.current_sleep_time = self.vad_time
                     self.vad_time = self.vad_time / 3
+                    self.conversation.logger.info(f"VAD time: {self.vad_time}")
                     # when we wait more, they were silent so we want to push out a filler audio
-
+                    
+            if transcription.message.strip() == "silero":
+                self.conversation.logger.info("silero")
+                self.conversation.broadcast_interrupt()
                 return
             if "words" not in json.loads(transcription.message):
                 self.conversation.logger.info("Ignoring transcription, no words.")
