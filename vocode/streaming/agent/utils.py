@@ -185,7 +185,7 @@ def format_openai_chat_messages_from_transcript(
     transcript: Transcript, prompt_preamble: Optional[str] = None
 ) -> List[dict]:
     chat_messages: List[Dict[str, Optional[Any]]] = (
-        [{"role": "user", "content": prompt_preamble}] if prompt_preamble else []
+        [{"role": "system", "content": prompt_preamble}] if prompt_preamble else []
     )
 
     # merge consecutive bot messages

@@ -897,7 +897,7 @@ class StreamingConversation(Generic[OutputDeviceType]):
                     )
                 else:
                     self.conversation.logger.debug(
-                        f"SYNTH: WAS NOT CHATGPT AGENT, {agent_response_message.message.text}"
+                        f"SYNTH: WAS NOT COMMAND AGENT, {agent_response_message.message.text}"
                     )
             except asyncio.CancelledError:
                 pass
