@@ -49,7 +49,6 @@ from vocode.streaming.agent.utils import (
     openai_get_tokens,
     translate_message,
     vector_db_result_to_openai_chat_message,
-    format_openai_chat_completion_from_transcript,
 )
 from vocode.streaming.constants import (
     TEXT_TO_SPEECH_CHUNK_SIZE_SECONDS,
@@ -864,7 +863,7 @@ class StreamingConversation(Generic[OutputDeviceType]):
 
                     if self.conversation.agent.agent_config.language != "en-US":
                         self.conversation.logger.debug(
-                            f"Translating message from English to Hindi {agent_response_message.message.text}"
+                            f"Translating message from English to {self.conversation.agent.agent_config.language} {agent_response_message.message.text}"
                         )
                         translated_message = translate_message(
                             self.conversation.logger,
@@ -874,6 +873,7 @@ class StreamingConversation(Generic[OutputDeviceType]):
                         )
                         current_message = agent_response_message.message.text + ""
                         agent_response_message.message.text = translated_message
+                        self.conversation.logger.info(f"synthesizer config in streaming_conversation is {self.conversation.synthesizer.synthesizer_config}, message is {translated_message}")
                         synthesis_result = (
                             await self.conversation.synthesizer.create_speech(
                                 agent_response_message.message,
@@ -883,6 +883,7 @@ class StreamingConversation(Generic[OutputDeviceType]):
                         )
                         agent_response_message.message.text = current_message
                     else:
+                        self.conversation.logger.info(f"synthesizer config in streaming_conversation is {self.conversation.synthesizer.synthesizer_config}, message is {agent_response_message.message}")
                         synthesis_result = (
                             await self.conversation.synthesizer.create_speech(
                                 agent_response_message.message,
@@ -1147,8 +1148,8 @@ class StreamingConversation(Generic[OutputDeviceType]):
             affirmative_audio_task = asyncio.create_task(
                 self.synthesizer.set_affirmative_audios(self.filler_audio_config)
             )
-            prompt_preamble = self.agent.get_agent_config().prompt_preamble
-            self.logger.debug(f"Prompt Preamble: {prompt_preamble}")
+            # prompt_preamble = self.agent.get_agent_config().prompt_preamble
+            # self.logger.debug(f"Prompt Preamble: {prompt_preamble}")
 
             await asyncio.gather(filler_audio_task, affirmative_audio_task)
 

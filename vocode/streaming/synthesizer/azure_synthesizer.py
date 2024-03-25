@@ -77,6 +77,8 @@ class AzureSynthesizer(BaseSynthesizer[AzureSynthesizerConfig]):
             or getenv("AZURE_SPEECH_KEY")
             or synthesizer_config.azure_speech_key
         )
+        logger.info("=======SYNTHESIZER CONFIG======")
+        logger.info(synthesizer_config)
         azure_speech_region = (
             azure_speech_region
             or getenv("AZURE_SPEECH_REGION")
@@ -343,7 +345,7 @@ class AzureSynthesizer(BaseSynthesizer[AzureSynthesizerConfig]):
         modified_message = re.sub(
             r"\b\d+-\d+\b",
             remove_dashes,
-            message.text.replace("-", "...").replace(" (", "").replace(") ", ""),
+            message.text.replace("-", " ").replace(" (", "").replace(") ", ""),
         )
 
         modified_message = re.sub(r"\b(\d{5,})\b", format_digits, modified_message)
