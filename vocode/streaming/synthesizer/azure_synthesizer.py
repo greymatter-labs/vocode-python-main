@@ -77,8 +77,6 @@ class AzureSynthesizer(BaseSynthesizer[AzureSynthesizerConfig]):
             or getenv("AZURE_SPEECH_KEY")
             or synthesizer_config.azure_speech_key
         )
-        logger.info("=======SYNTHESIZER CONFIG======")
-        logger.info(synthesizer_config)
         azure_speech_region = (
             azure_speech_region
             or getenv("AZURE_SPEECH_REGION")

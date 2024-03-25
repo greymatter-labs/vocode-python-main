@@ -482,14 +482,13 @@ class CommandAgent(RespondAgent[CommandAgentConfig]):
                         )
                         self.logger.info(json.dumps(tool_params))
                         if self.agent_config.model_name.lower() == QWEN_MODEL_NAME.lower():
-                            self.logger.info("Using qwen for direct response!!!!!!!! ~~~~~~~")
                             message = ""
                             async for message_chunk in qwen_response_future:
                                 message += message_chunk[0] + " "
                                 if message_chunk[1]:
                                     break
                             #TODO? message = message.replace("<|END_OF_TURN_TOKEN|>")
-                            self.logger.info(f"sending qwen message {message}")
+                            self.logger.info(f"used Qwen for response: {message}")
                             self.tool_message = message.strip()
                         elif "message" in tool_params:
                             self.tool_message = tool_params["message"]
@@ -659,8 +658,6 @@ class CommandAgent(RespondAgent[CommandAgentConfig]):
                     self.logger.error(f"Error creating action: {e}")
                     self.tool_message = ""
 
-        # log the transcript
-        # self.logger.debug(f"TRANSCRIPT: {self.transcript}")
         self.logger.debug(f"COMPLETION IS RESPONDING")
         if len(self.tool_message) > 0:
             return self.tool_message, True

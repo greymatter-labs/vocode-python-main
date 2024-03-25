@@ -248,7 +248,6 @@ def format_commandr_chat_completion_from_transcript(
     return input_ids, merged_messages
 
 async def get_commandr_response(prompt_buffer: str, logger: Logger):
-    # logger.info(f"Prompt buffer: {prompt_buffer}")
     response_text = ""
     prompt_buffer = prompt_buffer.replace(
         "directly-answer", "send_direct_response"

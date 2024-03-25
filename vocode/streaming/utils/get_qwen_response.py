@@ -74,9 +74,7 @@ async def get_qwen_response(
     logger: Logger,
     stream_output: bool = True,
 ):
-    # logger.info(f"prompt buffer in get_qwen_response is {prompt_buffer}")
     sentence_buffer = ""
-    # logger.info(f"Prompt buffer: {prompt_buffer}")
     if prompt_buffer[-1] == "\n" or prompt_buffer[-1] == " ":
         prompt_buffer = prompt_buffer[:-1]
 

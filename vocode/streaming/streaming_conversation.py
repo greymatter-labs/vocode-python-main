@@ -1148,8 +1148,6 @@ class StreamingConversation(Generic[OutputDeviceType]):
             affirmative_audio_task = asyncio.create_task(
                 self.synthesizer.set_affirmative_audios(self.filler_audio_config)
             )
-            # prompt_preamble = self.agent.get_agent_config().prompt_preamble
-            # self.logger.debug(f"Prompt Preamble: {prompt_preamble}")
 
             await asyncio.gather(filler_audio_task, affirmative_audio_task)
 

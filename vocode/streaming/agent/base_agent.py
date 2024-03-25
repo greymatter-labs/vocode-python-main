@@ -232,7 +232,7 @@ class RespondAgent(BaseAgent[AgentConfigType]):
                 agent_span_first=agent_span_first,
                 agent_input=agent_input
             )
-        else: 
+        else:
             function_call = await self.respond_with_functions(
                 transcription=transcription,
                 affirmative_phrase=affirmative_phrase,
