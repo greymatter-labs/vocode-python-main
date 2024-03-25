@@ -873,7 +873,6 @@ class StreamingConversation(Generic[OutputDeviceType]):
                         )
                         current_message = agent_response_message.message.text + ""
                         agent_response_message.message.text = translated_message
-                        self.conversation.logger.info(f"synthesizer config in streaming_conversation is {self.conversation.synthesizer.synthesizer_config}, message is {translated_message}")
                         synthesis_result = (
                             await self.conversation.synthesizer.create_speech(
                                 agent_response_message.message,
@@ -883,7 +882,6 @@ class StreamingConversation(Generic[OutputDeviceType]):
                         )
                         agent_response_message.message.text = current_message
                     else:
-                        self.conversation.logger.info(f"synthesizer config in streaming_conversation is {self.conversation.synthesizer.synthesizer_config}, message is {agent_response_message.message}")
                         synthesis_result = (
                             await self.conversation.synthesizer.create_speech(
                                 agent_response_message.message,
