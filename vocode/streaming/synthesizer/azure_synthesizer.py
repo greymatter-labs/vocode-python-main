@@ -138,6 +138,9 @@ class AzureSynthesizer(BaseSynthesizer[AzureSynthesizerConfig]):
         self.logger = logger or logging.getLogger(__name__)
 
     async def get_phrase_filler_audios(self) -> List[FillerAudio]:
+        if self.synthesizer_config.azure_speaker_id:
+            return []
+
         filler_phrase_audios = []
         for filler_phrase in FILLER_PHRASES:
             cache_key = "-".join(
@@ -174,6 +177,9 @@ class AzureSynthesizer(BaseSynthesizer[AzureSynthesizerConfig]):
         return filler_phrase_audios
 
     async def get_phrase_affirmative_audios(self) -> List[FillerAudio]:
+        if self.synthesizer_config.azure_speaker_id:
+            return []
+
         affirmative_phrase_audios = []
         for affirmative_phrase in AFFIRMATIVE_PHRASES:
             cache_key = "-".join(
@@ -235,6 +241,17 @@ class AzureSynthesizer(BaseSynthesizer[AzureSynthesizerConfig]):
         volume: int = 1,
         rate: int = 1,
     ) -> str:
+        if self.synthesizer_config.azure_speaker_id:
+            ssml_root = ElementTree.fromstring(
+                f'<speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" xmlns:mstts="http://www.w3.org/2001/mstts" xml:lang="en-US">'
+            )
+            voice = ElementTree.SubElement(ssml_root, "voice")
+            voice.set("name",  "DragonLatestNeural")
+            tts_embedding = ElementTree.SubElement(voice, "mstts:ttsembedding")
+            tts_embedding.set("speakerProfileId", self.synthesizer_config.azure_speaker_id)
+            tts_embedding.text = message
+            return ElementTree.tostring(ssml_root, encoding="unicode")
+
         voice_language_code = self.synthesizer_config.language_code
         if voice_language_code != "en-US" and voice_language_code != "en":
             rate = 0.1
