@@ -187,11 +187,8 @@ def format_command_grounded_completion_from_transcript(
 
 
 def format_commandr_chat_completion_from_transcript(
-    tokenizer: AutoTokenizer,
     transcript: Transcript,
     prompt_preamble: Optional[str] = None,
-    did_action: str = None,
-    reason: str = "",
 ) -> str:
     # Initialize the messages list
     messages = []
@@ -253,8 +250,6 @@ def format_commandr_chat_completion_from_transcript(
         #     input_ids += "<|START_OF_TURN_TOKEN|><|SYSTEM_TOKEN|>Agent did not perform an action.<|END_OF_TURN_TOKEN|>"
         # if not did_action:
         #     input_ids += f"<|START_OF_TURN_TOKEN|><|SYSTEM_TOKEN|>Agent performed an action: {did_action}<|END_OF_TURN_TOKEN|>"
-        if len(reason) > 0:
-            input_ids += f"<|START_OF_TURN_TOKEN|><|SYSTEM_TOKEN|>No action taken because: {reason}<|END_OF_TURN_TOKEN|>"
         input_ids += "<|START_OF_TURN_TOKEN|><|CHATBOT_TOKEN|>"
     except Exception as e:
         raise e
@@ -264,7 +259,7 @@ def format_commandr_chat_completion_from_transcript(
 
 async def get_commandr_response(prompt_buffer: str, logger: Logger):
     response_text = ""
-    prompt_buffer = prompt_buffer.replace("directly-answer", "send_direct_response")
+    # prompt_buffer = prompt_buffer.replace("directly-answer", "send_direct_response")
     async with aiohttp.ClientSession() as session:
         base_url = getenv("AI_API_BASE")
         data = {

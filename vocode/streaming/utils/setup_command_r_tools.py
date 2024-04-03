@@ -1,18 +1,28 @@
 import logging
 from vocode.streaming.models.agent import CommandAgentConfig
-from vocode.streaming.models.actions import ActionInput, FunctionCall, ActionType, FunctionFragment
+from vocode.streaming.models.actions import (
+    ActionInput,
+    FunctionCall,
+    ActionType,
+    FunctionFragment,
+)
 
 standard_tools = [
+    # {
+    #     "name": "send_direct_response",
+    #     "description": "Send the user a message directly, given the conversation history, must include the message",
+    #     "parameter_definitions": {
+    #         "message": {
+    #             "description": "Message you intend to send to the user",
+    #             "type": "str",
+    #             "required": True,
+    #         }
+    #     },
+    # },
     {
-        "name": "send_direct_response",
-        "description": "Send the user a message directly, given the conversation history, must include the message",
-        "parameter_definitions": {
-            "message": {
-                "description": "Message you intend to send to the user",
-                "type": "str",
-                "required": True,
-            }
-        },
+        "name": "directly_answer",
+        "description": "Calls a standard (un-augmented) AI chatbot to generate a response given the conversation history",
+        "parameter_definitions": {},
     },
 ]
 
@@ -126,16 +136,17 @@ all_optional_tools = {
     },
 }
 
+
 def setup_command_r_tools(action_config: CommandAgentConfig, logger: logging.Logger):
     tools = standard_tools.copy()
 
     if not action_config.actions:
         return tools
-    
+
     for action_config in action_config.actions:
         action_type: ActionType = action_config.type
         tool = all_optional_tools[action_type]
         if tool:
             tools.append(tool)
-    
+
     return tools

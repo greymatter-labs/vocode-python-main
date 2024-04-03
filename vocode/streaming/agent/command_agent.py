@@ -28,7 +28,12 @@ from vocode.streaming.agent.base_agent import (
     RespondAgent,
     TranscriptionAgentInput,
 )
-from vocode.streaming.models.actions import ActionInput, FunctionCall, ActionType, FunctionFragment
+from vocode.streaming.models.actions import (
+    ActionInput,
+    FunctionCall,
+    ActionType,
+    FunctionFragment,
+)
 from vocode.streaming.models.agent import CommandAgentConfig
 from vocode.streaming.agent.utils import (
     format_openai_chat_messages_from_transcript,
@@ -78,6 +83,7 @@ HEADERS = {
     "Authorization": f"Bearer 'EMPTY'",
 }
 
+
 class EventLog(BaseModel):
     sender: Sender
     timestamp: float = Field(default_factory=time.time)
@@ -107,7 +113,7 @@ class CommandAgent(RespondAgent[CommandAgentConfig]):
         self.twilio_sid = None
         model_id = "CohereForAI/c4ai-command-r-v01"
         self.tool_message = ""
-
+        self.prefix = None
         self.agent_config.pending_action = None
         if agent_config.azure_params:
             self.aclient = AsyncAzureOpenAI(
@@ -206,15 +212,14 @@ class CommandAgent(RespondAgent[CommandAgentConfig]):
         # add an
         formatted_completion, messages = (
             format_commandr_chat_completion_from_transcript(
-                self.tokenizer,
                 self.transcript,
                 self.agent_config.prompt_preamble,
-                did_action=did_action,
-                reason=reason,
             )
         )
         # log messages
         self.logger.debug(f"Messages: {messages}")
+        if len(affirmative_phrase) > 0:
+            formatted_completion += f" {affirmative_phrase}"
 
         # self.logger.debug(f"Formatted completion: {formatted_completion}")
         parameters: Dict[str, Any] = {
@@ -281,7 +286,6 @@ class CommandAgent(RespondAgent[CommandAgentConfig]):
                 true_conditions.append(condition)
 
         return true_conditions
-
 
     async def call_function(self, function_call: FunctionCall, agent_input: AgentInput):
         action_config = self._get_action_config(function_call.name)
@@ -350,8 +354,8 @@ class CommandAgent(RespondAgent[CommandAgentConfig]):
             data = {
                 "model": "Cyleux/prefixer",
                 "prompt": prompt,
-                "max_tokens": 10,
-                "temperature": 0.5,
+                "max_tokens": 20,
+                "temperature": 0.1,
                 "stop": ["\n", "</s>"],
             }
             async with aiohttp.ClientSession() as session:
@@ -368,6 +372,7 @@ class CommandAgent(RespondAgent[CommandAgentConfig]):
         prefix_response = await call_prefixer_api(
             prefix_prompt_buffer,
         )
+        self.prefix = prefix_response
         return prefix_response
 
     async def gen_tool_call(
@@ -383,6 +388,7 @@ class CommandAgent(RespondAgent[CommandAgentConfig]):
                     self.agent_config.prompt_preamble,
                 )
             )
+
             # self.logger.info(f"commandr_prompt_buffer was {commandr_prompt_buffer}")
             if "Do not provide" in messageArray[-1]["content"]:
                 self.logger.info("Skipping tool use due to tool use.")
@@ -409,13 +415,14 @@ class CommandAgent(RespondAgent[CommandAgentConfig]):
                         break
                 return response
 
-            commandr_response, qwen_response = await asyncio.gather(
+            prefix, commandr_response, qwen_response = await asyncio.gather(
+                self.gen_prefix(),
                 get_commandr_response(
                     prompt_buffer=commandr_prompt_buffer, logger=self.logger
                 ),
                 get_qwen_response_future(),
             )
-
+            # self.prefix = prefix
             if not commandr_response.startswith("Action: ```json"):
                 self.logger.error(
                     f"ACTION RESULT DID NOT LOOK RIGHT: {commandr_response}"
@@ -452,8 +459,8 @@ class CommandAgent(RespondAgent[CommandAgentConfig]):
                 for tool in commandr_response_data:
                     tool_name = tool.get("tool_name")
                     tool_params = tool.get("parameters")
-
-                    if tool_name == "send_direct_response":
+                    if tool_name == "directly_answer":
+                        # if tool_name == "send_direct_response":
                         self.logger.info(
                             f"No tool, model wants to directly respond: {tool_params}"
                         )
@@ -463,7 +470,13 @@ class CommandAgent(RespondAgent[CommandAgentConfig]):
                             self.tool_message = qwen_response.strip()
                         elif "message" in tool_params:
                             self.tool_message = tool_params["message"]
-                        return None
+                        while not self.can_send:
+                            await asyncio.sleep(0.05)
+                        return {
+                            "tool_name": tool_name,
+                            "tool_params": json.dumps(tool_params),
+                            "prefix": prefix,
+                        }
 
                     if (
                         tool_name
@@ -471,8 +484,11 @@ class CommandAgent(RespondAgent[CommandAgentConfig]):
                         and messageArray[-1]["role"] != "system"
                     ):
                         try:
+
                             while not self.can_send:
                                 await asyncio.sleep(0.05)
+                            # TODO how to do
+
                             await self.call_function(
                                 FunctionCall(
                                     name=tool_name, arguments=json.dumps(tool_params)
@@ -493,6 +509,7 @@ class CommandAgent(RespondAgent[CommandAgentConfig]):
                             return {
                                 "tool_name": tool_name,
                                 "tool_params": json.dumps(tool_params),
+                                "prefix": prefix,
                             }
 
                         except Exception as e:
@@ -618,25 +635,29 @@ class CommandAgent(RespondAgent[CommandAgentConfig]):
                 self.logger.info(f"Should continue: {tool_call}")
                 # action_config = self._get_action_config(function_call.name)
                 name = tool_call["tool_name"]
-                params = eval(tool_call["tool_params"])
-                self.logger.info(f"Name: {name}, Params: {params}")
-                action_config = self._get_action_config(name)
-                try:
-                    action = self.action_factory.create_action(action_config)
-                    action_input = action.create_action_input(
-                        conversation_id, params, user_message_tracker=None
-                    )
-                    self.transcript.add_action_start_log(
-                        action_input=action_input,
-                        conversation_id=conversation_id,
-                    )
-                except Exception as e:
-                    self.logger.error(f"Error creating action: {e}")
-                    self.tool_message = ""
+                if "directly_answer" not in name:
+                    params = eval(tool_call["tool_params"])
+                    self.logger.info(f"Name: {name}, Params: {params}")
+                    action_config = self._get_action_config(name)
+                    try:
+                        action = self.action_factory.create_action(action_config)
+                        action_input = action.create_action_input(
+                            conversation_id, params, user_message_tracker=None
+                        )
+                        self.transcript.add_action_start_log(
+                            action_input=action_input,
+                            conversation_id=conversation_id,
+                        )
+                    except Exception as e:
+                        self.logger.error(f"Error creating action: {e}")
+                        self.tool_message = ""
 
         self.logger.debug(f"COMPLETION IS RESPONDING")
         if len(self.tool_message) > 0:
             return self.tool_message, True
+        if "prefix" in tool_call:
+            affirmative_phrase = tool_call["prefix"]
+            self.logger.info(f"Setting prefix to {affirmative_phrase}")
         if affirmative_phrase:
             chat_parameters = self.get_completion_parameters(
                 affirmative_phrase=affirmative_phrase,
@@ -649,6 +670,7 @@ class CommandAgent(RespondAgent[CommandAgentConfig]):
             )
 
         prompt_buffer = chat_parameters["prompt"]
+        self.logger.info(f"Prompt buffer: {prompt_buffer}")
         # print number of new lines in the prompt buffer
         words = prompt_buffer.split(" ")
         new_words = []
