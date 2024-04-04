@@ -66,6 +66,22 @@ all_optional_tools = {
             },
         },
     },
+    ActionType.SEND_HELLO_SUGAR_DIRECTIONS: {
+        "name": "send_text",
+        "description": "Triggered when the agent sends a text, only if they have been provided a valid phone number and a message to send.",
+        "parameter_definitions": {
+            "to_phone": {
+                "description": "The phone number to which the text message will be sent",
+                "type": "str",
+                "required": True,
+            },
+            "message": {
+                "description": "The message to be sent, limited to 120 characters",
+                "type": "str",
+                "required": True,
+            },
+        },
+    },
     ActionType.SEND_EMAIL: None,
     ActionType.NYLAS_SEND_EMAIL: None,
     ActionType.GET_TRAIN: None,
