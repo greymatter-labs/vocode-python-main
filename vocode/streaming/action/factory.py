@@ -9,6 +9,7 @@ from vocode.streaming.action.send_text import SendText, SendTextActionConfig
 from vocode.streaming.action.get_train import GetTrain, GetTrainActionConfig
 from vocode.streaming.action.use_calendly import UseCalendly, CalendlyActionConfig
 from vocode.streaming.action.send_hello_sugar_directions import SendHelloSugarDirections, SendHelloSugarDirectionsActionConfig
+from vocode.streaming.action.send_hello_sugar_booking_instructions import SendHelloSugarBookingInstructions, SendHelloSugarBookingInstructionsActionConfig
 
 # use_instructions
 from vocode.streaming.action.retrieve_instructions import (
@@ -41,5 +42,7 @@ class ActionFactory:
             return RetrieveInstructions(action_config)
         elif isinstance(action_config, SendHelloSugarDirectionsActionConfig):
             return SendHelloSugarDirections(action_config)
+        elif isinstance(action_config, SendHelloSugarBookingInstructionsActionConfig):
+            return SendHelloSugarBookingInstructions(action_config)
         else:
             raise Exception("Invalid action type")

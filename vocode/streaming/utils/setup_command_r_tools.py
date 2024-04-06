@@ -67,7 +67,7 @@ all_optional_tools = {
         },
     },
     ActionType.SEND_HELLO_SUGAR_DIRECTIONS: {
-        "name": "send_text",
+        "name": "send_hello_sugar_directions",
         "description": "Triggered when the agent sends a text, only if they have been provided a valid phone number and a message to send.",
         "parameter_definitions": {
             "to_phone": {
@@ -75,8 +75,24 @@ all_optional_tools = {
                 "type": "str",
                 "required": True,
             },
-            "message": {
-                "description": "The message to be sent, limited to 120 characters",
+            "location": {
+                "description": "The rough location the client would like directions for",
+                "type": "str",
+                "required": True,
+            },
+        },
+    },
+    ActionType.SEND_HELLO_SUGAR_BOOKING_INSTRUCTIONS: {
+        "name": "send_hello_sugar_booking_instructions",
+        "description": "Triggered when the agent sends a text, only if they have been provided a valid phone number and a message to send.",
+        "parameter_definitions": {
+            "to_phone": {
+                "description": "The phone number to which the text message will be sent",
+                "type": "str",
+                "required": True,
+            },
+            "location": {
+                "description": "The rough location the client would like directions for",
                 "type": "str",
                 "required": True,
             },
