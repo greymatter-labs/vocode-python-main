@@ -48,8 +48,16 @@ from vocode.streaming.action.phone_call_action import (
 )
 from vocode.streaming.models.events import Sender
 from vocode.streaming.models.transcript import Transcript
-from vocode.streaming.utils.get_commandr_response import format_command_function_completion_from_transcript, format_commandr_chat_completion_from_transcript, get_commandr_response
-from vocode.streaming.utils.get_qwen_response import QWEN_MODEL_NAME, format_qwen_chat_completion_from_transcript, get_qwen_response
+from vocode.streaming.utils.get_commandr_response import (
+    format_command_function_completion_from_transcript,
+    format_commandr_chat_completion_from_transcript,
+    get_commandr_response,
+)
+from vocode.streaming.utils.get_qwen_response import (
+    QWEN_MODEL_NAME,
+    format_qwen_chat_completion_from_transcript,
+    get_qwen_response,
+)
 from vocode.streaming.vector_db.factory import VectorDBFactory
 
 from telephony_app.models.call_type import CallType
@@ -193,13 +201,18 @@ class CommandAgent(RespondAgent[CommandAgentConfig]):
         did_action: str = None,
     ):
         assert self.transcript is not None
+        # TODO add the vector db
+        # if self.vector_db_config:
+        #     self.query_vector_db_and_update_chat(namespace=self.vector_db_config.namespace)
         # add an
-        formatted_completion, messages = format_commandr_chat_completion_from_transcript(
-            self.tokenizer,
-            self.transcript,
-            self.agent_config.prompt_preamble,
-            did_action=did_action,
-            reason=reason,
+        formatted_completion, messages = (
+            format_commandr_chat_completion_from_transcript(
+                self.tokenizer,
+                self.transcript,
+                self.agent_config.prompt_preamble,
+                did_action=did_action,
+                reason=reason,
+            )
         )
         # log messages
         self.logger.debug(f"Messages: {messages}")
@@ -222,6 +235,7 @@ class CommandAgent(RespondAgent[CommandAgentConfig]):
 
         if use_functions and self.functions:
             parameters["functions"] = self.functions
+
         return parameters
 
     def create_first_response(self, first_prompt):
@@ -239,36 +253,6 @@ class CommandAgent(RespondAgent[CommandAgentConfig]):
 
     def attach_transcript(self, transcript: Transcript):
         self.transcript = transcript
-
-    async def check_conditions(
-        self, stringified_messages: str, conditions: List[str]
-    ) -> List[str]:
-        true_conditions = []
-
-        tasks = []
-        for condition in conditions:
-            user_message = {
-                "role": "user",
-                "content": stringified_messages
-                + "\n\nNow, return either 'True' or 'False' depending on whether the condition: <"
-                + condition.strip()
-                + "> applies (True) to the conversation or not (False).",
-            }
-
-            preamble = "You will be provided a condition and a conversation. Please classify if that condition applies (True), or does not apply (False) to the provided conversation.\n\nCondition:\n"
-            system_message = {"role": "system", "content": preamble + condition}
-            combined_messages = [system_message, user_message]
-            chat_parameters = self.get_chat_parameters(messages=combined_messages)
-            task = self.aclient.chat.completions.create(**chat_parameters)
-            tasks.append(task)
-
-        responses = await asyncio.gather(*tasks)
-
-        for response, condition in zip(responses, conditions):
-            if "true" in response.choices[0].message.content.strip().lower():
-                true_conditions.append(condition)
-
-        return true_conditions
 
     def get_tools(self):
         return [
@@ -415,10 +399,10 @@ class CommandAgent(RespondAgent[CommandAgentConfig]):
             action_input, is_interruptible=action.is_interruptible
         )
         assert self.transcript is not None
-        # self.transcript.add_action_start_log(
-        #     action_input=action_input,
-        #     conversation_id=agent_input.conversation_id,
-        # )
+        self.transcript.add_action_start_log(
+            action_input=action_input,
+            conversation_id=agent_input.conversation_id,
+        )
         self.actions_queue.put_nowait(event)
         return
 
@@ -427,35 +411,50 @@ class CommandAgent(RespondAgent[CommandAgentConfig]):
     ) -> Optional[Dict]:  # returns None or a dict if model should be called
         tools = self.get_tools()
         if self.agent_config.actions:
-            commandr_prompt_buffer, messageArray = format_command_function_completion_from_transcript(
-                self.tokenizer,
-                self.transcript.event_logs,
-                tools,
-                self.agent_config.prompt_preamble,
+            commandr_prompt_buffer, messageArray = (
+                format_command_function_completion_from_transcript(
+                    self.tokenizer,
+                    self.transcript.event_logs,
+                    tools,
+                    self.agent_config.prompt_preamble,
+                )
             )
             if "Function call:" in messageArray[-1]["content"]:
                 self.logger.info("Skipping tool use due to tool use.")
-                return None # TODO: investigate if this is why it needs to be prompted to do async tools
+                return None  # TODO: investigate if this is why it needs to be prompted to do async tools
 
             # print role of the latest message
             # self.logger.info(f"Role was: {messageArray[-1]}")
             # tool_chat = self.prepare_chat_for_tool_check(latest_agent_response)
             # self.logger.info(f"tool_chat was {prompt_buffer}")
             async def get_qwen_response_future():
-                response = ''
-                qwen_prompt_buffer = format_qwen_chat_completion_from_transcript(self.transcript, self.agent_config.prompt_preamble)
-                async for response_chunk in get_qwen_response(prompt_buffer=qwen_prompt_buffer, logger=self.logger):
+                response = ""
+                qwen_prompt_buffer = format_qwen_chat_completion_from_transcript(
+                    self.transcript, self.agent_config.prompt_preamble
+                )
+                async for response_chunk in get_qwen_response(
+                    prompt_buffer=qwen_prompt_buffer, logger=self.logger
+                ):
                     response += response_chunk[0] + " "
                     if response_chunk[1]:
                         break
                 return response
 
-            commandr_response, qwen_response = await asyncio.gather(get_commandr_response(prompt_buffer=commandr_prompt_buffer, logger=self.logger), get_qwen_response_future())
+            commandr_response, qwen_response = await asyncio.gather(
+                get_commandr_response(
+                    prompt_buffer=commandr_prompt_buffer, logger=self.logger
+                ),
+                get_qwen_response_future(),
+            )
 
             if not commandr_response.startswith("Action: ```json"):
-                self.logger.error(f"ACTION RESULT DID NOT LOOK RIGHT: {commandr_response}")
+                self.logger.error(
+                    f"ACTION RESULT DID NOT LOOK RIGHT: {commandr_response}"
+                )
             else:
-                commandr_response_json_str = commandr_response[len("Action: ```json") :].strip()
+                commandr_response_json_str = commandr_response[
+                    len("Action: ```json") :
+                ].strip()
                 if commandr_response_json_str.endswith("```"):
                     commandr_response_json_str = commandr_response_json_str[:-3].strip()
                 try:
@@ -471,7 +470,10 @@ class CommandAgent(RespondAgent[CommandAgentConfig]):
                     )
                     return None
 
-                if not isinstance(commandr_response_data, list) or not commandr_response_data:
+                if (
+                    not isinstance(commandr_response_data, list)
+                    or not commandr_response_data
+                ):
                     self.logger.error(
                         f"RESPONSE FORMAT ERROR: Expected a list with data, got: {commandr_response_data}"
                     )
@@ -487,7 +489,10 @@ class CommandAgent(RespondAgent[CommandAgentConfig]):
                             f"No tool, model wants to directly respond: {tool_params}"
                         )
                         self.logger.info(json.dumps(tool_params))
-                        if self.agent_config.model_name.lower() == QWEN_MODEL_NAME.lower():
+                        if (
+                            self.agent_config.model_name.lower()
+                            == QWEN_MODEL_NAME.lower()
+                        ):
                             self.logger.info(f"used Qwen for response: {qwen_response}")
                             self.tool_message = qwen_response.strip()
                         elif "message" in tool_params:
@@ -765,6 +770,47 @@ class CommandAgent(RespondAgent[CommandAgentConfig]):
         #     )
         self.can_send = False
         return latest_agent_response, True
+
+    async def query_vector_db_and_update_chat(
+        self, namespace: Optional[str] = None
+    ) -> None:
+        """
+        Queries the vector database for documents similar to the provided query and updates the chat parameters
+        with the results.
+
+        :param query: The query string to search for similar documents.
+        :param namespace: Optional namespace to narrow down the search.
+        """
+        vector_db_search_args = {
+            "query": self.transcript.get_last_user_message()[1],
+        }
+        if namespace:
+            vector_db_search_args["namespace"] = namespace.lower().replace(" ", "_")
+
+        try:
+            docs_with_scores = await self.vector_db.similarity_search_with_score(
+                **vector_db_search_args
+            )
+            docs_with_scores_str = "\n\n".join(
+                [
+                    "Document: "
+                    + doc[0].metadata["source"]
+                    + f" (Confidence: {doc[1]})\n"
+                    + doc[0].lc_kwargs["page_content"].replace(r"\n", "\n")
+                    for doc in docs_with_scores
+                ]
+            )
+            vector_db_result = f"Found {len(docs_with_scores)} similar documents:\n{docs_with_scores_str}"
+            messages = format_openai_chat_messages_from_transcript(
+                self.transcript, self.agent_config.prompt_preamble
+            )
+            messages.insert(
+                -1, vector_db_result_to_openai_chat_message(vector_db_result)
+            )
+            return messages
+        except Exception as e:
+            self.logger.error(f"Error while hitting vector db: {e}", exc_info=True)
+            return None
 
     async def generate_response(
         self,
