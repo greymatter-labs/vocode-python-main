@@ -229,8 +229,9 @@ The exact format to return is:
             async def sender(ws: WebSocketClientProtocol):  # sends audio to websocket
                 while not self._ended:
                     try:
-                        data = await asyncio.wait_for(self.input_queue.get(), 5)
+                        data = await asyncio.wait_for(self.input_queue.get(), 10)
                     except asyncio.exceptions.TimeoutError:
+                        self.logger.debug("Deepgram sender timed out")
                         break
                     num_channels = 1
                     sample_width = 2
@@ -250,6 +251,7 @@ The exact format to return is:
                 transcript_cursor = 0.0
                 while not self._ended:
                     try:
+
                         msg = await ws.recv()
                     except Exception as e:
                         self.logger.debug(f"Got error {e} in Deepgram receiver")
