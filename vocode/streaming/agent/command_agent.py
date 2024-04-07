@@ -28,7 +28,12 @@ from vocode.streaming.agent.base_agent import (
     RespondAgent,
     TranscriptionAgentInput,
 )
-from vocode.streaming.models.actions import ActionInput, FunctionCall, ActionType, FunctionFragment
+from vocode.streaming.models.actions import (
+    ActionInput,
+    FunctionCall,
+    ActionType,
+    FunctionFragment,
+)
 from vocode.streaming.models.agent import CommandAgentConfig
 from vocode.streaming.agent.utils import (
     format_openai_chat_messages_from_transcript,
@@ -77,6 +82,7 @@ HEADERS = {
     "Content-Type": "application/json",
     "Authorization": f"Bearer 'EMPTY'",
 }
+
 
 class EventLog(BaseModel):
     sender: Sender
@@ -386,7 +392,7 @@ class CommandAgent(RespondAgent[CommandAgentConfig]):
                 self.agent_config.prompt_preamble,
             )
         )
-        # self.logger.info(f"commandr_prompt_buffer was {commandr_prompt_buffer}")
+        self.logger.info(f"commandr_prompt_buffer was {commandr_prompt_buffer}")
         if "Do not provide" in messageArray[-1]["content"]:
             self.logger.info("Skipping tool use due to tool use.")
             return None  # TODO: investigate if this is why it needs to be prompted to do async tools
@@ -420,9 +426,7 @@ class CommandAgent(RespondAgent[CommandAgentConfig]):
         )
 
         if not commandr_response.startswith("Action: ```json"):
-            self.logger.error(
-                f"ACTION RESULT DID NOT LOOK RIGHT: {commandr_response}"
-            )
+            self.logger.error(f"ACTION RESULT DID NOT LOOK RIGHT: {commandr_response}")
         else:
             commandr_response_json_str = commandr_response[
                 len("Action: ```json") :

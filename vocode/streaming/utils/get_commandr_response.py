@@ -77,31 +77,29 @@ def format_command_function_completion_from_transcript(
         messages.append({"role": "system", "content": prompt_preamble})
         # add a blank user message
         messages.append({"role": "user", "content": "Begin."})
-    current_doc = {"title": "", "text": ""}
-    added_current_doc = False
+    current_doc = {"action_type": "", "action_input": "", "action_output": ""}
     # Convert event logs to messages format, including ActionStart and ActionFinish
     for event_log in events:
-        if len(current_doc["title"]) > 0 and len(current_doc["text"]) > 0:
-            messages.append({"role": "system", "content": render_docs([current_doc])})
-            current_doc = {"title": "", "text": ""}
-            added_current_doc = True
+        if (
+            len(current_doc["action_type"]) > 0
+            and len(current_doc["action_output"]) > 0
+            and len(current_doc["action_input"]) > 0
+        ):
+            messages.append(
+                {
+                    "role": "system",
+                    "content": f"Action: ```json\n{{\n    \"tool_name\": \"{current_doc['action_type']}\",\n    \"parameters\": {current_doc['action_input']},\n    \"tool_output\": {current_doc['action_output']}\n}}\n```",
+                }
+            )
+            current_doc = {"action_type": "", "action_input": "", "action_output": ""}
         if isinstance(event_log, Message) and event_log.text.strip():
             role = "assistant" if event_log.sender == Sender.BOT else "user"
             messages.append({"role": role, "content": event_log.text})
         elif isinstance(event_log, ActionStart):
-            current_doc["title"] = (
-                event_log.action_type + " " + event_log.action_input.params.json()
-            )
+            current_doc["action_type"] = event_log.action_type
+            current_doc["action_input"] = event_log.action_input.params.json()
         elif isinstance(event_log, ActionFinish):
-            current_doc["text"] = event_log.action_output.response.json()
-    if not added_current_doc and len(current_doc["text"]) > 0:
-        messages.append(
-            {
-                "role": "system",
-                "content": render_docs([current_doc])
-                + "\nAction is being run. Please wait for the response.",
-            }
-        )
+            current_doc["action_output"] = event_log.action_output.response.json()
     # Merge consecutive messages from the same sender
     merged_messages = []
     idx = 0
@@ -207,7 +205,12 @@ def format_commandr_chat_completion_from_transcript(
     # Convert event logs to messages format, including ActionStart and ActionFinish
     for event_log in transcript.event_logs:
         if len(current_doc["title"]) > 0 and len(current_doc["text"]) > 0:
-            messages.append({"role": "system", "content": render_docs([current_doc])})
+            messages.append(
+                {
+                    "role": "system",
+                    "content": "Completed:\n" + render_docs([current_doc]),
+                }
+            )
             current_doc = {"title": "", "text": ""}
             added_current_doc = True
         if isinstance(event_log, Message) and event_log.text.strip():
@@ -221,6 +224,15 @@ def format_commandr_chat_completion_from_transcript(
         elif isinstance(event_log, ActionFinish):
             current_doc["text"] = event_log.action_output.response.json()
     if not added_current_doc and (
+        len(current_doc["title"]) > 0 and len(current_doc["text"]) > 0
+    ):
+        messages.append(
+            {
+                "role": "system",
+                "content": "Completed:\n" + render_docs([current_doc]),
+            }
+        )
+    elif not added_current_doc and (
         len(current_doc["title"]) > 0 or len(current_doc["text"]) > 0
     ):
         messages.append(
