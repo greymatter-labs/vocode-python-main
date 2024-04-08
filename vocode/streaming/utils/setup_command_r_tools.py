@@ -165,15 +165,15 @@ all_optional_tools = {
 
 
 def setup_command_r_tools(action_config: CommandAgentConfig, logger: logging.Logger):
-    tools = standard_tools.copy()
+    optional_tools = []
 
     if not action_config.actions:
-        return tools
+        return standard_tools.copy()
 
     for action_config in action_config.actions:
         action_type: ActionType = action_config.type
         tool = all_optional_tools[action_type]
         if tool:
-            tools.append(tool)
+            optional_tools.append(tool)
 
-    return tools
+    return optional_tools + standard_tools.copy()

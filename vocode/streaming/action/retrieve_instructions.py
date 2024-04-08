@@ -127,8 +127,6 @@ class RetrieveInstructions(
             agent_profile = None
             logger.error(f"Error fetching agent profile: {str(e)}")
         if agent_profile:
-            # log the keys
-            logger.debug(f"Agent profile keys: {agent_profile.keys()}")
             return ActionOutput(
                 action_type=action_input.action_config.type,
                 response=RetrieveInstructionsResponse(
