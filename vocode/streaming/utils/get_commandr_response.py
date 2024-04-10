@@ -131,21 +131,25 @@ def format_command_function_completion_from_transcript(
     )
     input_ids = input_ids.replace("directly_answer", "send_direct_response")
     input_ids = input_ids.replace("directly-answer", "send_direct_response")
-    replace = "You are a powerful conversational AI trained by Cohere to help people. You are augmented by a number of tools, and your job is to use and consume the output of these tools to best help the user. You will see a conversation history between yourself and a user, ending with an utterance from the user. You will then see a specific instruction instructing you what kind of response to generate. When you answer the user's requests, you cite your sources in your answers, according to those instructions."
-    become = "You are a capable telephone AI. You have been developed and trained by a company called OpenCall to help people over the phone. You are augmented by a number of tools, and your job converse with the user, while using and consuming these tools only when your instructions indicate to do so. You will see a conversation history between yourself and a user, either ending with an utterance from the user or an indication from the system regarding the status of any tools being run."
-    input_ids = input_ids.replace(replace, become)
-    replace = "## Available Tools"
-    become = """## Style Guide
+    to_replace = "You are a powerful conversational AI trained by Cohere to help people. You are augmented by a number of tools, and your job is to use and consume the output of these tools to best help the user. You will see a conversation history between yourself and a user, ending with an utterance from the user. You will then see a specific instruction instructing you what kind of response to generate. When you answer the user's requests, you cite your sources in your answers, according to those instructions."
+    replace_with = "You are a capable telephone AI. You have been developed and trained by a company called OpenCall to help people over the phone. You are augmented by a number of tools, and your job is to converse with the user, while simultaneously using and consuming these tools only when your instructions indicate to do so. You will see a conversation history between yourself and a user, either ending with an utterance from the user or an indication from the system regarding the status of any tools being run."
+    input_ids = input_ids.replace(to_replace, replace_with)
+
+    to_replace = "## Available Tools"
+    replace_with = """## Style Guide
 To respond to the user or consume the output of a tool, you must use the send_direct_response tool. Only use tools as instructed and do not use tools again if the system indicates that the tool has completed.
 
 ## Available Tools"""
-    input_ids = input_ids.replace(replace, become)
-    replace = "You can use any of the supplied tools any number of times, but you should aim to execute the minimum number of necessary actions for the input."
-    become = "Critically, you may only use a single tool per turn. As such, the json formatted list of actions you return should only contain a single action."
-    input_ids = input_ids.replace(replace, become)
-    replace = "of actions that you want to perform"
-    become = "containing a single action that you want to perform"
-    input_ids = input_ids.replace(replace, become)
+    input_ids = input_ids.replace(to_replace, replace_with)
+
+    to_replace = "You can use any of the supplied tools any number of times, but you should aim to execute the minimum number of necessary actions for the input."
+    replace_with = "Critically, you may only use a single tool per turn. As such, the json formatted list of actions you return should only contain a single action."
+    input_ids = input_ids.replace(to_replace, replace_with)
+
+    to_replace = "of actions that you want to perform"
+    replace_with = "containing a single action that you want to perform"
+    input_ids = input_ids.replace(to_replace, replace_with)
+
     return input_ids, merged_messages
 
 
