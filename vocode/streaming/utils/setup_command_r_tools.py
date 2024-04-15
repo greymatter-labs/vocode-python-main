@@ -161,6 +161,31 @@ all_optional_tools = {
             # },
         },
     },
+<<<<<<< Updated upstream
+=======
+    ActionType.RETRIEVE_INSTRUCTIONS: {
+        "name": "retrieve_instructions",
+        "description": "Trigger when instructed to. Retrieves additional steps to follow. The numerical ID is required.",
+        "parameter_definitions": {
+            "id": {
+                "description": "The ID of the instruction to retrieve",
+                "type": "int",
+                "required": True,
+            },
+        },
+    },
+    ActionType.CHECK_GCAL_AVAILABILITY: {
+        "name": "check_gcal_availability",
+        "description": "Check calendar availability for the client's appointment",
+        "parameter_definitions": {
+            "day": {
+                "description": "the day or date that the client would like to book an appointment",
+                "type": "str",
+                "required": True,
+            },
+        },
+    },
+>>>>>>> Stashed changes
 }
 
 
