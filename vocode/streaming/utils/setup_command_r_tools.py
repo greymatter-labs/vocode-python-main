@@ -161,19 +161,6 @@ all_optional_tools = {
             # },
         },
     },
-<<<<<<< Updated upstream
-=======
-    ActionType.RETRIEVE_INSTRUCTIONS: {
-        "name": "retrieve_instructions",
-        "description": "Trigger when instructed to. Retrieves additional steps to follow. The numerical ID is required.",
-        "parameter_definitions": {
-            "id": {
-                "description": "The ID of the instruction to retrieve",
-                "type": "int",
-                "required": True,
-            },
-        },
-    },
     ActionType.CHECK_GCAL_AVAILABILITY: {
         "name": "check_gcal_availability",
         "description": "Check calendar availability for the client's appointment",
@@ -185,7 +172,6 @@ all_optional_tools = {
             },
         },
     },
->>>>>>> Stashed changes
 }
 
 
