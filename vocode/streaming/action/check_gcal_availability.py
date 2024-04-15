@@ -14,7 +14,18 @@ from vocode.streaming.models.actions import (
 from vocode.streaming.action.base_action import BaseAction
 import datetime
 
-from vocode.streaming.utils.scheduling_utils import GcalInterval, OauthCredentials
+class OauthCredentials(TypedDict):
+    access_token: str
+    refresh_token: str
+    token_uri: str
+    client_id: str
+    client_secret: str
+    scopes: Optional[List[str]]
+    scope: Optional[str]
+
+class GcalInterval(TypedDict):
+    start: str # UTC ISO
+    end: str # UTC ISO
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
