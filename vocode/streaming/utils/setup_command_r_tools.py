@@ -161,8 +161,8 @@ all_optional_tools = {
             # },
         },
     },
-    ActionType.CHECK_GCAL_AVAILABILITY: {
-        "name": "check_gcal_availability",
+    ActionType.CHECK_CALENDAR_AVAILABILITY: {
+        "name": "check_calendar_availability",
         "description": "Check calendar availability for the client's appointment",
         "parameter_definitions": {
             "day": {

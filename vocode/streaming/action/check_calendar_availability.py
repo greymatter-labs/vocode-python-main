@@ -1,6 +1,7 @@
 from ast import List
 import logging
-from telephony_app.utils.date_parser import get_availability_for_day
+from telephony_app.utils.date_parser import get_availability_for_day, Interval
+from telephony_app.integrations.oauth import OauthCredentials
 from datetime import datetime
 from dateutil import tz
 from typing import Optional, Type, TypedDict
@@ -14,32 +15,19 @@ from vocode.streaming.models.actions import (
 from vocode.streaming.action.base_action import BaseAction
 import datetime
 
-class OauthCredentials(TypedDict):
-    access_token: str
-    refresh_token: str
-    token_uri: str
-    client_id: str
-    client_secret: str
-    scopes: Optional[List[str]]
-    scope: Optional[str]
-
-class GcalInterval(TypedDict):
-    start: str # UTC ISO
-    end: str # UTC ISO
-
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
 
 
-class CheckGcalAvailabilityActionConfig(ActionConfig, type=ActionType.CHECK_GCAL_AVAILABILITY):
+class CheckCalendarAvailabilityActionConfig(ActionConfig, type=ActionType.CHECK_CALENDAR_AVAILABILITY):
     credentials: OauthCredentials
-    all_availability: List[GcalInterval]
+    all_availability: List[Interval]
 
 
-class CheckGcalAvailabilityParameters(BaseModel):
+class CheckCalendarAvailabilityParameters(BaseModel):
     day: str
 
-class CheckGcalAvailabilityResponse(BaseModel):
+class CheckCalendarAvailabilityResponse(BaseModel):
     availability: List[str]
 
 
@@ -55,20 +43,20 @@ def natural_lang_date(iso: str) -> str:
     time = local.strftime("%I:%M %p") # 08:35 am
     return date + " at " + time
 
-class CheckGcalAvailability(BaseAction[CheckGcalAvailabilityActionConfig, CheckGcalAvailabilityParameters, CheckGcalAvailabilityResponse]):
+class CheckCalendarAvailability(BaseAction[CheckCalendarAvailabilityActionConfig, CheckCalendarAvailabilityParameters, CheckCalendarAvailabilityResponse]):
     description: str = (
         "Retrieves google calendar availability on a specific day/time"
     )
-    parameters_type: Type[CheckGcalAvailabilityParameters] = CheckGcalAvailabilityParameters
-    response_type: Type[CheckGcalAvailabilityResponse] = CheckGcalAvailabilityResponse
+    parameters_type: Type[CheckCalendarAvailabilityParameters] = CheckCalendarAvailabilityParameters
+    response_type: Type[CheckCalendarAvailabilityResponse] = CheckCalendarAvailabilityResponse
 
     async def run(
-        self, action_input: ActionInput[CheckGcalAvailabilityParameters]
-    ) -> ActionOutput[CheckGcalAvailabilityResponse]:
+        self, action_input: ActionInput[CheckCalendarAvailabilityParameters]
+    ) -> ActionOutput[CheckCalendarAvailabilityResponse]:
         raw_availability = get_availability_for_day(self.action_config.all_availability, action_input.params.day)
         availability = [natural_lang_date(slot["start"]) for slot in raw_availability]
 
         return ActionOutput(
             action_type=action_input.action_config.type,
-            response=CheckGcalAvailabilityResponse(vailability=availability),
+            response=CheckCalendarAvailabilityResponse(vailability=availability),
         )
