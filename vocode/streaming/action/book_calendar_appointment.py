@@ -4,7 +4,6 @@ from telephony_app.utils.date_parser import parse_natural_language_date
 from telephony_app.integrations.oauth import OauthCredentials
 from telephony_app.integrations.gcal.gcal_helpers import GcalAdapter
 import datetime
-from dateutil import tz
 from typing import Optional, Type, TypedDict
 from pydantic import BaseModel, Field
 from vocode.streaming.models.actions import (
@@ -37,7 +36,6 @@ class BookCalendarAppointmentResponse(BaseModel):
     succeeded: bool
 
 
-# assumes UTC, i.e. 2024-04-11T16:00:00Z
 def book_appointment(credentials: OauthCredentials):
     with GcalAdapter(credentials) as gcal:
         gcal.events().insert
