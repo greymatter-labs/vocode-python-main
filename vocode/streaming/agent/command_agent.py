@@ -209,7 +209,21 @@ class CommandAgent(RespondAgent[CommandAgentConfig]):
         did_action: str = None,
     ):
         assert self.transcript is not None
+        # TODO add the vector db
+        # if self.vector_db_config:
+        #     self.query_vector_db_and_update_chat(namespace=self.vector_db_config.namespace)
+        # TODO add the vector db
+        # if self.vector_db_config:
+        #     self.query_vector_db_and_update_chat(namespace=self.vector_db_config.namespace)
         # add an
+        formatted_completion, messages = (
+            format_commandr_chat_completion_from_transcript(
+                self.tokenizer,
+                self.transcript,
+                self.agent_config.prompt_preamble,
+                did_action=did_action,
+                reason=reason,
+            )
         formatted_completion, messages = (
             format_commandr_chat_completion_from_transcript(
                 self.tokenizer,
@@ -237,6 +251,8 @@ class CommandAgent(RespondAgent[CommandAgentConfig]):
 
         if use_functions and self.functions:
             parameters["functions"] = self.functions
+
+
         return parameters
 
     def create_first_response(self, first_prompt):
@@ -334,10 +350,14 @@ class CommandAgent(RespondAgent[CommandAgentConfig]):
             action_input, is_interruptible=action.is_interruptible
         )
         assert self.transcript is not None
-        # self.transcript.add_action_start_log(
-        #     action_input=action_input,
-        #     conversation_id=agent_input.conversation_id,
-        # )
+        self.transcript.add_action_start_log(
+            action_input=action_input,
+            conversation_id=agent_input.conversation_id,
+        )
+        self.transcript.add_action_start_log(
+            action_input=action_input,
+            conversation_id=agent_input.conversation_id,
+        )
         self.actions_queue.put_nowait(event)
         return
 
@@ -672,6 +692,88 @@ class CommandAgent(RespondAgent[CommandAgentConfig]):
         #     )
         self.can_send = False
         return latest_agent_response, True
+
+    async def query_vector_db_and_update_chat(
+        self, namespace: Optional[str] = None
+    ) -> None:
+        """
+        Queries the vector database for documents similar to the provided query and updates the chat parameters
+        with the results.
+
+        :param query: The query string to search for similar documents.
+        :param namespace: Optional namespace to narrow down the search.
+        """
+        vector_db_search_args = {
+            "query": self.transcript.get_last_user_message()[1],
+        }
+        if namespace:
+            vector_db_search_args["namespace"] = namespace.lower().replace(" ", "_")
+
+        try:
+            docs_with_scores = await self.vector_db.similarity_search_with_score(
+                **vector_db_search_args
+            )
+            docs_with_scores_str = "\n\n".join(
+                [
+                    "Document: "
+                    + doc[0].metadata["source"]
+                    + f" (Confidence: {doc[1]})\n"
+                    + doc[0].lc_kwargs["page_content"].replace(r"\n", "\n")
+                    for doc in docs_with_scores
+                ]
+            )
+            vector_db_result = f"Found {len(docs_with_scores)} similar documents:\n{docs_with_scores_str}"
+            messages = format_openai_chat_messages_from_transcript(
+                self.transcript, self.agent_config.prompt_preamble
+            )
+            messages.insert(
+                -1, vector_db_result_to_openai_chat_message(vector_db_result)
+            )
+            return messages
+        except Exception as e:
+            self.logger.error(f"Error while hitting vector db: {e}", exc_info=True)
+            return None
+
+    async def query_vector_db_and_update_chat(
+        self, namespace: Optional[str] = None
+    ) -> None:
+        """
+        Queries the vector database for documents similar to the provided query and updates the chat parameters
+        with the results.
+
+        :param query: The query string to search for similar documents.
+        :param namespace: Optional namespace to narrow down the search.
+        """
+        vector_db_search_args = {
+            "query": self.transcript.get_last_user_message()[1],
+        }
+        if namespace:
+            vector_db_search_args["namespace"] = namespace.lower().replace(" ", "_")
+
+        try:
+            docs_with_scores = await self.vector_db.similarity_search_with_score(
+                **vector_db_search_args
+            )
+            docs_with_scores_str = "\n\n".join(
+                [
+                    "Document: "
+                    + doc[0].metadata["source"]
+                    + f" (Confidence: {doc[1]})\n"
+                    + doc[0].lc_kwargs["page_content"].replace(r"\n", "\n")
+                    for doc in docs_with_scores
+                ]
+            )
+            vector_db_result = f"Found {len(docs_with_scores)} similar documents:\n{docs_with_scores_str}"
+            messages = format_openai_chat_messages_from_transcript(
+                self.transcript, self.agent_config.prompt_preamble
+            )
+            messages.insert(
+                -1, vector_db_result_to_openai_chat_message(vector_db_result)
+            )
+            return messages
+        except Exception as e:
+            self.logger.error(f"Error while hitting vector db: {e}", exc_info=True)
+            return None
 
     async def generate_response(
         self,

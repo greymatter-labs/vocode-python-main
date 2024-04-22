@@ -234,7 +234,7 @@ class ChatGPTAgent(RespondAgent[ChatGPTAgentConfig]):
         tools = self.get_tools()
         if self.agent_config.actions:
             tool_chat = self.prepare_chat_for_tool_check(latest_agent_response)
-            self.logger.info(f"tool_chat was {tool_chat}")
+            # self.logger.info(f"tool_chat was {tool_chat}")
             payload = {
                 "conversation": tool_chat,
             }
