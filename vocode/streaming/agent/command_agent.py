@@ -421,7 +421,10 @@ class CommandAgent(RespondAgent[CommandAgentConfig]):
                 response_chunk = response_chunk.replace("\n", " ")
                 split_pattern = re.compile(r"([.!?,])\s*")
                 split_pattern2 = re.compile(r'([.!?])"')
-                if "answer" in commandr_response and '"message":' in commandr_response:
+                if (
+                    "answer" in commandr_response
+                    and '"message": "' in commandr_response
+                ):  # TODO INvESTIGATe ThE FORM
                     current_utterance += response_chunk
                     # split on pattern with punctuation and space, producing an interruptible of the stuff before (including the punctuation) and keeping the stuff after.
                     parts = split_pattern.split(current_utterance)
@@ -665,7 +668,6 @@ class CommandAgent(RespondAgent[CommandAgentConfig]):
         current_utterance = ""
         # log that we're in fallback mode
         self.logger.info(f"We're entering fallback mode now")
-        self.logger.info(f"Prompt buffer: {prompt_buffer}")
         if self.agent_config.use_streaming:
             async for response_chunk in get_commandr_response_chat_streaming(
                 transcript=self.transcript,
