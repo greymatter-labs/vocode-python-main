@@ -9,7 +9,7 @@ from vocode.streaming.models.actions import (
 
 standard_tools = [
     {
-        "name": "send_direct_response",
+        "name": "answer",
         "description": "Continue the conversation, given the conversation history. Must include the message.",
         "parameter_definitions": {
             "message": {

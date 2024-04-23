@@ -352,44 +352,44 @@ class StreamingConversation(Generic[OutputDeviceType]):
                 is_final=True,
                 time_silent=self.time_silent,
             )
-            # Calculate the expected silence duration after the current buffer
-            start_expected_duration = time.time()
-            expected_silence_duration = (
-                await self.get_expected_silence_duration(initial_buffer)
-                - self.time_silent
-            )
-            elapsed_time_duration = time.time() - start_expected_duration
-            expected_silence_duration -= elapsed_time_duration
+            # # Calculate the expected silence duration after the current buffer
+            # start_expected_duration = time.time()
+            # expected_silence_duration = (
+            #     await self.get_expected_silence_duration(initial_buffer)
+            #     - self.time_silent
+            # )
+            # elapsed_time_duration = time.time() - start_expected_duration
+            # expected_silence_duration -= elapsed_time_duration
 
-            # Ensure the sleep time is at least 0.1 seconds
-            self.current_sleep_time = max(expected_silence_duration, 0.5)
+            # # Ensure the sleep time is at least 0.1 seconds
+            # self.current_sleep_time = max(expected_silence_duration, 0.5)
 
-            # Log the time taken for classification and the calculated sleep duration
-            self.conversation.logger.info(
-                f"Classification took: {elapsed_time_duration}\nSleep duration: {self.current_sleep_time}"
-            )
+            # # Log the time taken for classification and the calculated sleep duration
+            # self.conversation.logger.info(
+            #     f"Classification took: {elapsed_time_duration}\nSleep duration: {self.current_sleep_time}"
+            # )
 
-            # choose a random affirmative phrase until it's different from the previous one
-            previous_phrase = self.chosen_affirmative_phrase
-            if self.conversation.synthesizer.affirmative_audios:
-                while True:
-                    self.chosen_affirmative_phrase = random.choice(
-                        self.conversation.synthesizer.affirmative_audios
-                    ).message.text
-                    if self.chosen_affirmative_phrase != previous_phrase:
-                        break
-            # Create an interruptible event with the transcription data
+            # # choose a random affirmative phrase until it's different from the previous one
+            # previous_phrase = self.chosen_affirmative_phrase
+            # if self.conversation.synthesizer.affirmative_audios:
+            #     while True:
+            #         self.chosen_affirmative_phrase = random.choice(
+            #             self.conversation.synthesizer.affirmative_audios
+            #         ).message.text
+            #         if self.chosen_affirmative_phrase != previous_phrase:
+            #             break
+            # # Create an interruptible event with the transcription data
             current_phrase = self.chosen_affirmative_phrase
-            if self.conversation.agent.agent_config.pending_action == "pending":
-                current_phrase = "I see."
-                # make the transcription tell the agent to wait
-                transcription = Transcription(
-                    message="SYSTEM: There is a pending request still.\nUser: "
-                    + transcription.message,
-                    confidence=1.0,  # We assume full confidence as it's not explicitly provided
-                    is_final=True,
-                    time_silent=self.time_silent,
-                )
+            # if self.conversation.agent.agent_config.pending_action == "pending":
+            #     current_phrase = "I see."
+            #     # make the transcription tell the agent to wait
+            #     transcription = Transcription(
+            #         message="SYSTEM: There is a pending request still.\nUser: "
+            #         + transcription.message,
+            #         confidence=1.0,  # We assume full confidence as it's not explicitly provided
+            #         is_final=True,
+            #         time_silent=self.time_silent,
+            #     )
             event = self.interruptible_event_factory.create_interruptible_event(
                 payload=TranscriptionAgentInput(
                     transcription=transcription,
@@ -412,103 +412,104 @@ class StreamingConversation(Generic[OutputDeviceType]):
 
             # HERE, we will send of the affirmative audio if the sleeping time > 1.5 and the time since last filler is > 3
 
-            log_interval = 1.0  # Log at most every 1 second
-            time_since_last_log = 0.0
-            while sleeping_time > 0.01:
-                sleeping_time = self.current_sleep_time
-                self.sleeping_time = min(1.5, sleeping_time)
-                if self.last_classification == "paused":
-                    if (
-                        time.time() - self.last_filler_time > 4
-                        and time.time() - self.last_affirmative_time > 2
-                        and len(self.buffer.to_message().strip().split(" ")) > 3
-                    ):
-                        self.conversation.agent_responses_worker.send_filler_audio(
-                            asyncio.Event()
-                        )
-                        self.last_filler_time = time.time()
-                if (
-                    sleeping_time > 0.5
-                    and time.time() - self.last_filler_time > 2
-                    and len(initial_buffer.strip().split(" ")) > 3
-                    and time.time() - self.last_affirmative_time > 3
-                    and not self.triggered_affirmative
-                    and self.last_classification == "full"
-                ) or (
-                    self.time_silent > 0.7
-                    and not self.triggered_affirmative
-                    and time.time() - self.last_filler_time > 1.5
-                    and time.time() - self.last_affirmative_time > 3
-                    and not self.last_classification == "paused"
-                ):
-                    self.triggered_affirmative = True
+            # log_interval = 1.0  # Log at most every 1 second
+            # time_since_last_log = 0.0
+            # while sleeping_time > 0.01:
+            #     sleeping_time = self.current_sleep_time
+            #     # self.sleeping_time = min(1.5, sleeping_time)
+            #     if self.last_classification == "paused":
+            #         if (
+            #             time.time() - self.last_filler_time > 4
+            #             and time.time() - self.last_affirmative_time > 2
+            #             and len(self.buffer.to_message().strip().split(" ")) > 3
+            #         ):
+            #             self.conversation.agent_responses_worker.send_filler_audio(
+            #                 asyncio.Event()
+            #             )
+            #             self.last_filler_time = time.time()
+            #     if (
+            #         sleeping_time > 0.5
+            #         and time.time() - self.last_filler_time > 2
+            #         and len(initial_buffer.strip().split(" ")) > 3
+            #         and time.time() - self.last_affirmative_time > 3
+            #         and not self.triggered_affirmative
+            #         and self.last_classification == "full"
+            #     ) or (
+            #         self.time_silent > 0.7
+            #         and not self.triggered_affirmative
+            #         and time.time() - self.last_filler_time > 1.5
+            #         and time.time() - self.last_affirmative_time > 3
+            #         and not self.last_classification == "paused"
+            #     ):
+            #         self.triggered_affirmative = True
 
-                    self.conversation.logger.info(
-                        f"Sending affirmative audio, sleeping time: {self.current_sleep_time}"
-                    )
-                    self.conversation.agent_responses_worker.send_affirmative_audio(
-                        # self.interruptible_event_factory.create_interruptible_event(
-                        #     payload=None
-                        # )
-                        asyncio.Event(),
-                        phrase=self.chosen_affirmative_phrase,
-                    )
-                    self.last_affirmative_time = time.time()
-                if not self.synthesis_done and self.current_sleep_time < 0.02:
+            #         self.conversation.logger.info(
+            #             f"Sending affirmative audio, sleeping time: {self.current_sleep_time}"
+            #         )
+            #         self.conversation.agent_responses_worker.send_affirmative_audio(
+            #             # self.interruptible_event_factory.create_interruptible_event(
+            #             #     payload=None
+            #             # )
+            #             asyncio.Event(),
+            #             phrase=self.chosen_affirmative_phrase,
+            #         )
+            #         self.last_affirmative_time = time.time()
+            #     if not self.synthesis_done and self.current_sleep_time < 0.02:
 
-                    self.conversation.logger.debug(
-                        f"Added sleep for synthesis to finish..."
-                    )
-                    self.current_sleep_time = 0.02
-                    if (
-                        not self.triggered_affirmative
-                        and time.time() - self.last_filler_time > 1.0
-                        and time.time() - self.last_affirmative_time > 2.0
-                        # and self.last_classification == "full"
-                    ):
-                        self.triggered_affirmative = True
-                        self.conversation.agent_responses_worker.send_affirmative_audio(
-                            asyncio.Event(),
-                            phrase=self.chosen_affirmative_phrase,
-                        )
-                        self.last_affirmative_time = time.time()
+            #         self.conversation.logger.debug(
+            #             f"Added sleep for synthesis to finish..."
+            #         )
+            #         self.current_sleep_time = 0.02
+            #         if (
+            #             not self.triggered_affirmative
+            #             and time.time() - self.last_filler_time > 1.0
+            #             and time.time() - self.last_affirmative_time > 2.0
+            #             # and self.last_classification == "full"
+            #         ):
+            #             self.triggered_affirmative = True
+            #             self.conversation.agent_responses_worker.send_affirmative_audio(
+            #                 asyncio.Event(),
+            #                 phrase=self.chosen_affirmative_phrase,
+            #             )
+            #             self.last_affirmative_time = time.time()
 
-                await asyncio.sleep(0.01)
-                if self.current_sleep_time > 0:
-                    self.current_sleep_time -= 0.01
-                time_since_last_log += 0.01
-                if time_since_last_log >= log_interval:
-                    self.conversation.logger.info(
-                        f"Sleeping... {self.current_sleep_time} seconds left"
-                    )
-                    time_since_last_log = 0.0
-                if self.synthesis_done:
-                    # self.conversation.logger.info("Synthesis done, still sleeping")
-                    if (
-                        time.time() - self.last_filler_time > 1.0
-                        and time.time() - self.last_affirmative_time > 2.0
-                        and self.time_silent > 0.5
-                        # and not self.last_classification == "paused"
-                    ):
-                        self.triggered_affirmative = True
-                        self.last_affirmative_time = time.time()
+            #     await asyncio.sleep(0.01)
+            #     if self.current_sleep_time > 0:
+            #         self.current_sleep_time -= 0.01
+            #     time_since_last_log += 0.01
+            #     if time_since_last_log >= log_interval:
+            #         self.conversation.logger.info(
+            #             f"Sleeping... {self.current_sleep_time} seconds left"
+            #         )
+            #         time_since_last_log = 0.0
+            #     if self.synthesis_done:
+            #         # self.conversation.logger.info("Synthesis done, still sleeping")
+            #         if (
+            #             time.time() - self.last_filler_time > 1.0
+            #             and time.time() - self.last_affirmative_time > 2.0
+            #             and self.time_silent > 0.5
+            #             # and not self.last_classification == "paused"
+            #         ):
+            #             self.triggered_affirmative = True
+            #             self.last_affirmative_time = time.time()
 
-                        # self.conversation.logger.info(
-                        #     f"Sending affirmative audio, sleeping time: {self.current_sleep_time}"
-                        # )
-                        self.conversation.agent_responses_worker.send_affirmative_audio(
-                            # self.interruptible_event_factory.create_interruptible_event(
-                            #     payload=None
-                            # )
-                            asyncio.Event(),
-                            phrase=self.chosen_affirmative_phrase,
-                        )
-                        self.last_affirmative_time = time.time()
+            #             # self.conversation.logger.info(
+            #             #     f"Sending affirmative audio, sleeping time: {self.current_sleep_time}"
+            #             # )
+            #             self.conversation.agent_responses_worker.send_affirmative_audio(
+            #                 # self.interruptible_event_factory.create_interruptible_event(
+            #                 #     payload=None
+            #                 # )
+            #                 asyncio.Event(),
+            #                 phrase=self.chosen_affirmative_phrase,
+            #             )
+            #             self.last_affirmative_time = time.time()
 
             self.conversation.logger.info(f"Marking as send")
             self.ready_to_send = BufferStatus.SEND
             # releast the action, if there is one
             self.conversation.agent.can_send = True
+            return
 
         async def process(self, transcription: Transcription):
             # Ignore the transcription if we are currently in-flight (i.e., the agent is speaking)
@@ -1331,8 +1332,8 @@ class StreamingConversation(Generic[OutputDeviceType]):
                     self.mark_last_action_timestamp()
                     self.output_device.consume_nonblocking(speech_data)
                     speech_data = bytearray()
-                    # sleep a second
-                    await asyncio.sleep(1)
+                    # sleep for the length of the speech
+                    await asyncio.sleep(seconds_per_chunk)
             speech_data.extend(chunk_result.chunk)
 
         # # If no speech data is generated, return empty message and False flag

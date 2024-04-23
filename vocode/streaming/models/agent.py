@@ -124,6 +124,7 @@ class CommandAgentConfig(AgentConfig, type=AgentType.COMMAND.value):
     vector_db_config: Optional[VectorDBConfig] = None
     pending_action: Optional[FunctionCall] = None
     use_filler_words: bool = True
+    use_streaming: bool = False
     language: Optional[str] = "en-US"
 
 
