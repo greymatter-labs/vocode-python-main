@@ -48,7 +48,7 @@ def render_chat_history(_conversation: list[dict]) -> str:
         else:  # role == system
             chat_hist_str += "<|SYSTEM_TOKEN|>"
         chat_hist_str += turn["content"]
-    chat_hist_str += "<|END_OF_TURN_TOKEN|>"
+        chat_hist_str += "<|END_OF_TURN_TOKEN|>"
     return chat_hist_str
 
 

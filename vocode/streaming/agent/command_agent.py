@@ -723,7 +723,6 @@ class CommandAgent(RespondAgent[CommandAgentConfig]):
         qwen_prompt_buffer = format_qwen_chat_completion_from_transcript(
             transcript, self.agent_config.prompt_preamble
         )
-        self.logger.info(f"Qwen prompt buffer: {qwen_prompt_buffer}")
         async for response_chunk in get_qwen_response(
             prompt_buffer=qwen_prompt_buffer, logger=self.logger
         ):
