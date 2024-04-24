@@ -10,7 +10,7 @@ from vocode.streaming.models.actions import (
 standard_tools = [
     {
         "name": "answer",
-        "description": "Continue the conversation, given the conversation history. Must include the message.",
+        "description": "Directly respond to the user, given the conversation history. Must include the message.",
         "parameter_definitions": {
             "message": {
                 "description": "Your reply to the user.",
@@ -35,7 +35,7 @@ all_optional_tools = {
                 "description": "The reason for transferring the call, limited to 120 characters",
                 "type": "str",
                 "required": True,
-            }
+            },
         },
     },
     ActionType.HANGUP_CALL: {
@@ -43,7 +43,7 @@ all_optional_tools = {
         "description": "Hangup the call if the instructions are to do so.",
         "parameter_definitions": {
             "end_reason": {
-                "description": "The reason for ending the call, limited to 120 characters",
+                "description": "The reason for ending the call",
                 "type": "str",
                 "required": True,
             }
@@ -51,7 +51,7 @@ all_optional_tools = {
     },
     ActionType.RETRIEVE_INSTRUCTIONS: {
         "name": "retrieve_instruction",
-        "description": "Certain steps specify an instruction id to retrieve before moving on. This action retrieves the instruction.",
+        "description": "Retrieve the instruction with the given ID.",
         "parameter_definitions": {
             "id": {
                 "description": "The ID number of the instruction to retrieve",
@@ -62,10 +62,10 @@ all_optional_tools = {
     },
     ActionType.SEARCH_ONLINE: {
         "name": "search_online",
-        "description": "Searches online when the agent says they will look something up.",
+        "description": "Search online for the query provided.",
         "parameter_definitions": {
             "query": {
-                "description": "The search query to be sent to the online search API",
+                "description": "The query to search for",
                 "type": "str",
                 "required": True,
             }
@@ -73,15 +73,15 @@ all_optional_tools = {
     },
     ActionType.SEND_TEXT: {
         "name": "send_text",
-        "description": "Send an sms to a phone number.",
+        "description": "Send an sms text message to the provided phone number.",
         "parameter_definitions": {
             "to_phone": {
-                "description": "The phone number to which the text message will be sent",
+                "description": "The phone number to which the SMS will be sent",
                 "type": "str",
                 "required": True,
             },
             "message": {
-                "description": "The message to be sent, limited to 120 characters",
+                "description": "The SMS message to be sent",
                 "type": "str",
                 "required": True,
             },
@@ -100,7 +100,7 @@ all_optional_tools = {
     },
     ActionType.SEND_HELLO_SUGAR_BOOKING_INSTRUCTIONS: {
         "name": "send_hello_sugar_booking_instructions",
-        "description": "Sends instructions on how to actually book an appointment at a specific Hello Sugar location.",
+        "description": "Sends a link to book an appointment at a specific Hello Sugar location. The location must be a city, landmark, or address.",
         "parameter_definitions": {
             "to_phone": {
                 "description": "The phone number to which the instructions will be sent",
@@ -108,7 +108,7 @@ all_optional_tools = {
                 "required": True,
             },
             "location": {
-                "description": "The rough appointment location",
+                "description": "The location to book an appointment at",
                 "type": "str",
                 "required": True,
             },

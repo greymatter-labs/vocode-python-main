@@ -421,10 +421,11 @@ class CommandAgent(RespondAgent[CommandAgentConfig]):
                 response_chunk = response_chunk.replace("\n", " ")
                 split_pattern = re.compile(r"([.!?,])\s*")
                 split_pattern2 = re.compile(r'([.!?])"')
+                last_answer_index = commandr_response.rfind("answer")
                 if (
-                    "answer" in commandr_response
-                    and '"message": "' in commandr_response
-                ):  # TODO INvESTIGATe ThE FORM
+                    last_answer_index != -1
+                    and '"message": "' in commandr_response[last_answer_index:]
+                ):
                     current_utterance += response_chunk
                     # split on pattern with punctuation and space, producing an interruptible of the stuff before (including the punctuation) and keeping the stuff after.
                     parts = split_pattern.split(current_utterance)
@@ -433,6 +434,7 @@ class CommandAgent(RespondAgent[CommandAgentConfig]):
                         len(parts) > 2
                         and len("".join(parts[:2]).split(" ")) > 2
                         and len("".join(parts[:2]).split(" ")[-1]) > 4
+                        and any(char.isalpha() for char in "".join(parts[:2]))
                     ):
                         self.produce_interruptible_agent_response_event_nonblocking(
                             AgentResponseMessage(
@@ -688,6 +690,7 @@ class CommandAgent(RespondAgent[CommandAgentConfig]):
                     len(parts) > 2
                     and len("".join(parts[:2]).split(" ")) > 2
                     and len("".join(parts[:2]).split(" ")[-1]) > 4
+                    and any(char.isalpha() for char in "".join(parts[:2]))
                 ):
                     self.produce_interruptible_agent_response_event_nonblocking(
                         AgentResponseMessage(
