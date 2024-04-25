@@ -125,6 +125,7 @@ class CommandAgentConfig(AgentConfig, type=AgentType.COMMAND.value):
     pending_action: Optional[FunctionCall] = None
     use_filler_words: bool = True
     use_streaming: bool = False
+    allow_interruptions: bool = False
     language: Optional[str] = "en-US"
 
 

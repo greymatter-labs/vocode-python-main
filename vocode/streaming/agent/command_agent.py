@@ -118,7 +118,6 @@ class CommandAgent(RespondAgent[CommandAgentConfig]):
         self.can_send = False
         self.conversation_id = None
         self.twilio_sid = None
-        model_id = "CohereForAI/c4ai-command-r-v01"
         self.tool_message = ""
 
         self.agent_config.pending_action = None
@@ -414,7 +413,6 @@ class CommandAgent(RespondAgent[CommandAgentConfig]):
                 model=model_to_use,
                 logger=self.logger,
             ):
-
                 stripped = response_chunk.rstrip()
                 if len(stripped) != len(response_chunk):
                     response_chunk = stripped + " "
@@ -425,6 +423,7 @@ class CommandAgent(RespondAgent[CommandAgentConfig]):
                 if (
                     last_answer_index != -1
                     and '"message": "' in commandr_response[last_answer_index:]
+                    and not "}'," in commandr_response[last_answer_index:]
                 ):
                     current_utterance += response_chunk
                     # split on pattern with punctuation and space, producing an interruptible of the stuff before (including the punctuation) and keeping the stuff after.
@@ -660,8 +659,10 @@ class CommandAgent(RespondAgent[CommandAgentConfig]):
         if not prompt_buffer or len(prompt_buffer) < len(chat_parameters["prompt"]):
             prompt_buffer = chat_parameters["prompt"]
 
-        if len(self.tool_message) > 0:
+        if len(self.tool_message) > 0 and not self.agent_config.use_streaming:
             return self.tool_message, True
+        elif len(self.tool_message) > 0 and self.agent_config.use_streaming:
+            return "", True
         if "qwen" in self.agent_config.model_name.lower():
             model_to_use = getenv("AI_MODEL_NAME_LARGE")
         else:

@@ -409,7 +409,6 @@ class StreamingConversation(Generic[OutputDeviceType]):
 
             # Set the buffer status to HOLD, indicating we're not ready to send it yet
             self.ready_to_send = BufferStatus.HOLD
-
             # HERE, we will send of the affirmative audio if the sleeping time > 1.5 and the time since last filler is > 3
 
             # log_interval = 1.0  # Log at most every 1 second
@@ -515,7 +514,7 @@ class StreamingConversation(Generic[OutputDeviceType]):
             # Ignore the transcription if we are currently in-flight (i.e., the agent is speaking)
             # log the current transcript
 
-            if self.block_inputs:
+            if self.block_inputs and not self.agent.agent_config.allow_interruptions:
                 self.conversation.logger.debug(
                     "Ignoring transcription since we are in-flight"
                 )
@@ -526,9 +525,11 @@ class StreamingConversation(Generic[OutputDeviceType]):
 
             # If the message is just "vad", handle it without resetting the buffer check
             if transcription.message.strip() == "vad":
+
                 if len(self.buffer) == 0:
                     self.conversation.logger.info("Ignoring vad, empty message.")
                     return
+                self.conversation.stop_event.set()  # be more tolerant once they've already started talking
 
                 # If a buffer check task is running, extend the current sleep time
                 if self.buffer_check_task and not self.buffer_check_task.done():
@@ -557,6 +558,7 @@ class StreamingConversation(Generic[OutputDeviceType]):
                 # when we wait more, they were silent so we want to push out a filler audio
                 self.conversation.logger.info("Ignoring transcription, zero words.")
                 return
+            self.conversation.stop_event.set()  # slower more precise
             self.conversation.logger.debug(
                 f"Transcription message: {' '.join(word['word'] for word in json.loads(transcription.message)['words'])}"
             )
@@ -952,7 +954,7 @@ class StreamingConversation(Generic[OutputDeviceType]):
                 send_speech_coroutine = self.conversation.send_speech_to_output(
                     message.text,
                     synthesis_result,
-                    item.interruption_event,
+                    self.conversation.stop_event,
                     TEXT_TO_SPEECH_CHUNK_SIZE_SECONDS,
                     transcript_message=transcript_message,
                 )
@@ -1043,6 +1045,8 @@ class StreamingConversation(Generic[OutputDeviceType]):
             logger or logging.getLogger(__name__),
             conversation_id=self.id,
         )
+        # threadingevent
+        self.stop_event = threading.Event()
         self.output_device = output_device
         self.transcriber = transcriber
         self.agent = agent
@@ -1227,7 +1231,10 @@ class StreamingConversation(Generic[OutputDeviceType]):
             confidence=1.0,
             is_final=True,
         )
-        if self.transcriptions_worker.block_inputs:
+        if (
+            self.transcriptions_worker.block_inputs
+            and not self.agent.agent_config.allow_interruptions
+        ):
             # self.transcriptions_worker.is_final = False
             # self.transcriptions_worker.buffer = ""
             # self.transcriptions_worker.time_silent = 0.0
@@ -1264,7 +1271,8 @@ class StreamingConversation(Generic[OutputDeviceType]):
         self.transcriptions_worker.block_inputs = False
         self.agent.clear_task_queue()
         self.agent_responses_worker.clear_task_queue()
-        self.synthesis_results_worker.clear_task_queue()
+        if not self.agent.get_agent_config().allow_interruptions:
+            self.synthesis_results_worker.clear_task_queue()
         return num_interrupts > 0
 
     def is_interrupt(self, transcription: Transcription):
@@ -1284,6 +1292,8 @@ class StreamingConversation(Generic[OutputDeviceType]):
         # Check if both the synthesis result and message are available, if not, return empty message and False flag
         if not (synthesis_result and message):
             return "", False
+        # reset the stop event
+        stop_event.clear()
 
         """
         - Sends the speech chunk by chunk to the output device
@@ -1324,16 +1334,34 @@ class StreamingConversation(Generic[OutputDeviceType]):
                     self.transcriptions_worker.block_inputs = True
                     self.transcriptions_worker.time_silent = 0.0
                     self.transcriptions_worker.triggered_affirmative = False
-                    self.transcriptions_worker.buffer.clear()
                     self.logger.debug(
                         f"Sending in synth buffer early, len {len(speech_data)}"
                     )
-                    # mark
-                    self.mark_last_action_timestamp()
-                    self.output_device.consume_nonblocking(speech_data)
-                    speech_data = bytearray()
-                    # sleep for the length of the speech
-                    await asyncio.sleep(seconds_per_chunk)
+                    if self.agent.get_agent_config().allow_interruptions:
+                        self.mark_last_action_timestamp()
+                        for _ in range(10):
+                            # Check if the stop event is set before sending each piece
+                            if stop_event.is_set():
+                                return "", False
+                            # Calculate the size of each piece
+                            piece_size = len(speech_data) // 10
+                            # Send the piece to the output device
+                            self.output_device.consume_nonblocking(
+                                speech_data[:piece_size]
+                            )
+                            # Remove the sent piece from the speech data
+                            speech_data = speech_data[piece_size:]
+                            # Sleep for a tenth of the chunk duration
+                            await asyncio.sleep(seconds_per_chunk / 10)
+                            self.transcriptions_worker.buffer.clear()
+                    else:
+                        self.transcriptions_worker.buffer.clear()
+                        self.mark_last_action_timestamp()
+                        self.output_device.consume_nonblocking(speech_data)
+                        speech_data = bytearray()
+                        # sleep for the length of the speech
+                        await asyncio.sleep(seconds_per_chunk)
+
             speech_data.extend(chunk_result.chunk)
 
         # # If no speech data is generated, return empty message and False flag
