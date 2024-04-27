@@ -538,9 +538,6 @@ class CommandAgent(RespondAgent[CommandAgentConfig]):
                     continue
                 elif tool_name and tool_params is not None:
                     try:
-                        # while not self.can_send:
-                        #     await asyncio.sleep(0.05)
-
                         asyncio.ensure_future(
                             self.call_function(
                                 FunctionCall(
@@ -721,6 +718,8 @@ class CommandAgent(RespondAgent[CommandAgentConfig]):
                     current_utterance = "".join(parts[2:])
                     # log each part
                 commandr_response += response_chunk
+            # strip the current utterance of any trailing whitespace
+            current_utterance = current_utterance.strip()
             if len(current_utterance) > 0 and any(
                 char.isalpha() for char in current_utterance
             ):
