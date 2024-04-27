@@ -417,46 +417,57 @@ class CommandAgent(RespondAgent[CommandAgentConfig]):
                 if len(stripped) != len(response_chunk):
                     response_chunk = stripped + " "
                 response_chunk = response_chunk.replace("\n", " ")
-                split_pattern = re.compile(r"([.!?,])\s*")
-                split_pattern2 = re.compile(r'([.!?])"')
-                last_answer_index = commandr_response.rfind("answer")
+                commandr_response += response_chunk
+                split_pattern = re.compile(r"([.!?,]) ")
+                split_pattern2 = re.compile(r'([.!?,])"')
+                last_answer_index = commandr_response.rfind('"answer"')
+                self.logger.info(f"Commandr response: {commandr_response}")
                 if (
                     last_answer_index != -1
                     and '"message": "' in commandr_response[last_answer_index:]
                     and not "}'," in commandr_response[last_answer_index:]
                 ):
                     current_utterance += response_chunk
+                    # split on quotes and grab the longest part
+                    current_utterance = re.sub(
+                        r"[^a-zA-Z .,!?']", "", current_utterance
+                    )
+
                     # split on pattern with punctuation and space, producing an interruptible of the stuff before (including the punctuation) and keeping the stuff after.
                     parts = split_pattern.split(current_utterance)
-                    self.logger.info(f"Split parts: {parts}")
                     if (
                         len(parts) > 2
-                        and len("".join(parts[:2]).split(" ")) > 2
-                        and len("".join(parts[:2]).split(" ")[-1]) > 4
+                        and len("".join(parts[:2]).split(" ")) >= 3
+                        and len("".join(parts[:2]).split(" ")[-1])
+                        > 3  # this is to avoid splitting on mr mrs
                         and any(char.isalpha() for char in "".join(parts[:2]))
                     ):
+                        to_send = "".join(parts[:2])
                         self.produce_interruptible_agent_response_event_nonblocking(
                             AgentResponseMessage(
                                 message=BaseMessage(text="".join(parts[:2]))
                             )
                         )
-                        await asyncio.sleep(0.01)
+                        await asyncio.sleep(0.1)
                         current_utterance = "".join(parts[2:])
-                        # log each part
-                        self.logger.info(f"Interruptible part: {parts[:1]}")
-                        self.logger.info(f"Remaining part: {parts[2:]}")
-                commandr_response += response_chunk
-            if len(current_utterance) > 0:
+
+            if len(current_utterance) > 0 and any(
+                char.isalpha() for char in current_utterance
+            ):
                 # only keep the part before split pattern 2
                 parts = split_pattern2.split(current_utterance)
                 current_utterance = "".join(parts[:2])
+                self.logger.info(f"Current utterance: {current_utterance}")
+
                 self.produce_interruptible_agent_response_event_nonblocking(
                     AgentResponseMessage(message=BaseMessage(text=current_utterance))
                 )
+                current_utterance = ""
 
             # if "send_direct_response" in commandr_response:
             #     return None
         if not commandr_response:
+            self.logger.info(f"There was not a streaming response")
             if self.agent_config.model_name.lower() == QWEN_MODEL_NAME.lower():
                 commandr_response, qwen_response = await asyncio.gather(
                     get_commandr_response(
@@ -527,22 +538,25 @@ class CommandAgent(RespondAgent[CommandAgentConfig]):
                     continue
                 elif tool_name and tool_params is not None:
                     try:
-                        while not self.can_send:
-                            await asyncio.sleep(0.05)
-                        await self.call_function(
-                            FunctionCall(
-                                name=tool_name, arguments=json.dumps(tool_params)
-                            ),
-                            TranscriptionAgentInput(
-                                transcription=Transcription(
-                                    message="I am doing that for you now.",
-                                    confidence=1.0,
-                                    is_final=True,
-                                    time_silent=0.0,
+                        # while not self.can_send:
+                        #     await asyncio.sleep(0.05)
+
+                        asyncio.ensure_future(
+                            self.call_function(
+                                FunctionCall(
+                                    name=tool_name, arguments=json.dumps(tool_params)
                                 ),
-                                conversation_id=self.conversation_id,
-                                twilio_sid=self.twilio_sid,
-                            ),
+                                TranscriptionAgentInput(
+                                    transcription=Transcription(
+                                        message="I am doing that for you now.",
+                                        confidence=1.0,
+                                        is_final=True,
+                                        time_silent=0.0,
+                                    ),
+                                    conversation_id=self.conversation_id,
+                                    twilio_sid=self.twilio_sid,
+                                ),
+                            )
                         )
                         # self.can_send = False
                         self.tool_message = ""
@@ -605,7 +619,12 @@ class CommandAgent(RespondAgent[CommandAgentConfig]):
                 for tool_call in tool_calls:
                     if tool_call is not None:
                         name = tool_call["tool_name"]
-                        params = eval(tool_call["tool_params"])
+                        params = eval(
+                            tool_call["tool_params"]
+                            .replace("null", "None")
+                            .replace("false", "False")
+                            .replace("true", "True")
+                        )
                         self.logger.info(f"Name: {name}, Params: {params}")
                         action_config = self._get_action_config(name)
                         try:
@@ -682,7 +701,7 @@ class CommandAgent(RespondAgent[CommandAgentConfig]):
                 if len(stripped) != len(response_chunk):
                     response_chunk = stripped + " "
                 response_chunk = response_chunk.replace("\n", " ")
-                split_pattern = re.compile(r"([.!?,])\s*")
+                split_pattern = re.compile(r"([.!?,]) ")
                 split_pattern2 = re.compile(r'([.!?])"')
                 current_utterance += response_chunk
                 # split on pattern with punctuation and space, producing an interruptible of the stuff before (including the punctuation) and keeping the stuff after.
@@ -702,7 +721,9 @@ class CommandAgent(RespondAgent[CommandAgentConfig]):
                     current_utterance = "".join(parts[2:])
                     # log each part
                 commandr_response += response_chunk
-            if len(current_utterance) > 0:
+            if len(current_utterance) > 0 and any(
+                char.isalpha() for char in current_utterance
+            ):
                 # only keep the part before split pattern 2
                 parts = split_pattern2.split(current_utterance)
                 current_utterance = "".join(parts[:2])

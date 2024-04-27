@@ -24,6 +24,7 @@ class ActionType(str, Enum):
     SEND_HELLO_SUGAR_BOOKING_INSTRUCTIONS = "send_hello_sugar_booking_instructions"
     CHECK_CALENDAR_AVAILABILITY = "check_calendar_availability"
     BOOK_CALENDAR_APPOINTMENT = "book_calendar_appointment"
+    CREATE_AGENT = "create_agent"
 
 
 class ActionConfig(TypedModel, type=ActionType.BASE):

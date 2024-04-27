@@ -127,6 +127,7 @@ class CommandAgentConfig(AgentConfig, type=AgentType.COMMAND.value):
     use_streaming: bool = False
     allow_interruptions: bool = False
     language: Optional[str] = "en-US"
+    ai_profile_id: Optional[str] = None
 
 
 class MistralAgentConfig(AgentConfig, type=AgentType.MISTRAL.value):

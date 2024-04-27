@@ -958,6 +958,7 @@ class StreamingConversation(Generic[OutputDeviceType]):
                     TEXT_TO_SPEECH_CHUNK_SIZE_SECONDS,
                     transcript_message=transcript_message,
                 )
+
                 # Create an asynchronous task for the coroutine and store it as the current task.
                 self.current_task = asyncio.create_task(send_speech_coroutine)
 
@@ -1000,10 +1001,10 @@ class StreamingConversation(Generic[OutputDeviceType]):
                 self.conversation.logger.debug(f"Message sent: {message_sent}")
 
                 # If the message was cut off, update the last bot message accordingly.
-                if cut_off:
-                    self.conversation.agent.update_last_bot_message_on_cut_off(
-                        message_sent
-                    )
+                # if cut_off:
+                #     self.conversation.agent.update_last_bot_message_on_cut_off(
+                #         message_sent
+                #     )
 
                 # Check if the conversation should end after the agent says goodbye.
                 if self.conversation.agent.agent_config.end_conversation_on_goodbye:
@@ -1352,7 +1353,6 @@ class StreamingConversation(Generic[OutputDeviceType]):
                             # Remove the sent piece from the speech data
                             speech_data = speech_data[piece_size:]
                             # Sleep for a tenth of the chunk duration
-                            await asyncio.sleep(seconds_per_chunk / 10)
                             self.transcriptions_worker.buffer.clear()
                     else:
                         self.transcriptions_worker.buffer.clear()
@@ -1360,7 +1360,7 @@ class StreamingConversation(Generic[OutputDeviceType]):
                         self.output_device.consume_nonblocking(speech_data)
                         speech_data = bytearray()
                         # sleep for the length of the speech
-                        await asyncio.sleep(seconds_per_chunk)
+                    await asyncio.sleep(seconds_per_chunk)
 
             speech_data.extend(chunk_result.chunk)
 

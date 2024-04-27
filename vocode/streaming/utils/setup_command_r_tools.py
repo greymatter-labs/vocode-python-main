@@ -22,6 +22,47 @@ standard_tools = [
 ]
 
 all_optional_tools = {
+    ActionType.CREATE_AGENT: {
+        "name": "create_agent",
+        "description": "Create a new agent with the specified attributes.",
+        "parameter_definitions": {
+            "name": {
+                "description": "The name of the agent.",
+                "type": "str",
+                "required": True,
+            },
+            "gender": {
+                "description": "The gender of the agent.",
+                "type": "str",
+                "required": True,
+            },
+            "job_title": {
+                "description": "The job title of the agent.",
+                "type": "str",
+                "required": True,
+            },
+            "employer": {
+                "description": "The employer of the agent.",
+                "type": "str",
+                "required": True,
+            },
+            "allow_interruptions": {
+                "description": "Whether the agent allows interruptions.",
+                "type": "bool",
+                "required": True,
+            },
+            "agent_description": {
+                "description": "A description of the agent.",
+                "type": "str",
+                "required": True,
+            },
+            "base_message": {
+                "description": "The base message the agent will use.",
+                "type": "str",
+                "required": True,
+            },
+        },
+    },
     ActionType.TRANSFER_CALL: {
         "name": "transfer_call",
         "description": "Transfers when the agent agrees to transfer the call.",
@@ -212,5 +253,4 @@ def setup_command_r_tools(action_config: CommandAgentConfig, logger: logging.Log
         tool = all_optional_tools[action_type]
         if tool:
             optional_tools.append(tool)
-
     return optional_tools + standard_tools.copy()

@@ -242,6 +242,8 @@ class AzureSynthesizer(BaseSynthesizer[AzureSynthesizerConfig]):
         message = message.replace("\n", " ")
         # remove escaped newline from message
         message = message.replace("\\n", " ")
+        # remove backslashes from message
+        message = message.replace("\\", "")
         is_neural = "neural" in self.voice_name.lower()
         voice_language_code = (
             self.synthesizer_config.language_code if is_neural else None
