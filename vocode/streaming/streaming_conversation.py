@@ -529,7 +529,6 @@ class StreamingConversation(Generic[OutputDeviceType]):
                 if len(self.buffer) == 0:
                     self.conversation.logger.info("Ignoring vad, empty message.")
                     return
-                self.conversation.stop_event.set()  # be more tolerant once they've already started talking
 
                 # If a buffer check task is running, extend the current sleep time
                 if self.buffer_check_task and not self.buffer_check_task.done():

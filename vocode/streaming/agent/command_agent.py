@@ -417,6 +417,8 @@ class CommandAgent(RespondAgent[CommandAgentConfig]):
                 if len(stripped) != len(response_chunk):
                     response_chunk = stripped + " "
                 response_chunk = response_chunk.replace("\n", " ")
+                response_chunk = response_chunk.replace("\\", "test")
+                response_chunk = response_chunk.replace("testn", " ")
                 commandr_response += response_chunk
                 split_pattern = re.compile(r"([.!?,]) ")
                 split_pattern2 = re.compile(r'([.!?,])"')
@@ -428,28 +430,34 @@ class CommandAgent(RespondAgent[CommandAgentConfig]):
                     and not "}'," in commandr_response[last_answer_index:]
                 ):
                     current_utterance += response_chunk
-                    # split on quotes and grab the longest part
-                    current_utterance = re.sub(
-                        r"[^a-zA-Z .,!?']", "", current_utterance
-                    )
+                    current_utterance = re.sub(r"[^\w .,!?'-]", "", current_utterance)
+                    current_utterance = current_utterance.replace("testn", " ")
+                    current_utterance = current_utterance.replace("  ", " ")
 
                     # split on pattern with punctuation and space, producing an interruptible of the stuff before (including the punctuation) and keeping the stuff after.
                     parts = split_pattern.split(current_utterance)
+                    # join everything up to the last part
                     if (
-                        len(parts) > 2
-                        and len("".join(parts[:2]).split(" ")) >= 3
-                        and len("".join(parts[:2]).split(" ")[-1])
+                        len(parts) > 0
+                        and len("".join(parts[:-1]).split(" ")) >= 3
+                        and len("".join(parts[:-1]).split(" ")[-1])
                         > 3  # this is to avoid splitting on mr mrs
-                        and any(char.isalpha() for char in "".join(parts[:2]))
+                        and any(char.isalpha() for char in "".join(parts[:-1]))
                     ):
-                        to_send = "".join(parts[:2])
                         self.produce_interruptible_agent_response_event_nonblocking(
                             AgentResponseMessage(
-                                message=BaseMessage(text="".join(parts[:2]))
+                                message=BaseMessage(
+                                    text="".join(
+                                        [
+                                            part + " " if part[-1] in ".,!?'" else part
+                                            for part in parts[:-1]
+                                        ]
+                                    )
+                                )
                             )
                         )
                         await asyncio.sleep(0.1)
-                        current_utterance = "".join(parts[2:])
+                        current_utterance = parts[-1]
 
             if len(current_utterance) > 0 and any(
                 char.isalpha() for char in current_utterance
@@ -718,8 +726,6 @@ class CommandAgent(RespondAgent[CommandAgentConfig]):
                     current_utterance = "".join(parts[2:])
                     # log each part
                 commandr_response += response_chunk
-            # strip the current utterance of any trailing whitespace
-            current_utterance = current_utterance.strip()
             if len(current_utterance) > 0 and any(
                 char.isalpha() for char in current_utterance
             ):
