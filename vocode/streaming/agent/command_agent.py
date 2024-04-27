@@ -417,8 +417,8 @@ class CommandAgent(RespondAgent[CommandAgentConfig]):
                 if len(stripped) != len(response_chunk):
                     response_chunk = stripped + " "
                 response_chunk = response_chunk.replace("\n", " ")
-                response_chunk = response_chunk.replace("\\", "test")
-                response_chunk = response_chunk.replace("testn", " ")
+                response_chunk = response_chunk.replace("\\", "505050")
+                response_chunk = response_chunk.replace("505050n", " ")
                 commandr_response += response_chunk
                 split_pattern = re.compile(r"([.!?,]) ")
                 split_pattern2 = re.compile(r'([.!?,])"')
@@ -431,9 +431,11 @@ class CommandAgent(RespondAgent[CommandAgentConfig]):
                 ):
                     current_utterance += response_chunk
                     current_utterance = re.sub(r"[^\w .,!?'-]", "", current_utterance)
-                    current_utterance = current_utterance.replace("testn", " ")
+                    current_utterance = current_utterance.replace("505050n", " ")
+                    current_utterance = current_utterance.replace('505050"', "")
+                    current_utterance = current_utterance.replace("505050", "")
                     current_utterance = current_utterance.replace("  ", " ")
-
+                    current_utterance = current_utterance.replace('"', "")
                     # split on pattern with punctuation and space, producing an interruptible of the stuff before (including the punctuation) and keeping the stuff after.
                     parts = split_pattern.split(current_utterance)
                     # join everything up to the last part
@@ -449,7 +451,7 @@ class CommandAgent(RespondAgent[CommandAgentConfig]):
                                 message=BaseMessage(
                                     text="".join(
                                         [
-                                            part + " " if part[-1] in ".,!?'" else part
+                                            part + " " if part[-1] in ".,!?" else part
                                             for part in parts[:-1]
                                         ]
                                     )
