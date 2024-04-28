@@ -10,10 +10,10 @@ from vocode.streaming.models.actions import (
 standard_tools = [
     {
         "name": "answer",
-        "description": "Directly respond to the user, given the conversation history. Must include the message.",
+        "description": "Default tool that directly responds to the user, given the conversation history. Must include the message.",
         "parameter_definitions": {
             "message": {
-                "description": "Your reply to the user.",
+                "description": "Response to the user.",
                 "type": "str",
                 "required": True,
             }
@@ -113,16 +113,16 @@ all_optional_tools = {
         },
     },
     ActionType.SEND_TEXT: {
-        "name": "send_text",
-        "description": "Send an sms text message to the provided phone number.",
+        "name": "sms",
+        "description": "Send an sms to the provided phone number.",
         "parameter_definitions": {
             "to_phone": {
                 "description": "The phone number to which the SMS will be sent",
                 "type": "str",
                 "required": True,
             },
-            "message": {
-                "description": "The SMS message to be sent",
+            "contents": {
+                "description": "The text to be sent",
                 "type": "str",
                 "required": True,
             },

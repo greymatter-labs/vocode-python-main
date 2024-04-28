@@ -332,6 +332,12 @@ async def get_commandr_response_streaming(
 ):
     prompt_buffer = prompt_buffer.replace("directly_answer", "answer")
     prompt_buffer = prompt_buffer.replace("directly-answer", "answer")
+    to_add = '''Action: ```json
+[
+      {
+          "tool_name": "'''
+    prompt_buffer += to_add
+    # log the prompt buffer
     async with aiohttp.ClientSession() as session:
         # TODO: Change at some point, this is bc haproxy can't do ngrok
         if "medusa" in model.lower():
@@ -353,6 +359,8 @@ async def get_commandr_response_streaming(
         async with session.post(
             f"{base_url}/completions", headers=HEADERS, json=data
         ) as response:
+            # first yield out the prefix
+            yield to_add
             # Since we are streaming, we need to process the response as it arrives
             async for chunk in response.content:
                 if chunk == b"\n":

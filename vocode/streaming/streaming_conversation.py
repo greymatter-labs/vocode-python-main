@@ -856,7 +856,8 @@ class StreamingConversation(Generic[OutputDeviceType]):
                     ):
                         await self.conversation.filler_audio_worker.wait_for_filler_audio_to_finish()
                 if not agent_response_message.message.text.strip() or not any(
-                    char.isalpha() for char in agent_response_message.message.text
+                    char.isalpha() or char.isdigit()
+                    for char in agent_response_message.message.text
                 ):
                     self.conversation.logger.debug(
                         "SYNTH: Ignoring empty or non-letter agent response message"
@@ -1322,44 +1323,46 @@ class StreamingConversation(Generic[OutputDeviceType]):
         speech_data = bytearray()
         held_buffer = self.transcriptions_worker.buffer.to_message()
         # Asynchronously generate speech data from the synthesis result
+        buffer_cleared = False
         async for chunk_result in synthesis_result.chunk_generator:
             if len(speech_data) > chunk_size:
                 self.transcriptions_worker.synthesis_done = True
-            if (
-                self.transcriptions_worker.buffer_check_task
-                and self.transcriptions_worker.buffer_check_task.done()
-                and not self.transcriptions_worker.buffer_check_task.cancelled()
-            ):
-                if len(speech_data) > chunk_size:
-                    self.transcriptions_worker.block_inputs = True
-                    self.transcriptions_worker.time_silent = 0.0
-                    self.transcriptions_worker.triggered_affirmative = False
-                    self.logger.debug(
-                        f"Sending in synth buffer early, len {len(speech_data)}"
-                    )
-                    if self.agent.get_agent_config().allow_interruptions:
-                        self.mark_last_action_timestamp()
-                        for _ in range(10):
-                            # Check if the stop event is set before sending each piece
-                            if stop_event.is_set():
-                                return "", False
-                            # Calculate the size of each piece
-                            piece_size = len(speech_data) // 10
-                            # Send the piece to the output device
-                            self.output_device.consume_nonblocking(
-                                speech_data[:piece_size]
-                            )
-                            # Remove the sent piece from the speech data
-                            speech_data = speech_data[piece_size:]
-                            # Sleep for a tenth of the chunk duration
-                            self.transcriptions_worker.buffer.clear()
-                    else:
+            if stop_event.is_set() and self.agent.agent_config.allow_interruptions:
+                return "", False
+            if len(speech_data) > chunk_size:
+                self.transcriptions_worker.block_inputs = True
+                self.transcriptions_worker.time_silent = 0.0
+                self.transcriptions_worker.triggered_affirmative = False
+                self.logger.debug(
+                    f"Sending in synth buffer early, len {len(speech_data)}"
+                )
+                if self.agent.agent_config.allow_interruptions:
+                    self.mark_last_action_timestamp()
+                    for _ in range(10):
+                        # Check if the stop event is set before sending each piece
+                        await asyncio.sleep(seconds_per_chunk / 10)
+                        if stop_event.is_set():
+                            return "", False
+                        # Calculate the size of each piece
+                        piece_size = len(speech_data) // 10
+                        # Send the piece to the output device
+                        self.output_device.consume_nonblocking(speech_data[:piece_size])
+                        # Remove the sent piece from the speech data
+                        speech_data = speech_data[piece_size:]
+                        # Sleep for a tenth of the chunk duration
+                    if not buffer_cleared and not stop_event.is_set():
+                        buffer_cleared = True
                         self.transcriptions_worker.buffer.clear()
-                        self.mark_last_action_timestamp()
-                        self.output_device.consume_nonblocking(speech_data)
-                        speech_data = bytearray()
-                        # sleep for the length of the speech
+                else:
+                    self.transcriptions_worker.buffer.clear()
+                    self.mark_last_action_timestamp()
+                    self.output_device.consume_nonblocking(speech_data)
+                    speech_data = bytearray()
+                    # sleep for the length of the speech
                     await asyncio.sleep(seconds_per_chunk)
+                    if not buffer_cleared:
+                        buffer_cleared = True
+                        self.transcriptions_worker.buffer.clear()
 
             speech_data.extend(chunk_result.chunk)
 

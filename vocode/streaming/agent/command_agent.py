@@ -417,8 +417,10 @@ class CommandAgent(RespondAgent[CommandAgentConfig]):
                 if len(stripped) != len(response_chunk):
                     response_chunk = stripped + " "
                 response_chunk = response_chunk.replace("\n", " ")
-                response_chunk = response_chunk.replace("\\", "505050")
-                response_chunk = response_chunk.replace("505050n", " ")
+                response_chunk = response_chunk.replace(
+                    r"\\n", " "
+                )  # the r makes it a raw string which is needed for the backslash
+                response_chunk = response_chunk.replace("  ", " ")
                 commandr_response += response_chunk
                 split_pattern = re.compile(r"([.!?,]) ")
                 split_pattern2 = re.compile(r'([.!?,])"')
@@ -427,13 +429,10 @@ class CommandAgent(RespondAgent[CommandAgentConfig]):
                 if (
                     last_answer_index != -1
                     and '"message": "' in commandr_response[last_answer_index:]
-                    and not "}'," in commandr_response[last_answer_index:]
+                    and not "}," in commandr_response[last_answer_index:]
                 ):
                     current_utterance += response_chunk
-                    current_utterance = re.sub(r"[^\w .,!?'-]", "", current_utterance)
-                    current_utterance = current_utterance.replace("505050n", " ")
-                    current_utterance = current_utterance.replace('505050"', "")
-                    current_utterance = current_utterance.replace("505050", "")
+                    current_utterance = re.sub(r"[^\w .,!?'@-]", "", current_utterance)
                     current_utterance = current_utterance.replace("  ", " ")
                     current_utterance = current_utterance.replace('"', "")
                     # split on pattern with punctuation and space, producing an interruptible of the stuff before (including the punctuation) and keeping the stuff after.
