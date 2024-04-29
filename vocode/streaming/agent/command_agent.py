@@ -425,7 +425,6 @@ class CommandAgent(RespondAgent[CommandAgentConfig]):
                 split_pattern = re.compile(r"([.!?,]) ")
                 split_pattern2 = re.compile(r'([.!?,])"')
                 last_answer_index = commandr_response.rfind('"answer"')
-                self.logger.info(f"Commandr response: {commandr_response}")
                 if (
                     last_answer_index != -1
                     and '"message": "' in commandr_response[last_answer_index:]
