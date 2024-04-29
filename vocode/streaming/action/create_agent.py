@@ -196,12 +196,12 @@ class CreateAgent(
         # log query repponse
         logger.info(f"Query response: {response}")
 
-        asyncio.create_task(execute_graphql_query(mutation, variables))
+        await execute_graphql_query(mutation, variables)
 
         return ActionOutput(
             action_type=action_input.action_config.type,
             response=CreateAgentResponse(
                 success=True,
-                message="Agent is being trained. Please keep the caller on the line.",
+                message="Agent has been created successfully!",
             ),
         )
