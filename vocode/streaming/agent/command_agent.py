@@ -738,7 +738,7 @@ class CommandAgent(RespondAgent[CommandAgentConfig]):
                         except Exception as e:
                             self.logger.error(f"Error creating action: {e}")
                             self.tool_message = ""
-                if len(tasks) > 0:  # TODO ITS MISSING INPUT
+                if len(tasks) > 0:
                     outputs = await asyncio.gather(*tasks)
                     finished = False
                     for input, output in outputs:
