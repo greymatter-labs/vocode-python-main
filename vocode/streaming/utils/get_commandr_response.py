@@ -108,7 +108,7 @@ def format_command_function_completion_from_transcript(
             }
         )
         # wrap the last user message in a text that says a tool is being run
-        # work backwards to find the last user message
+        # we do this to avoid hallucinations during the phase when the tool is pending
         for i in range(len(messages) - 1, -1, -1):
             if (
                 messages[i]["role"] == "user"
