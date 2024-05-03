@@ -119,7 +119,7 @@ class CommandAgent(RespondAgent[CommandAgentConfig]):
         self.conversation_id = None
         self.twilio_sid = None
         self.tool_message = ""
-        self.block_inputs = False
+        self.block_inputs = False  # independent of interruptions, actions cannot be interrupted when a starting phrase is present
         self.streamed = False
         self.agent_config.pending_action = None
         if agent_config.azure_params:
@@ -475,7 +475,9 @@ class CommandAgent(RespondAgent[CommandAgentConfig]):
                         > 3  # this is to avoid splitting on mr mrs
                         and any(char.isalpha() for char in "".join(parts[:-1]))
                     ):
-                        self.streamed = True
+                        self.streamed = (
+                            True  # we said something so no need for fall back
+                        )
                         self.produce_interruptible_agent_response_event_nonblocking(
                             AgentResponseMessage(
                                 message=BaseMessage(
@@ -498,7 +500,7 @@ class CommandAgent(RespondAgent[CommandAgentConfig]):
                 parts = split_pattern2.split(current_utterance)
                 current_utterance = "".join(parts[:2])
                 self.logger.info(f"Current utterance: {current_utterance}")
-
+                self.streamed = True  # we said something so no need for fall back
                 self.produce_interruptible_agent_response_event_nonblocking(
                     AgentResponseMessage(message=BaseMessage(text=current_utterance))
                 )
@@ -559,6 +561,8 @@ class CommandAgent(RespondAgent[CommandAgentConfig]):
                 commandr_response_data = [commandr_response_data]
             tools_used = None
             self.logger.info(f"Response was: {commandr_response_data}")
+            # iterate through the tools used to format them and set tool message
+            # messy code since most stuff has been mvoed out
             for tool in commandr_response_data:
                 tool_name = tool.get("tool_name")
                 tool_params = tool.get("parameters")
@@ -646,7 +650,7 @@ class CommandAgent(RespondAgent[CommandAgentConfig]):
                             .replace("null", "None")
                             .replace("false", "False")
                             .replace("true", "True")
-                        )
+                        )  # ensure we can interpret it as a dict
                         self.logger.info(f"Name: {name}, Params: {params}")
                         action_config = self._get_action_config(name)
                         try:
@@ -655,7 +659,7 @@ class CommandAgent(RespondAgent[CommandAgentConfig]):
                                 conversation_id, params, user_message_tracker=None
                             )
 
-                            # check if starting_phrase exists and is true in the action config
+                            # check if starting_phrase exists and has content
                             if (
                                 action_config.starting_phrase
                                 and action_config.starting_phrase != ""
@@ -671,10 +675,12 @@ class CommandAgent(RespondAgent[CommandAgentConfig]):
                                             message=BaseMessage(text=to_say_start)
                                         )
                                     )
+                                # This may not be necessary with this mode but its how vocode works.
                                 self.transcript.add_action_start_log(
                                     action_input=action_input,
                                     conversation_id=conversation_id,
                                 )
+                                # if we're using streaming, we need to block inputs until the tool calls are done
                                 self.block_inputs = True
 
                                 async def run_action_and_return_input(
@@ -683,6 +689,7 @@ class CommandAgent(RespondAgent[CommandAgentConfig]):
                                     action_output = await action.run(action_input)
                                     return action_input, action_output
 
+                                # accumulate the tasks so we dont wait on each one sequentially
                                 tasks.append(
                                     asyncio.create_task(
                                         run_action_and_return_input(
@@ -690,7 +697,7 @@ class CommandAgent(RespondAgent[CommandAgentConfig]):
                                         )
                                     )
                                 )
-                            else:
+                            else:  # if streaming isn't enabled
                                 await self.call_function(
                                     FunctionCall(
                                         name=name,
@@ -715,9 +722,11 @@ class CommandAgent(RespondAgent[CommandAgentConfig]):
                                     self.logger.info(
                                         f"Re-doing qwen due to tool call. Transcript: {self.transcript.to_string()}"
                                     )
+                                    # this generates the starting phrase using qwen
                                     self.tool_message = await self.get_qwen_response_future(
                                         self.transcript  # not frozen because we want the latest tool call
                                     )
+                                    # fallback mode will take care of the ending_phrase
                         except Exception as e:
                             self.logger.error(f"Error creating action: {e}")
                             self.tool_message = ""
@@ -731,6 +740,7 @@ class CommandAgent(RespondAgent[CommandAgentConfig]):
                             action_output=output,
                             conversation_id=conversation_id,
                         )
+                        # if a tool produces an ending phrase, we say it out loud
                         if "ending_phrase" in output and not finished:
                             self.produce_interruptible_agent_response_event_nonblocking(
                                 AgentResponseMessage(
@@ -738,21 +748,24 @@ class CommandAgent(RespondAgent[CommandAgentConfig]):
                                 )
                             )
                             self.tool_message = output["ending_phrase"]
-                            self.streamed = True
-                self.block_inputs = False
+                            self.streamed = True  # and indicate we don't need to fall back to say something else
+                self.block_inputs = False  # the tool calls are done which means we can continue with the conversation
 
         if self.streamed:
             self.streamed = False
-            return "", True
+            return "", True  # we said what we needed to say, no need to fall back
         if (
             self.agent_config.use_streaming
             and self.tool_message
             and len(self.tool_message) > 0
         ):
             if "qwen" in self.agent_config.model_name.lower():
-                return self.tool_message, True
+                return (
+                    self.tool_message,
+                    True,
+                )  # if qwen had something to say, we don't need to fall back
             self.logger.info(f"NO TOOL CALLS")
-            return "", True
+            return "", True  # we said what we needed to say, no need to fall back
 
         if len(self.tool_message) > 0:
             return self.tool_message, True
