@@ -409,11 +409,36 @@ class CommandAgent(RespondAgent[CommandAgentConfig]):
                 model_to_use = getenv("AI_MODEL_NAME_LARGE")
             else:
                 model_to_use = self.agent_config.model_name
+            first_tool_name = ""
             async for response_chunk in get_commandr_response_streaming(
                 prompt_buffer=commandr_prompt_buffer,
                 model=model_to_use,
                 logger=self.logger,
             ):
+                if (
+                    '"tool_name":' in commandr_response
+                    and not "DONE" in first_tool_name
+                ):
+                    if '"' not in first_tool_name:
+                        first_tool_name += response_chunk
+                    else:
+                        if "answer" not in first_tool_name:
+                            first_tool_name = first_tool_name.replace('",', "")
+                            self.logger.info(f"First tool name: {first_tool_name}")
+                            action_config = self._get_action_config(first_tool_name)
+                            # check if starting_phrase exists and is true in the action config
+                            if (
+                                action_config.starting_phrase
+                                and action_config.starting_phrase != ""
+                            ):
+                                # the value of starting_phrase is the message it says during the action
+                                to_say_start = action_config.starting_phrase
+                                self.produce_interruptible_agent_response_event_nonblocking(
+                                    AgentResponseMessage(
+                                        message=BaseMessage(text=to_say_start)
+                                    )
+                                )
+                        first_tool_name = "DONE"
                 stripped = response_chunk.rstrip()
                 if len(stripped) != len(response_chunk):
                     response_chunk = stripped + " "
@@ -612,6 +637,7 @@ class CommandAgent(RespondAgent[CommandAgentConfig]):
             # prefix = await self.gen_prefix() TODO how to do
             tool_calls = await self.gen_tool_call(conversation_id)
             if tool_calls:
+                tasks = []
                 for tool_call in tool_calls:
                     if tool_call is not None:
                         name = tool_call["tool_name"]
@@ -636,7 +662,10 @@ class CommandAgent(RespondAgent[CommandAgentConfig]):
                             ):
                                 # the value of starting_phrase is the message it says during the action
                                 to_say_start = action_config.starting_phrase
-                                if not self.streamed:
+                                if (
+                                    not self.streamed
+                                    and not self.agent_config.use_streaming
+                                ):
                                     self.produce_interruptible_agent_response_event_nonblocking(
                                         AgentResponseMessage(
                                             message=BaseMessage(text=to_say_start)
@@ -647,25 +676,37 @@ class CommandAgent(RespondAgent[CommandAgentConfig]):
                                     conversation_id=conversation_id,
                                 )
                                 self.block_inputs = True
-                                action_output = await action.run(action_input)
-                                self.transcript.add_action_finish_log(
-                                    action_input=action_input,
-                                    action_output=action_output,
-                                    conversation_id=conversation_id,
-                                )
-                                if "ending_phrase" in action_output:
-                                    self.produce_interruptible_agent_response_event_nonblocking(
-                                        AgentResponseMessage(
-                                            message=BaseMessage(
-                                                text=action_output["ending_phrase"]
-                                            )
+
+                                async def run_action_and_return_input(
+                                    action, action_input, is_interrupt
+                                ):
+                                    action_output = await action.run(action_input)
+                                    return action_input, action_output
+
+                                tasks.append(
+                                    asyncio.create_task(
+                                        run_action_and_return_input(
+                                            action, action_input, is_interrupt
                                         )
                                     )
-                                    self.tool_message = action_output["ending_phrase"]
-                                    self.streamed = True
-                                else:
-                                    self.tool_message = ""
-                                self.block_inputs = False
+                                )
+                                # self.transcript.add_action_finish_log(
+                                #     action_input=action_input,
+                                #     action_output=action_output,
+                                #     conversation_id=conversation_id,
+                                # )
+                                # if "ending_phrase" in action_output:
+                                #     self.produce_interruptible_agent_response_event_nonblocking(
+                                #         AgentResponseMessage(
+                                #             message=BaseMessage(
+                                #                 text=action_output["ending_phrase"]
+                                #             )
+                                #         )
+                                #     )
+                                #     self.tool_message = action_output["ending_phrase"]
+                                # self.streamed = True
+                                # else:
+                                #     self.tool_message = ""
                             else:
                                 await self.call_function(
                                     FunctionCall(
@@ -697,6 +738,26 @@ class CommandAgent(RespondAgent[CommandAgentConfig]):
                         except Exception as e:
                             self.logger.error(f"Error creating action: {e}")
                             self.tool_message = ""
+                if len(tasks) > 0:  # TODO ITS MISSING INPUT
+                    outputs = await asyncio.gather(*tasks)
+                    finished = False
+                    for input, output in outputs:
+                        self.logger.info(f"Output: {output}")
+                        self.transcript.add_action_finish_log(
+                            action_input=input,
+                            action_output=output,
+                            conversation_id=conversation_id,
+                        )
+                        if "ending_phrase" in output and not finished:
+                            self.produce_interruptible_agent_response_event_nonblocking(
+                                AgentResponseMessage(
+                                    message=BaseMessage(text=output["ending_phrase"])
+                                )
+                            )
+                            self.tool_message = output["ending_phrase"]
+                            self.streamed = True
+                self.block_inputs = False
+
         if self.streamed:
             self.streamed = False
             return "", True
