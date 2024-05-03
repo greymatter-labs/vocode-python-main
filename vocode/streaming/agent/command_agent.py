@@ -690,23 +690,6 @@ class CommandAgent(RespondAgent[CommandAgentConfig]):
                                         )
                                     )
                                 )
-                                # self.transcript.add_action_finish_log(
-                                #     action_input=action_input,
-                                #     action_output=action_output,
-                                #     conversation_id=conversation_id,
-                                # )
-                                # if "ending_phrase" in action_output:
-                                #     self.produce_interruptible_agent_response_event_nonblocking(
-                                #         AgentResponseMessage(
-                                #             message=BaseMessage(
-                                #                 text=action_output["ending_phrase"]
-                                #             )
-                                #         )
-                                #     )
-                                #     self.tool_message = action_output["ending_phrase"]
-                                # self.streamed = True
-                                # else:
-                                #     self.tool_message = ""
                             else:
                                 await self.call_function(
                                     FunctionCall(
