@@ -877,7 +877,7 @@ class StreamingConversation(Generic[OutputDeviceType]):
         initial_message = self.agent.get_agent_config().initial_message
         call_type = self.agent.get_agent_config().call_type
 
-        if initial_message and call_type == CallType.INBOUND:
+        if initial_message:
             asyncio.create_task(self.send_initial_message(initial_message))
         else:
             # unmute if no initial message so they can speak first
