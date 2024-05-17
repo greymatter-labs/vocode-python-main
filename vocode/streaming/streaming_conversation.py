@@ -899,17 +899,17 @@ class StreamingConversation(Generic[OutputDeviceType]):
         self.transcriptions_worker.block_inputs = False
 
     async def send_initial_message(self, initial_message: BaseMessage):
-        # TODO: configure if initial message is interruptible
-        initial_message_tracker = asyncio.Event()
-        agent_response_event = (
-            self.interruptible_event_factory.create_interruptible_agent_response_event(
+        if self.agent.get_agent_config().call_type == CallType.OUTBOUND:
+            self.agent.transcript.add_bot_message(initial_message)
+        else:
+            initial_message_tracker = asyncio.Event()
+            agent_response_event = self.interruptible_event_factory.create_interruptible_agent_response_event(
                 AgentResponseMessage(message=initial_message),
                 is_interruptible=False,
                 agent_response_tracker=initial_message_tracker,
             )
-        )
-        self.agent_responses_worker.consume_nonblocking(agent_response_event)
-        await initial_message_tracker.wait()
+            self.agent_responses_worker.consume_nonblocking(agent_response_event)
+            await initial_message_tracker.wait()
         self.transcriber.unmute()
 
     async def check_for_idle(self):
