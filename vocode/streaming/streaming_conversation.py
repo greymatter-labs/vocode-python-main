@@ -900,7 +900,7 @@ class StreamingConversation(Generic[OutputDeviceType]):
 
     async def send_initial_message(self, initial_message: BaseMessage):
         if self.agent.get_agent_config().call_type == CallType.OUTBOUND:
-            self.agent.transcript.add_bot_message(initial_message)
+            self.agent.transcript.add_bot_message(initial_message, self.id)
         else:
             initial_message_tracker = asyncio.Event()
             agent_response_event = self.interruptible_event_factory.create_interruptible_agent_response_event(
