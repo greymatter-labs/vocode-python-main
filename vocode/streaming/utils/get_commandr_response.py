@@ -349,6 +349,7 @@ async def get_commandr_response_streaming(
       {
           "tool_name": "'''
     prompt_buffer += to_add
+    logger.info(f"prompt is {prompt_buffer}")
     # log the prompt buffer
     async with aiohttp.ClientSession() as session:
         # TODO: Change at some point, this is bc haproxy can't do ngrok
