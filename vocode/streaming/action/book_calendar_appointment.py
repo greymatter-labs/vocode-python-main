@@ -1,6 +1,6 @@
 import logging
 import os
-from telephony_app.utils.date_parser import parse_natural_language_date
+from telephony_app.utils.date_parser import parse_natural_language_date, parse_natural_language_time
 from telephony_app.integrations.oauth import OauthCredentials
 from telephony_app.integrations.gcal.gcal_helpers import get_google_scopes
 from aiogoogle import Aiogoogle
@@ -29,6 +29,7 @@ class BookCalendarAppointmentActionConfig(
     host_name: str
     appointment_length_minutes: int
     starting_phrase: str
+    business_timezone: str # i.e. EST
 
 
 class BookCalendarAppointmentParameters(BaseModel):
@@ -36,6 +37,7 @@ class BookCalendarAppointmentParameters(BaseModel):
     guest_email: Optional[str]
     description: str
     date: str
+    time: str
 
 
 class BookCalendarAppointmentResponse(BaseModel):
@@ -72,7 +74,9 @@ class BookCalendarAppointment(
         }
         async with Aiogoogle(user_creds=aiogoogle_creds) as aiogoogle:
             calendar_v3 = await aiogoogle.discover("calendar", "v3")
-            start_time = parse_natural_language_date(action_input.params.date)
+            start_date: datetime.datetime = parse_natural_language_date(action_input.params.date, self.action_config.params.business_timezone)
+            start_time: datetime.time = parse_natural_language_time(action_input.params.time)
+            start_datetime = start_date.replace(hour=start_time.hour, minute=start_time.minute)
             duration = datetime.timedelta(
                 minutes=self.action_config.appointment_length_minutes
             )
@@ -98,8 +102,8 @@ class BookCalendarAppointment(
                         ],
                         "description": action_input.params.description,
                         "summary": "Appointment",
-                        "start": {"dateTime": start_time.isoformat()},
-                        "end": {"dateTime": (start_time + duration).isoformat()},
+                        "start": {"dateTime": start_datetime.isoformat()},
+                        "end": {"dateTime": (start_datetime + duration).isoformat()},
                     },
                 )
             )
