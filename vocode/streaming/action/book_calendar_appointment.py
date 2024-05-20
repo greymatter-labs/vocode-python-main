@@ -77,7 +77,7 @@ class BookCalendarAppointment(
             start_date: datetime.datetime = parse_natural_language_date(action_input.params.date, self.action_config.business_timezone)
             start_time: datetime.time = parse_natural_language_time(action_input.params.time)
             start_datetime = start_date.replace(hour=start_time.hour, minute=start_time.minute)
-            logger.info(f"start date {start_date} start time {start_time} full datetime {start_datetime}. FORMATTED {start_datetime.astimezone(utc).strftime("%Y-%m-%dT%H:%M:%S%z")}")
+            logger.info(f"start date {start_date} start time {start_time} full datetime {start_datetime}. FORMATTED {start_datetime.astimezone(utc).strftime('%Y-%m-%dT%H:%M:%S%z')}")
             duration = datetime.timedelta(
                 minutes=self.action_config.appointment_length_minutes
             )
