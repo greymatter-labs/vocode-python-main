@@ -81,7 +81,7 @@ class BookCalendarAppointment(
                 minutes=self.action_config.appointment_length_minutes
             )
             response = await aiogoogle.as_user(
-                calendar_v3.events().insert(
+                calendar_v3.events.insert(
                     "primary",
                     {
                         "attendees": [
