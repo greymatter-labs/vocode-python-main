@@ -78,13 +78,14 @@ class BookCalendarAppointment(
             start_time: datetime.time = parse_natural_language_time(action_input.params.time)
             start_datetime = start_date.replace(hour=start_time.hour, minute=start_time.minute)
 
+            duration = datetime.timedelta(
+                minutes=self.action_config.appointment_length_minutes
+            )
+
             start_str = start_datetime.strftime("%Y-%m-%dT%H:%M:%S%z")
             end_str = (start_datetime + duration).strftime("%Y-%m-%dT%H:%M:%S%z")
             logger.info(f"full datetime {start_datetime}. start is {start_str} end is {end_str}")
 
-            duration = datetime.timedelta(
-                minutes=self.action_config.appointment_length_minutes
-            )
             response = await aiogoogle.as_user(
                 calendar_v3.events.insert(
                     calendarId="primary",
