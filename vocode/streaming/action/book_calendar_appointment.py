@@ -104,7 +104,7 @@ class BookCalendarAppointment(
                         "description": action_input.params.description,
                         "summary": "Appointment",
                         "start": {"dateTime": start_datetime.strftime("%Y-%m-%dT%H:%M%:z")},
-                        "end": {"dateTime": (start_datetime + duration).strftime("%Y-%m-%dT%H:%M%:z")},
+                        "end": {"dateTime": (start_datetime + duration).strftime("%Y-%m-%dT%H:%M%z")},
                     },
                 )
             )
