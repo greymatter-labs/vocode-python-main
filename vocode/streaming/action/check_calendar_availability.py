@@ -24,6 +24,8 @@ class CheckCalendarAvailabilityActionConfig(
     credentials: OauthCredentials
     busy_times: List[Interval]
     starting_phrase: str
+    start_of_day: int
+    end_of_day: int
 
 
 class CheckCalendarAvailabilityParameters(BaseModel):
@@ -66,8 +68,8 @@ class CheckCalendarAvailability(
     ) -> ActionOutput[CheckCalendarAvailabilityResponse]:
         raw_availability = calculate_daily_free_intervals(
             busy_times=self.action_config.busy_times,
-            start_of_day=14,
-            end_of_day=22,
+            start_of_day=self.action_config.start_of_day or 10,
+            end_of_day=self.action_config.end_of_day or 18,
             date=action_input.params.day
         )
         availability = [natural_lang_date(slot["start"]) for slot in raw_availability]
