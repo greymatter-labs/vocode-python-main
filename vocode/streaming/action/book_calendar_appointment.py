@@ -82,8 +82,8 @@ class BookCalendarAppointment(
             )
             response = await aiogoogle.as_user(
                 calendar_v3.events.insert(
-                    {
-                        "calendarId": "primary",
+                    calendarId="primary",
+                    json={
                         "attendees": [
                             {
                                 "displayName": action_input.params.guest_name
