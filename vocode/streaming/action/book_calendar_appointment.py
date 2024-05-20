@@ -114,8 +114,9 @@ class BookCalendarAppointment(
         self, action_input: ActionInput[BookCalendarAppointmentParameters]
     ) -> ActionOutput[BookCalendarAppointmentResponse]:
         success = await self.book_appointment(action_input=action_input)
+        logger.info(f"booking success {success}")
 
         return ActionOutput(
             action_type=action_input.action_config.type,
-            response=BookCalendarAppointmentResponse(success),
+            response=BookCalendarAppointmentResponse(succeeded=success),
         )
