@@ -14,7 +14,6 @@ from vocode.streaming.models.actions import (
     ActionType,
 )
 from vocode.streaming.action.base_action import BaseAction
-import datetime
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
@@ -72,12 +71,13 @@ class BookCalendarAppointment(
             "client_id": os.getenv("GOOGLE_OAUTH_CLIENT_ID"),
             "client_secret": os.getenv("GOOGLE_OAUTH_CLIENT_SECRET"),
         }
+        utc = datetime.timezone(datetime.timedelta(hours=0))
         async with Aiogoogle(user_creds=aiogoogle_user_creds, client_creds=aiogoogle_client_creds) as aiogoogle:
             calendar_v3 = await aiogoogle.discover("calendar", "v3")
             start_date: datetime.datetime = parse_natural_language_date(action_input.params.date, self.action_config.business_timezone)
             start_time: datetime.time = parse_natural_language_time(action_input.params.time)
             start_datetime = start_date.replace(hour=start_time.hour, minute=start_time.minute)
-            logger.info(f"start date {start_date} start time {start_time} full datetime {start_datetime}. FORMATTED {start_datetime.strftime('%Y-%m-%dT%H:%M%z')}")
+            logger.info(f"start date {start_date} start time {start_time} full datetime {start_datetime}. FORMATTED {start_datetime.astimezone(utc).strftime('%Y-%m-%dT%H:%M')}")
             duration = datetime.timedelta(
                 minutes=self.action_config.appointment_length_minutes
             )
@@ -103,8 +103,8 @@ class BookCalendarAppointment(
                         ],
                         "description": action_input.params.description,
                         "summary": "Appointment",
-                        "start": {"dateTime": start_datetime.strftime("%Y-%m-%dT%H:%M%z")},
-                        "end": {"dateTime": (start_datetime + duration).strftime("%Y-%m-%dT%H:%M%z")},
+                        "start": {"dateTime": start_datetime.astimezone(utc).strftime("%Y-%m-%dT%H:%M")},
+                        "end": {"dateTime": (start_datetime + duration).astimezone(utc).strftime("%Y-%m-%dT%H:%M")},
                     },
                 )
             )
