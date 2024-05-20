@@ -77,7 +77,7 @@ class BookCalendarAppointment(
             start_date: datetime.datetime = parse_natural_language_date(action_input.params.date, self.action_config.business_timezone)
             start_time: datetime.time = parse_natural_language_time(action_input.params.time)
             start_datetime = start_date.replace(hour=start_time.hour, minute=start_time.minute)
-            logger.info(f"start date {start_date} start time {start_time} full datetime {start_datetime}. FORMATTED {start_datetime.strftime('%Y-%m-%dT%H:%M%:z')}")
+            logger.info(f"start date {start_date} start time {start_time} full datetime {start_datetime}. FORMATTED {start_datetime.strftime('%Y-%m-%dT%H:%M%z')}")
             duration = datetime.timedelta(
                 minutes=self.action_config.appointment_length_minutes
             )
@@ -103,7 +103,7 @@ class BookCalendarAppointment(
                         ],
                         "description": action_input.params.description,
                         "summary": "Appointment",
-                        "start": {"dateTime": start_datetime.strftime("%Y-%m-%dT%H:%M%:z")},
+                        "start": {"dateTime": start_datetime.strftime("%Y-%m-%dT%H:%M%z")},
                         "end": {"dateTime": (start_datetime + duration).strftime("%Y-%m-%dT%H:%M%z")},
                     },
                 )
