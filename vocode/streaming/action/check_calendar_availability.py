@@ -1,8 +1,7 @@
 import logging
 from telephony_app.utils.date_parser import calculate_daily_free_intervals, Interval
 from telephony_app.integrations.oauth import OauthCredentials
-from datetime import datetime
-from dateutil import tz
+from datetime import datetime, timezone, timedelta
 from typing import List, Optional, Type, TypedDict
 from pydantic import BaseModel, Field
 from vocode.streaming.models.actions import (
@@ -26,6 +25,7 @@ class CheckCalendarAvailabilityActionConfig(
     starting_phrase: str
     start_of_day: int
     end_of_day: int
+    business_timezone_utc_offset: int
 
 
 class CheckCalendarAvailabilityParameters(BaseModel):
@@ -35,17 +35,6 @@ class CheckCalendarAvailabilityParameters(BaseModel):
 class CheckCalendarAvailabilityResponse(BaseModel):
     availability: List[str]
 
-
-# assumes UTC, i.e. 2024-04-11T16:00:00Z
-def natural_lang_date(utc: datetime.datetime) -> str:
-    from_zone = tz.gettz("UTC")
-    to_zone = tz.gettz("America/New_York")
-
-    utc = utc.replace(tzinfo=from_zone)
-    local = utc.astimezone(to_zone)
-    date = local.strftime("%A, %B %d")  # Wednesday, June 12
-    time = local.strftime("%I:%M %p")  # 08:35 am
-    return date + " at " + time
 
 
 class CheckCalendarAvailability(
@@ -63,6 +52,12 @@ class CheckCalendarAvailability(
         CheckCalendarAvailabilityResponse
     )
 
+    def format_for_ai(self, slot_start: datetime.datetime) -> str:
+        local = slot_start.astimezone(timezone(timedelta(self.action_config.business_timezone_utc_offset)))
+        date = local.strftime("%A, %B %d")  # Wednesday, June 12
+        time = local.strftime("%I:%M %p")  # 08:35 am
+        return date + " at " + time
+
     async def run(
         self, action_input: ActionInput[CheckCalendarAvailabilityParameters]
     ) -> ActionOutput[CheckCalendarAvailabilityResponse]:
@@ -72,7 +67,7 @@ class CheckCalendarAvailability(
             end_of_day=self.action_config.end_of_day or 18,
             date=action_input.params.day
         )
-        availability = [natural_lang_date(slot["start"]) for slot in raw_availability]
+        availability = [self.format_for_ai(slot["start"]) for slot in raw_availability]
         logger.info(f"availability: {availability}")
 
         return ActionOutput(
