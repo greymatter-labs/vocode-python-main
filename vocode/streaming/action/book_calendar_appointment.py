@@ -63,10 +63,10 @@ class BookCalendarAppointment(
         self, action_input: ActionInput[BookCalendarAppointmentParameters]
     ):
         aiogoogle_creds = {
-            "token": self.action_config.params.credentials.get("access_token"),
-            "refresh_token": self.action_config.params.credentials.get("refresh_token"),
+            "token": self.action_config.credentials.get("access_token"),
+            "refresh_token": self.action_config.credentials.get("refresh_token"),
             "scopes": get_google_scopes(
-                oauth_credentials=self.action_config.params.credentials
+                oauth_credentials=self.action_config.credentials
             ),
             "token_uri": "https://oauth2.googleapis.com/token",
             "client_id": os.getenv("GOOGLE_OAUTH_CLIENT_ID"),
@@ -74,7 +74,7 @@ class BookCalendarAppointment(
         }
         async with Aiogoogle(user_creds=aiogoogle_creds) as aiogoogle:
             calendar_v3 = await aiogoogle.discover("calendar", "v3")
-            start_date: datetime.datetime = parse_natural_language_date(action_input.params.date, self.action_config.params.business_timezone)
+            start_date: datetime.datetime = parse_natural_language_date(action_input.params.date, self.action_config.business_timezone)
             start_time: datetime.time = parse_natural_language_time(action_input.params.time)
             start_datetime = start_date.replace(hour=start_time.hour, minute=start_time.minute)
             duration = datetime.timedelta(
