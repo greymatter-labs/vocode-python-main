@@ -54,9 +54,9 @@ class CheckCalendarAvailability(
 
     def format_for_ai(self, slot_start: datetime.datetime) -> str:
         local = slot_start.astimezone(timezone(timedelta(hours=self.action_config.business_timezone_utc_offset)))
-        date = local.strftime("%A, %B %d")  # Wednesday, June 12
-        time = local.strftime("%I:%M %p")  # 08:35 am
-        return date + " at " + time
+        # date = local.strftime("%A, %B %d")  # Wednesday, June 12
+        return local.strftime("%I:%M %p")  # 08:35 am
+        # return date + " at " + time
 
     async def run(
         self, action_input: ActionInput[CheckCalendarAvailabilityParameters]
