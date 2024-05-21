@@ -67,6 +67,7 @@ class CheckCalendarAvailability(
             end_of_day=self.action_config.end_of_day or 18,
             date=action_input.params.day
         )
+        logger.info(f"raw availability: {raw_availability}")
         availability = [self.format_for_ai(slot["start"]) for slot in raw_availability]
         logger.info(f"availability: {availability}")
 
