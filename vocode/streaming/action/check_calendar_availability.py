@@ -73,8 +73,8 @@ class CheckCalendarAvailability(
 
         # Format the raw availability into a natural language, numbered list
         formatted_availability = [
-            f"Block {index + 1}: {period}"
-            for index, period in enumerate(raw_availability)
+            f"Block {index + 1}: Available from {interval["start"].strftime("%I:%M %p")} to {interval["end"].strftime("%I:%M %p")}"
+            for index, interval in enumerate(raw_availability)
         ]
         formatted_availability = "\n".join(formatted_availability)
         formatted_availability = (
