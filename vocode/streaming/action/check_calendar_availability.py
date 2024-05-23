@@ -52,8 +52,8 @@ class CheckCalendarAvailability(
         CheckCalendarAvailabilityResponse
     )
 
-    def format_for_ai(self, slot_start: datetime.datetime) -> str:
-        local = slot_start.astimezone(
+    def format_for_ai(self, date: datetime.datetime) -> str:
+        local = date.astimezone(
             timezone(timedelta(hours=self.action_config.business_timezone_utc_offset))
         )
         # date = local.strftime("%A, %B %d")  # Wednesday, June 12
@@ -73,7 +73,7 @@ class CheckCalendarAvailability(
 
         # Format the raw availability into a natural language, numbered list
         formatted_availability = [
-            f"Block {index + 1}: Available from {interval['start'].strftime('%I:%M %p')} to {interval['end'].strftime('%I:%M %p')}"
+            f"Block {index + 1}: Available from {self.format_for_ai(interval['start'])} to {self.format_for_ai(interval['end'])}"
             for index, interval in enumerate(raw_availability)
         ]
         formatted_availability = "\n".join(formatted_availability)
