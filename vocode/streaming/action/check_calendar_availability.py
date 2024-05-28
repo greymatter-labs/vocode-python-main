@@ -67,6 +67,7 @@ class CheckCalendarAvailability(
         tz = "PDT"
         if self.action_config.business_timezone_utc_offset > -6:
             tz = "EDT"
+        logger.info(f"tz {tz}")
 
         raw_availability = calculate_daily_free_intervals(
             busy_times=self.action_config.busy_times,
