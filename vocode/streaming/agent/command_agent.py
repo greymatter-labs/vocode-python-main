@@ -632,7 +632,22 @@ class CommandAgent(RespondAgent[CommandAgentConfig]):
                     self.agent_config.language,
                     "en-US",
                 )
+                self.logger.info(
+                    f"[{self.agent_config.call_type}:{self.agent_config.current_call_id}] Lead:{latest_human_message.text}"
+                )
                 latest_human_message.text = translated_message
+        elif self.agent_config.language == "en-US":
+            latest_human_message = next(
+                (
+                    event
+                    for event in reversed(self.transcript.event_logs)
+                    if event.sender == Sender.HUMAN and event.text.strip()
+                ),
+                None,
+            )
+            self.logger.info(
+                f"[{self.agent_config.call_type}:{self.agent_config.current_call_id}] Lead:{latest_human_message.text}"
+            )
 
         assert self.transcript is not None
 
@@ -651,6 +666,12 @@ class CommandAgent(RespondAgent[CommandAgentConfig]):
                             .replace("false", "False")
                             .replace("true", "True")
                         )  # ensure we can interpret it as a dict
+                        pretty_function_call = (
+                            f"Tool Call: {name}, Parameters: {params}"
+                        )
+                        self.logger.info(
+                            f"[{self.agent_config.call_type}:{self.agent_config.current_call_id}] Agent: {pretty_function_call}"
+                        )
                         self.logger.info(f"Name: {name}, Params: {params}")
                         action_config = self._get_action_config(name)
                         try:
@@ -701,6 +722,11 @@ class CommandAgent(RespondAgent[CommandAgentConfig]):
                                     action, action_input, is_interrupt
                                 ):
                                     action_output = await action.run(action_input)
+                                    # also log the output
+                                    pretty_function_call = f"Tool Response: {name}, Output: {action_output}"
+                                    self.logger.info(
+                                        f"[{self.agent_config.call_type}:{self.agent_config.current_call_id}] Agent: {pretty_function_call}"
+                                    )
                                     return action_input, action_output
 
                                 # accumulate the tasks so we dont wait on each one sequentially

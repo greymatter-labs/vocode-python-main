@@ -610,8 +610,15 @@ class StreamingConversation(Generic[OutputDeviceType]):
                                 bot_sentiment=self.conversation.bot_sentiment,
                             )
                         )
+                        replacer = "\n"
+                        self.conversation.logger.info(
+                            f"[{self.conversation.agent.agent_config.call_type}:{self.conversation.agent.agent_config.current_call_id}] Agent: {translated_message.replace(replacer, ' ')}"
+                        )
                         agent_response_message.message.text = current_message
                     else:
+                        self.conversation.logger.info(
+                            f"[{self.conversation.agent.agent_config.call_type}:{self.conversation.agent.agent_config.current_call_id}] Agent: {agent_response_message.message.text}"
+                        )
                         synthesis_result = (
                             await self.conversation.synthesizer.create_speech(
                                 agent_response_message.message,
@@ -715,11 +722,6 @@ class StreamingConversation(Generic[OutputDeviceType]):
                     message=transcript_message,
                     conversation_id=self.conversation.id,
                 )
-                if transcript_message and len(transcript_message.text.strip()) > 0:
-                    replacer = "\n"
-                    self.conversation.logger.info(
-                        f"[{self.conversation.agent.agent_config.call_type}:{self.conversation.agent.agent_config.current_call_id}] Agent: {transcript_message.text.replace(replacer, ' ')}"
-                    )
                 # Signal that the agent response has been processed.
                 item.agent_response_tracker.set()
                 # Log the message that was successfully sent.
@@ -1127,10 +1129,10 @@ class StreamingConversation(Generic[OutputDeviceType]):
 
         # Calculate the length of the speech in seconds
         speech_length_seconds = len(speech_data) / chunk_size
-        if held_buffer and len(held_buffer.strip()) > 0:
-            self.logger.info(
-                f"[{self.agent.agent_config.call_type}:{self.agent.agent_config.current_call_id}] Lead:{held_buffer}"
-            )
+        # if held_buffer and len(held_buffer.strip()) > 0:
+        #     self.logger.info(
+        #         f"[{self.agent.agent_config.call_type}:{self.agent.agent_config.current_call_id}] Lead:{held_buffer}"
+        #     )
         last_agent_message = next(
             (
                 message["content"]
