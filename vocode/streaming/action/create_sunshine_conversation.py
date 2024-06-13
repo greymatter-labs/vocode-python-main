@@ -59,8 +59,10 @@ class CreateSunshineConversation(
 
     # Create a Sunshine conversation and notify the user via text about the next steps
     async def create_sunshine_conversation(self, parameters: CreateSunshineConversationParameters):
-        jwt_token = sign_jwt(self.action_config.credentials.get("SECRET"))
+        key_id = self.action_config.credentials.get("KEY_ID")
         app_id = self.action_config.credentials.get("APP_ID")
+        secret = self.action_config.credentials.get("SECRET")
+        jwt_token = sign_jwt(key_id=key_id, secret=secret)
         desired_integration = fetch_integrations_with_filters_by_phone_number(app_id=app_id,
                                                                               jwt_token=jwt_token,
                                                                               phone_number=self.action_config.to_phone,
@@ -74,15 +76,14 @@ class CreateSunshineConversation(
 
         return await create_new_conversation(app_id=app_id, phone_number=self.action_config.to_phone,
                                              text=parameters.contents, integration_id=integration_id,
-                                             key_id=self.action_config.credentials.get("KEY_ID"),
-                                             secret=self.action_config.credentials.get("SECRET"),
+                                             key_id=key_id,
+                                             secret=secret,
                                              first_name=self.action_config.from_phone)
 
     async def run(self,
                   action_input: ActionInput[CreateSunshineConversationParameters]
                   ) -> ActionOutput[CreateSunshineConversationResponse]:
-        parameters = CreateSunshineConversationParameters(**action_input.params.dict())
-        response = await self.create_sunshine_conversation(parameters=parameters)
+        response = await self.create_sunshine_conversation(parameters=action_input.params)
         if "error" in str(response).lower():
             return ActionOutput(
                 action_type=action_input.action_config.type,
