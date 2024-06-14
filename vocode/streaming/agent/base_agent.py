@@ -53,6 +53,8 @@ from vocode.streaming.utils.worker import (
 if TYPE_CHECKING:
     from vocode.streaming.utils.state_manager import ConversationStateManager
 
+from vocode.streaming.utils.setup_tracer import start_span_in_ctx, span_event, end_span
+
 tracer = trace.get_tracer(__name__)
 AGENT_TRACE_NAME = "agent"
 
@@ -70,6 +72,7 @@ class AgentInput(TypedModel, type=AgentInputType.BASE.value):
     vonage_uuid: Optional[str]
     twilio_sid: Optional[str]
     agent_response_tracker: Optional[asyncio.Event] = None
+    span: Optional[Span] = None
 
     class Config:
         arbitrary_types_allowed = True
@@ -213,37 +216,47 @@ class RespondAgent(BaseAgent[AgentConfigType]):
         conversation_id = agent_input.conversation_id
         tracer_name_start = await self.get_tracer_name_start()
 
-        agent_span = tracer.start_span(
-            f"{tracer_name_start}.generate_total"  # type: ignore
+        agent_span = start_span_in_ctx(
+            name=f"{tracer_name_start}.generate_total",
+            parent_span=agent_input.span,
+            attributes={
+                "message": transcription.message,
+            },
         )
-        agent_span_first = tracer.start_span(
-            f"{tracer_name_start}.generate_first"  # type: ignore
+        agent_span_first = start_span_in_ctx(
+            name=f"{tracer_name_start}.generate_first",
+            parent_span=agent_input.span,
         )
+
         if not transcription:
             self.logger.debug("No transcription, skipping response generation")
             return False
 
         function_call = None
         if USE_STREAMING:
+            self.logger.info("Using streaming")
             function_call = await self.respond_with_functions_streaming(
                 transcription=transcription,
                 affirmative_phrase=affirmative_phrase,
                 conversation_id=conversation_id,
                 agent_span_first=agent_span_first,
                 agent_input=agent_input,
+                span=agent_span,
             )
         else:
+            self.logger.info("Using non-streaming")
             function_call = await self.respond_with_functions(
                 transcription=transcription,
                 affirmative_phrase=affirmative_phrase,
                 conversation_id=conversation_id,
                 agent_span_first=agent_span_first,
                 agent_input=agent_input,
+                span=agent_span,
             )
 
         await asyncio.sleep(0)
         # TODO: implement should_stop for generate_responses
-        agent_span.end()
+        end_span(agent_span)
         if function_call and self.agent_config.actions is not None:
             await self.call_function(function_call, agent_input)
         return False
@@ -280,6 +293,7 @@ class RespondAgent(BaseAgent[AgentConfigType]):
         assert self.transcript is not None
         try:
             agent_input = item.payload
+
             if isinstance(agent_input, TranscriptionAgentInput):
                 transcription = typing.cast(
                     TranscriptionAgentInput, agent_input
@@ -472,6 +486,7 @@ class RespondAgent(BaseAgent[AgentConfigType]):
         conversation_id: str,
         is_interrupt: bool = False,
         stream_output: bool = True,
+        span: Span = None,
     ) -> str:
         raise NotImplementedError
 
@@ -494,23 +509,35 @@ class RespondAgent(BaseAgent[AgentConfigType]):
         conversation_id: str,
         agent_span_first,
         agent_input: AgentInput,
+        span: Span,
     ) -> None:
         function_call = None
+
         response = await self.generate_completion(
             human_input=transcription.message,
             affirmative_phrase=affirmative_phrase if affirmative_phrase else None,
             conversation_id=conversation_id,
             is_interrupt=transcription.is_interrupt,
+            span=span,
         )
 
         if isinstance(response, FunctionCall):
             function_call = response
-            agent_span_first.end()
+            span_event(
+                span=span,
+                event_name="generate_completion_function_call",
+                event_data={"function_call": function_call},
+            )
         if isinstance(response[0], str):
             self.produce_interruptible_agent_response_event_nonblocking(
                 AgentResponseMessage(message=BaseMessage(text=response[0])),
                 is_interruptible=False,
                 agent_response_tracker=agent_input.agent_response_tracker,
+            )
+            span_event(
+                span=span,
+                event_name="generate_completion_response",
+                event_data={"response": json.dumps(response, indent=4)},
             )
         else:
             self.logger.debug(
@@ -542,7 +569,7 @@ class RespondAgent(BaseAgent[AgentConfigType]):
                 function_call = response
                 continue
             if is_first_response:
-                agent_span_first.end()
+                end_span(agent_span_first)
                 is_first_response = False
             self.produce_interruptible_agent_response_event_nonblocking(
                 AgentResponseMessage(message=BaseMessage(text=response)),

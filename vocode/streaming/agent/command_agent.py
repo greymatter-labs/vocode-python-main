@@ -85,6 +85,13 @@ from pydantic import BaseModel, Field
 from telephony_app.utils.transfer_call_handler import transfer_call
 from telephony_app.utils.twilio_call_helper import hangup_twilio_call
 
+from opentelemetry import trace
+from opentelemetry.trace import Span
+from vocode.streaming.utils.setup_tracer import start_span_in_ctx, span_event, end_span
+
+tracer = trace.get_tracer(__name__)
+
+
 HEADERS = {
     "Content-Type": "application/json",
     "Authorization": f"Bearer 'EMPTY'",
@@ -171,7 +178,7 @@ class CommandAgent(RespondAgent[CommandAgentConfig]):
             )
 
         if self.logger:
-            self.logger.setLevel(logging.DEBUG)
+            self.logger.setLevel(logging.INFO)
 
     def get_functions(self):
         assert self.agent_config.actions
@@ -307,6 +314,7 @@ class CommandAgent(RespondAgent[CommandAgentConfig]):
             self.produce_interruptible_agent_response_event_nonblocking(
                 AgentResponseMessage(message=BaseMessage(text=user_message)),
                 agent_response_tracker=user_message_tracker,
+                span=agent_input.span,
             )
         action_input: ActionInput
         if isinstance(action, VonagePhoneCallAction):
@@ -378,12 +386,20 @@ class CommandAgent(RespondAgent[CommandAgentConfig]):
         return prefix_response
 
     async def gen_tool_call(
-        self, conversation_id
+        self, conversation_id, agent_span
     ) -> Optional[Dict]:  # returns None or a dict if model should be called
+
+        tool_call_span = start_span_in_ctx(
+            name="command_agent.gen_tool_call",
+            parent_span=agent_span,
+            attributes={"conversation_id": conversation_id},
+        )
+
         tools = self.tools
 
         if not self.agent_config.actions:
             self.logger.error(f"skipping tool call because agent has no actions")
+            end_span(tool_call_span)
             return None
 
         commandr_prompt_buffer, messageArray = (
@@ -396,6 +412,8 @@ class CommandAgent(RespondAgent[CommandAgentConfig]):
         )
         if "Do not provide" in messageArray[-1]["content"]:
             self.logger.info("Skipping tool use due to tool use.")
+            end_span(tool_call_span)
+
             return None  # TODO: investigate if this is why it needs to be prompted to do async tools
         use_qwen = self.agent_config.model_name.lower() == QWEN_MODEL_NAME.lower()
 
@@ -415,10 +433,12 @@ class CommandAgent(RespondAgent[CommandAgentConfig]):
                 prompt_buffer=commandr_prompt_buffer,
                 model=model_to_use,
                 logger=self.logger,
+                span=tool_call_span,
             ):
                 if self.stop:
-                    self.logger.info("Stopping streaming")
+                    self.logger.debug("Stopping streaming")
                     self.stop = False
+                    end_span(tool_call_span)
                     return None
                 if (
                     '"tool_name":' in commandr_response
@@ -524,6 +544,7 @@ class CommandAgent(RespondAgent[CommandAgentConfig]):
                         prompt_buffer=commandr_prompt_buffer,
                         model=getenv("AI_MODEL_NAME_LARGE"),
                         logger=self.logger,
+                        span=tool_call_span,
                     ),
                     self.get_qwen_response_future(frozen_transcript),
                 )
@@ -532,6 +553,7 @@ class CommandAgent(RespondAgent[CommandAgentConfig]):
                     prompt_buffer=commandr_prompt_buffer,
                     model=self.agent_config.model_name,
                     logger=self.logger,
+                    span=tool_call_span,
                 )
         elif self.agent_config.model_name.lower() == QWEN_MODEL_NAME.lower():
             qwen_response = await self.get_qwen_response_future(frozen_transcript)
@@ -622,7 +644,13 @@ class CommandAgent(RespondAgent[CommandAgentConfig]):
         conversation_id: str,
         is_interrupt: bool = False,
         stream_output: bool = True,
+        span: Span = None,
     ) -> str:
+        agent_span = start_span_in_ctx(
+            name=f"command_agent.generate_completion",
+            parent_span=span,
+        )
+
         if self.agent_config.language != "en-US":
             # Modify the transcript for the latest user message that matches human_input
             latest_human_message = next(
@@ -662,8 +690,15 @@ class CommandAgent(RespondAgent[CommandAgentConfig]):
         tool_call = None
         if self.agent_config.actions:
             # prefix = await self.gen_prefix() TODO how to do
-            tool_calls = await self.gen_tool_call(conversation_id)
+
+            tool_calls = await self.gen_tool_call(conversation_id, agent_span)
+
             if tool_calls:
+                span_event(
+                    span=agent_span,
+                    event_name="generate_completion_tool_call",
+                    event_data={"tool_call": tool_call},
+                )
                 tasks = []
                 for tool_call in tool_calls:
                     if tool_call is not None:
@@ -858,12 +893,19 @@ class CommandAgent(RespondAgent[CommandAgentConfig]):
         current_utterance = ""
         # log that we're in fallback mode
         self.logger.info(f"We're entering fallback mode now")
+        fallback_yielded = False
         if self.agent_config.use_streaming:
+            span_event(
+                span=agent_span,
+                event_name="fallback_mode",
+                event_data={"streaming": True},
+            )
             async for response_chunk in get_commandr_response_chat_streaming(
                 transcript=self.transcript,
                 model=model_to_use,
                 prompt_preamble=self.agent_config.prompt_preamble,
                 logger=self.logger,
+                span=agent_span,
             ):
                 if self.stop:
                     self.logger.info("Stopping streaming")
@@ -900,6 +942,13 @@ class CommandAgent(RespondAgent[CommandAgentConfig]):
                                 )
                             )
                         )
+                        if not fallback_yielded:
+                            fallback_yielded = True
+                            span_event(
+                                span=agent_span,
+                                event_name="first_yield",
+                                event_data={"output": output},
+                            )
                     current_utterance = parts[-1]
                     # log each part
                 commandr_response += response_chunk
@@ -916,6 +965,13 @@ class CommandAgent(RespondAgent[CommandAgentConfig]):
                             message=BaseMessage(text=current_utterance)
                         )
                     )
+                    span_event(
+                        span=agent_span,
+                        event_name="last_yield",
+                        event_data={"output": current_utterance},
+                    )
+
+            end_span(agent_span)
             self.can_send = False
             return "", True
         else:
@@ -923,10 +979,17 @@ class CommandAgent(RespondAgent[CommandAgentConfig]):
                 prompt_buffer=prompt_buffer,
                 model=model_to_use,
                 logger=self.logger,
+                span=agent_span,
+            )
+            span_event(
+                span=agent_span,
+                event_name="commandr_non_streaming_fallback_response",
+                event_data={"response": commandr_response},
             )
             self.logger.info(
                 f"Commandr non-streaming fallback response: {commandr_response}"
             )
+            end_span(agent_span)
             return commandr_response, True
 
     async def get_qwen_response_future(self, transcript):
@@ -1075,7 +1138,7 @@ class CommandAgent(RespondAgent[CommandAgentConfig]):
                         latest_agent_response = "".join(filter(None, all_messages))
 
                         await self.gen_tool_call(
-                            latest_agent_response=latest_agent_response
+                            latest_agent_response=latest_agent_response,
                         )
                 else:
                     self.logger.error(

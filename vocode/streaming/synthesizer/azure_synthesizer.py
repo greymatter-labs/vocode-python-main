@@ -9,10 +9,12 @@ from xml.etree import ElementTree
 import aiohttp
 from vocode import getenv
 from opentelemetry.context.context import Context
+from opentelemetry import trace
+from opentelemetry.trace import Span
 
 from vocode.streaming.agent.bot_sentiment_analyser import BotSentiment
 from vocode.streaming.models.message import BaseMessage, SSMLMessage
-
+from vocode.streaming.utils.setup_tracer import start_span_in_ctx, span_event
 from vocode.streaming.synthesizer.base_synthesizer import (
     BaseSynthesizer,
     SynthesisResult,
@@ -37,6 +39,8 @@ NAMESPACES = {
 
 ElementTree.register_namespace("", NAMESPACES[""])
 ElementTree.register_namespace("mstts", NAMESPACES["mstts"])
+
+tracer = trace.get_tracer(__name__)
 
 
 class WordBoundaryEventPool:
@@ -345,7 +349,14 @@ class AzureSynthesizer(BaseSynthesizer[AzureSynthesizerConfig]):
         message: BaseMessage,
         chunk_size: int,
         bot_sentiment: Optional[BotSentiment] = None,
+        span: Optional[Span] = None,
     ) -> SynthesisResult:
+
+        create_speech_span = start_span_in_ctx(
+            name=f"synthesizer.{SynthesizerType.AZURE.value.split('_', 1)[-1]}.create_total",
+            parent_span=span,
+        )
+
         # this is so it says numbers slowly
         def remove_dashes(match):
             return match.group().replace("-", "...").replace("+", "")
@@ -403,6 +414,7 @@ class AzureSynthesizer(BaseSynthesizer[AzureSynthesizerConfig]):
         async def chunk_generator(
             audio_data_stream: speechsdk.AudioDataStream, chunk_transform=lambda x: x
         ):
+            is_first_chunk = True
             while True:
                 audio_buffer = bytes(chunk_size)
                 filled_size = await asyncio.get_event_loop().run_in_executor(
@@ -425,17 +437,26 @@ class AzureSynthesizer(BaseSynthesizer[AzureSynthesizerConfig]):
                     audio_data_stream = await asyncio.get_event_loop().run_in_executor(
                         self.thread_pool_executor, self.synthesize_ssml, ssml
                     )
-                    await asyncio.sleep(0.5)
-                    continue  # Continue the loop to try reading from the new stream
                 if filled_size != chunk_size:
                     yield SynthesisResult.ChunkResult(
-                        chunk_transform(audio_buffer[offset:filled_size]), True
+                        chunk_transform(audio_buffer[offset:filled_size]),
+                        True,
+                        is_first_chunk,
                     )
                     break
                 else:
                     yield SynthesisResult.ChunkResult(
-                        chunk_transform(audio_buffer[offset:]), False
+                        chunk_transform(audio_buffer[offset:]),
+                        False,
+                        is_first_chunk,
                     )
+                is_first_chunk = False
+
+            span_event(
+                span=create_speech_span,
+                event_name="completed_chunk_iter",
+                event_data={"message": message.text},
+            )
 
         word_boundary_event_pool = WordBoundaryEventPool()
         self.synthesizer.synthesis_word_boundary.connect(
@@ -462,4 +483,5 @@ class AzureSynthesizer(BaseSynthesizer[AzureSynthesizerConfig]):
             lambda seconds: self.get_message_up_to(
                 message.text, ssml, seconds, word_boundary_event_pool
             ),
+            span=create_speech_span,
         )

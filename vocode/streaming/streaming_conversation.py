@@ -1,6 +1,7 @@
 from __future__ import annotations
 from copy import deepcopy
-
+import os
+import dotenv
 import asyncio
 from enum import Enum
 import json
@@ -8,7 +9,6 @@ import math
 import queue
 import random
 import threading
-from typing import Any, Awaitable, Callable, Generic, Optional, Tuple, TypeVar, cast
 import logging
 import time
 import typing
@@ -18,8 +18,14 @@ import aiohttp
 from telephony_app.models.call_type import CallType
 from vocode import getenv
 from openai import AsyncOpenAI, OpenAI
+from typing import Any, Awaitable, Callable, Generic, Optional, Tuple, TypeVar, cast
 
 
+from opentelemetry import trace
+from opentelemetry.exporter.cloud_trace import CloudTraceSpanExporter
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import BatchSpanProcessor, ConsoleSpanExporter
+from opentelemetry.trace import Span, StatusCode, Status
 from vocode.streaming.action.worker import ActionsWorker
 
 from vocode.streaming.agent.bot_sentiment_analyser import (
@@ -91,6 +97,15 @@ from vocode.streaming.utils.worker import (
 )
 
 from telephony_app.utils.call_information_handler import update_call_transcripts
+from vocode.streaming.utils.setup_tracer import (
+    setup_tracer,
+    span_event,
+    start_span_in_ctx,
+    end_span,
+)
+
+tracer = setup_tracer()
+
 
 OutputDeviceType = TypeVar("OutputDeviceType", bound=BaseOutputDevice)
 
@@ -193,6 +208,10 @@ class StreamingConversation(Generic[OutputDeviceType]):
             self.triggered_affirmative = False
             self.chosen_filler_phrase = None
             self.initial_message = None
+            self.transcription_span = start_span_in_ctx(
+                name="first-turn-span",
+                parent_span=self.conversation.global_span,
+            )
 
         async def _buffer_check(self, initial_buffer: str):
             if (
@@ -209,8 +228,21 @@ class StreamingConversation(Generic[OutputDeviceType]):
                 is_final=True,
                 time_silent=self.time_silent,
             )
+            self.conversation.logger.info(f"{transcription}")
             current_phrase = self.chosen_affirmative_phrase
-            # if self.conversation.agent.agent_config.pending_action == "pending":
+
+            self.transcription_span = start_span_in_ctx(
+                name="new-turn-span",
+                parent_span=self.conversation.global_span,
+                attributes={
+                    "message": self.buffer.to_message(),
+                    "time_silent": self.time_silent,
+                },
+            )
+            self.conversation.first_speech_span = start_span_in_ctx(
+                name="first-speech-span",
+                parent_span=self.transcription_span,
+            )
 
             event = self.interruptible_event_factory.create_interruptible_event(
                 payload=TranscriptionAgentInput(
@@ -219,17 +251,16 @@ class StreamingConversation(Generic[OutputDeviceType]):
                     conversation_id=self.conversation.id,
                     vonage_uuid=getattr(self.conversation, "vonage_uuid", None),
                     twilio_sid=getattr(self.conversation, "twilio_sid", None),
+                    span=self.transcription_span,
                 ),
             )
             # Place the event in the output queue for further processing
             self.output_queue.put_nowait(event)
 
-            self.conversation.logger.info("Transcription event put in output queue")
-
             # Set the buffer status to HOLD, indicating we're not ready to send it yet
             self.ready_to_send = BufferStatus.HOLD
 
-            self.conversation.logger.info(f"Marking as send")
+            self.conversation.logger.debug(f"Marking as send")
             self.ready_to_send = BufferStatus.SEND
             # releast the action, if there is one
             self.conversation.agent.can_send = True
@@ -271,34 +302,33 @@ class StreamingConversation(Generic[OutputDeviceType]):
 
                 return
             if "words" not in json.loads(transcription.message):
-                self.conversation.logger.info(
+                self.conversation.logger.debug(
                     "Ignoring transcription, no word content."
                 )
                 return
             elif len(json.loads(transcription.message)["words"]) == 0:
                 # when we wait more, they were silent so we want to push out a filler audio
-                self.conversation.logger.info(
+                self.conversation.logger.debug(
                     "Ignoring transcription, zero words in words."
                 )
                 return
 
-            self.conversation.logger.debug(
+            self.conversation.logger.info(
                 f"Transcription message: {' '.join(word['word'] for word in json.loads(transcription.message)['words'])}"
             )
 
             # Strip the transcription message and log the time silent
             transcription.message = transcription.message
-            self.conversation.logger.info(f"Time silent: {self.time_silent}s")
 
             # If the transcription message is empty, handle it accordingly
             if len(transcription.message) == 0:
                 self.conversation.logger.debug("Ignoring empty transcription")
                 if len(self.buffer) == 0:
-                    self.conversation.logger.info("Ignoring empty message.")
+                    self.conversation.logger.debug("Ignoring empty message.")
                     return
                 self.time_silent += transcription.time_silent
                 return
-            self.time_silent = 0.0
+
             # Update the buffer with the new message if it contains new content and log it
             new_words = json.loads(transcription.message)["words"]
 
@@ -307,11 +337,12 @@ class StreamingConversation(Generic[OutputDeviceType]):
 
             self.vad_time = 2.0
             self.time_silent = transcription.time_silent
+            self.conversation.logger.debug(f"Time silent: {self.time_silent}s")
 
             # If a buffer check task exists, cancel it and start a new one
             if self.buffer_check_task:
-                self.conversation.logger.info("Cancelling buffer check task")
-                self.conversation.logger.info(
+                self.conversation.logger.debug("Cancelling buffer check task")
+                self.conversation.logger.debug(
                     f"BufferCancel? {self.buffer_check_task.cancel()}"
                 )
             # if there is an initial message, we're in outbound mode and we should say it right off
@@ -325,16 +356,19 @@ class StreamingConversation(Generic[OutputDeviceType]):
             # Broadcast an interrupt and set the buffer status to DISCARD
             await self.conversation.broadcast_interrupt()
             if stashed_buffer != self.buffer:
-                self.conversation.logger.info(
+                self.conversation.logger.debug(
                     f"Buffer changed on interrupt, putting stashed buffer back"
                 )
                 self.buffer = stashed_buffer
             self.ready_to_send = BufferStatus.DISCARD
+            end_span(self.transcription_span)
+            end_span(self.conversation.first_speech_span)
 
             # Start a new buffer check task to recalculate the timing
             self.buffer_check_task = asyncio.create_task(
                 self._buffer_check(deepcopy(self.buffer.to_message()))
             )
+
             return
 
     class FillerAudioWorker(InterruptibleAgentResponseWorker):
@@ -416,13 +450,14 @@ class StreamingConversation(Generic[OutputDeviceType]):
             self.conversation = conversation
             self.interruptible_event_factory = interruptible_event_factory
             self.convoCache = {}
-            self.chunk_size = (
+            self.SPEECH_CHUNK_SIZE = (
                 get_chunk_size_per_second(
                     self.conversation.synthesizer.get_synthesizer_config().audio_encoding,
                     self.conversation.synthesizer.get_synthesizer_config().sampling_rate,
                 )
                 * TEXT_TO_SPEECH_CHUNK_SIZE_SECONDS
             )
+            self.span: Optional[Span] = None
 
         def send_filler_audio(self, agent_response_tracker: Optional[asyncio.Event]):
             # only send it if a digit isn't written out in the current transcription buffer
@@ -609,12 +644,11 @@ class StreamingConversation(Generic[OutputDeviceType]):
                         )
                         current_message = agent_response_message.message.text + ""
                         agent_response_message.message.text = translated_message
-                        synthesis_result = (
-                            await self.conversation.synthesizer.create_speech(
-                                agent_response_message.message,
-                                self.chunk_size,
-                                bot_sentiment=self.conversation.bot_sentiment,
-                            )
+                        synthesis_result = await self.conversation.synthesizer.create_speech(
+                            agent_response_message.message,
+                            self.SPEECH_CHUNK_SIZE,
+                            bot_sentiment=self.conversation.bot_sentiment,
+                            span=self.conversation.transcriptions_worker.transcription_span,
                         )
                         replacer = "\n"
                         self.conversation.logger.info(
@@ -628,12 +662,11 @@ class StreamingConversation(Generic[OutputDeviceType]):
                         agent_response_message.message.text = (
                             agent_response_message.message.text.strip()
                         )
-                        synthesis_result = (
-                            await self.conversation.synthesizer.create_speech(
-                                agent_response_message.message,
-                                self.chunk_size,
-                                bot_sentiment=self.conversation.bot_sentiment,
-                            )
+                        synthesis_result = await self.conversation.synthesizer.create_speech(
+                            agent_response_message.message,
+                            self.SPEECH_CHUNK_SIZE,
+                            bot_sentiment=self.conversation.bot_sentiment,
+                            span=self.conversation.transcriptions_worker.transcription_span,
                         )
                     self.produce_interruptible_agent_response_event_nonblocking(
                         (agent_response_message.message, synthesis_result),
@@ -676,6 +709,15 @@ class StreamingConversation(Generic[OutputDeviceType]):
                 # Unpack the message and synthesis result from the event payload.
                 message, synthesis_result = item.payload
 
+                span = synthesis_result.span
+
+                send_speech_to_output_span = start_span_in_ctx(
+                    name="send-speech-to-output",
+                    parent_span=span,
+                )
+
+                # if its the first chunk, end the first message span in send speech to output span
+
                 # Initialize a transcript message with an empty text, which will be updated later.
                 transcript_message = Message(
                     text="",
@@ -693,9 +735,8 @@ class StreamingConversation(Generic[OutputDeviceType]):
                     message.text,
                     synthesis_result,
                     self.conversation.stop_event,
-                    self.conversation.started_event,
-                    TEXT_TO_SPEECH_CHUNK_SIZE_SECONDS,
                     transcript_message=transcript_message,
+                    send_speech_to_output_span=send_speech_to_output_span,
                 )
                 # Create an asynchronous task for the coroutine and store it as the current task.
                 self.current_task = asyncio.create_task(send_speech_coroutine)
@@ -710,12 +751,14 @@ class StreamingConversation(Generic[OutputDeviceType]):
 
                 # Place the interruptible event into the output queue for further processing.
                 self.output_queue.put_nowait(interruptible_event)
-
                 # Wait for the current task to complete or be cancelled.
                 try:
                     # Await the completion of the speech output task and retrieve the message sent and cutoff status.
                     message_sent, cut_off = await self.current_task
                     self.conversation.started_event.clear()
+                    end_span(span)
+                    end_span(send_speech_to_output_span)
+
                 except Exception as e:
                     # If an exception occurs, log it and set the message as cut off.
                     self.conversation.logger.debug(f"Detected Task cancelled: {e}")
@@ -734,6 +777,7 @@ class StreamingConversation(Generic[OutputDeviceType]):
                     )
                 # Signal that the agent response has been processed.
                 item.agent_response_tracker.set()
+
                 # Log the message that was successfully sent.
                 self.conversation.logger.debug(f"Message sent: {message_sent}")
 
@@ -778,6 +822,10 @@ class StreamingConversation(Generic[OutputDeviceType]):
             conversation_id=self.id,
         )
         self.logger.debug(f"Conversation ID: {self.id}")
+        self.global_span = tracer.start_span(
+            "conversation",
+            attributes={"conversation_id": self.id},
+        )
         # threadingevent
         self.stop_event = threading.Event()
         self.started_event = threading.Event()
@@ -861,13 +909,16 @@ class StreamingConversation(Generic[OutputDeviceType]):
         self.start_time: Optional[float] = None
         self.end_time: Optional[float] = None
         self.logger.debug("Conversation created")
+        self.first_speech_span: Span = start_span_in_ctx(
+            name="first_speech",
+            parent_span=self.global_span,
+        )
+        end_span(self.first_speech_span)
 
     def create_state_manager(self) -> ConversationStateManager:
         return ConversationStateManager(conversation=self)
 
     async def start(self, mark_ready: Optional[Callable[[], Awaitable[None]]] = None):
-        self.logger.debug("Convo starting")
-
         self.transcriber.start()
         if self.agent.get_agent_config().call_type == CallType.INBOUND:
             self.transcriber.mute()
@@ -1015,6 +1066,7 @@ class StreamingConversation(Generic[OutputDeviceType]):
         self.agent.clear_task_queue()
         self.agent_responses_worker.clear_task_queue()
         await self.output_device.clear()
+        end_span(self.transcriptions_worker.transcription_span)
         if not self.agent.get_agent_config().allow_interruptions:
             self.synthesis_results_worker.clear_task_queue()
         while True:
@@ -1039,22 +1091,25 @@ class StreamingConversation(Generic[OutputDeviceType]):
         message: str,
         synthesis_result: SynthesisResult,
         stop_event: threading.Event,
-        started_event: threading.Event,
-        seconds_per_chunk: int,
         transcript_message: Optional[Message] = None,
+        send_speech_to_output_span: Optional[Span] = None,
     ):
-        # Check if both the synthesis result and message are available, if not, return empty message and False flag
-        if not (synthesis_result and message):
-            return "", False
-        # reset the stop event
-        stop_event.clear()
-
         """
         - Sends the speech chunk by chunk to the output device
         - update the transcript message as chunks come in (transcript_message is always provided for non filler audio utterances)
         - If the stop_event is set, the output is stopped
         - Sets started_event when the first chunk is sent
         """
+        span_event(
+            span=send_speech_to_output_span,
+            event_name="started_sending_speech",
+            event_data={"message": message},
+        )
+        # Check if both the synthesis result and message are available, if not, return empty message and False flag
+        if not (synthesis_result and message):
+            return "", False
+        stop_event.clear()
+
         # Set the flag indicating that synthesis is not yet complete
         self.transcriptions_worker.synthesis_done = False
 
@@ -1063,9 +1118,12 @@ class StreamingConversation(Generic[OutputDeviceType]):
         cut_off = False
 
         # Calculate the size of each speech chunk based on the seconds per chunk and the audio configuration
-        chunk_size = seconds_per_chunk * get_chunk_size_per_second(
-            self.synthesizer.get_synthesizer_config().audio_encoding,
-            self.synthesizer.get_synthesizer_config().sampling_rate,
+        SPEECH_CHUNK_SIZE = (
+            TEXT_TO_SPEECH_CHUNK_SIZE_SECONDS
+            * get_chunk_size_per_second(
+                self.synthesizer.get_synthesizer_config().audio_encoding,
+                self.synthesizer.get_synthesizer_config().sampling_rate,
+            )
         )
 
         # Initialize a bytearray to accumulate the speech data
@@ -1074,12 +1132,19 @@ class StreamingConversation(Generic[OutputDeviceType]):
         # Asynchronously generate speech data from the synthesis result
         buffer_cleared = False
         async for chunk_result in synthesis_result.chunk_generator:
-            if len(speech_data) > chunk_size:
-                self.transcriptions_worker.synthesis_done = True
-                started_event.set()
             if stop_event.is_set() and self.agent.agent_config.allow_interruptions:
+                if send_speech_to_output_span:
+                    if send_speech_to_output_span.is_recording():
+                        send_speech_to_output_span.set_status(
+                            Status(StatusCode.ERROR, "Interrupted")
+                        )
+                        send_speech_to_output_span.record_exception(
+                            Exception("Interrupted")
+                        )
+
                 return "", False
-            if len(speech_data) > chunk_size:
+            if len(speech_data) >= SPEECH_CHUNK_SIZE:
+                self.transcriptions_worker.synthesis_done = True
                 self.transcriptions_worker.block_inputs = True
                 self.transcriptions_worker.time_silent = 0.0
                 self.transcriptions_worker.triggered_affirmative = False
@@ -1091,30 +1156,47 @@ class StreamingConversation(Generic[OutputDeviceType]):
                     for _ in range(1):
                         # Check if the stop event is set before sending each piece
                         if stop_event.is_set():
+                            if send_speech_to_output_span:
+                                if send_speech_to_output_span.is_recording():
+                                    send_speech_to_output_span.set_status(
+                                        Status(StatusCode.ERROR, "Interrupted")
+                                    )
+                                    send_speech_to_output_span.record_exception(
+                                        Exception("Interrupted")
+                                    )
                             return "", False
                         # Calculate the size of each piece
                         piece_size = len(speech_data) // 1
+                        span_event(
+                            send_speech_to_output_span,
+                            "sending-chunk",
+                            {"message": message_sent},
+                        )
+                        span_event(
+                            self.first_speech_span,
+                            "sent-first-audio",
+                            {"message": message_sent},
+                        )
+                        end_span(self.first_speech_span)
                         # Send the piece to the output device
                         await self.output_device.consume_nonblocking(
                             speech_data[:piece_size]
                         )
                         # Remove the sent piece from the speech data
                         speech_data = speech_data[piece_size:]
-                        # TODO: [GRE-903] Verify if sleeping here is correct and implement necessary changes.
-                        # See https://linear.app/greymatter/issue/GRE-903/test-sleeping for more details.
-                        self.logger.debug(
-                            f"Sleeping for {piece_size / chunk_size} seconds"
-                        )
-                        await asyncio.sleep(
-                            (piece_size / chunk_size) - PER_CHUNK_ALLOWANCE_SECONDS
-                        )
-
+                        # Sleep for a tenth of the chunk duration
+                        # await asyncio.sleep(seconds_per_chunk / 1)
                     if not buffer_cleared and not stop_event.is_set():
                         buffer_cleared = True
                         self.transcriptions_worker.buffer.clear()
                 else:
                     self.transcriptions_worker.buffer.clear()
                     self.mark_last_action_timestamp()
+                    span_event(
+                        send_speech_to_output_span,
+                        "sent_speech_no_interruptions",
+                        {"message": message_sent},
+                    )
                     await self.output_device.consume_nonblocking(speech_data)
                     # Sleep is implemented here to synchronize the timeline between the audio data sent and the time muted.
                     # Sleep Time [s] = (Data Sent [bytes] / Chunk Size [bytes]) - Buffer Time [s]
@@ -1132,14 +1214,25 @@ class StreamingConversation(Generic[OutputDeviceType]):
 
             speech_data.extend(chunk_result.chunk)
         if not stop_event.is_set():
+            span_event(
+                span=send_speech_to_output_span,
+                event_name="sending_final_synth_buffer",
+                event_data={"message": message_sent},
+            )
             self.logger.debug(f"Sending in final synth buffer, len {len(speech_data)}")
 
             await self.output_device.consume_nonblocking(speech_data)
             self.transcriptions_worker.time_silent = 0.0
-            # Calculate the remaining time to sleep based on a 16k chunk size
-            remaining_time_to_sleep = (chunk_size - len(speech_data)) / 16000.0
         else:
             self.logger.debug("Interrupted speech output on the last chunk")
+            if send_speech_to_output_span:
+                if send_speech_to_output_span.is_recording():
+                    send_speech_to_output_span.set_status(
+                        Status(StatusCode.ERROR, "Interrupted")
+                    )
+                    send_speech_to_output_span.record_exception(
+                        Exception("Interrupted")
+                    )
             return "", False
 
         self.transcriptions_worker.synthesis_done = True
@@ -1201,9 +1294,12 @@ class StreamingConversation(Generic[OutputDeviceType]):
         self.mark_last_action_timestamp()
 
         # Update the message sent with the actual content spoken
-        message_sent = synthesis_result.get_message_up_to(len(speech_data) / chunk_size)
+        message_sent = synthesis_result.get_message_up_to(
+            len(speech_data) / SPEECH_CHUNK_SIZE
+        )
 
         # If a transcript message is provided, update its text with the message sent
+        # TODO: Check if this does anything.
         if transcript_message:
             transcript_message.text = message_sent
         cut_off = False
@@ -1218,7 +1314,6 @@ class StreamingConversation(Generic[OutputDeviceType]):
             and self.agent_responses_worker.output_queue.qsize() == 0
             and self.agent.get_input_queue().qsize() == 0
             and self.agent.get_output_queue().qsize() == 0
-            # it must also end in punctuation
         ):
             if message_sent and message_sent.strip()[-1] not in [","]:
 
@@ -1239,6 +1334,9 @@ class StreamingConversation(Generic[OutputDeviceType]):
     async def terminate(self):
         self.mark_terminated()
         await self.broadcast_interrupt()
+        end_span(self.transcriptions_worker.transcription_span)
+        end_span(self.first_speech_span)
+        end_span(self.global_span)
         if self.synthesis_results_worker.current_task:
             self.synthesis_results_worker.current_task.cancel()
         self.events_manager.publish_event(
