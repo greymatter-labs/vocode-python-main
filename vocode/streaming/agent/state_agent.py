@@ -47,10 +47,10 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
         else:
             self.base_url = getenv("AI_API_BASE")
             self.model = getenv("AI_MODEL_NAME_LARGE")
-        self.client = AsyncOpenAI(
-            base_url=self.base_url + "/v1/",  # replace with your endpoint url
-            api_key="<HF_API_TOKEN>",  # replace with your token
-        )
+        # self.client = AsyncOpenAI(
+        #     base_url=self.base_url,
+        #     api_key="<HF_API_TOKEN>",  # replace with your token
+        # )
         self.logger.info(f"Hellpo")  # I left off with it not parsing the state machien
 
         self.logger.info(f"State machine: {self.state_machine}")
@@ -67,9 +67,16 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
                 AgentResponseMessage(message=BaseMessage(text=message))
             )
 
-    async def generate_completion(self, user_input: Optional[str] = None):
-        if user_input:
-            self.update_history("human", user_input)
+    async def generate_completion(
+        self,
+        affirmative_phrase: Optional[str],
+        conversation_id: str,
+        human_input: Optional[str] = None,
+        is_interrupt: bool = False,
+        stream_output: bool = True,
+    ):
+        if human_input:
+            self.update_history("human", human_input)
             last_bot_message = next(
                 (
                     msg[1]
@@ -78,13 +85,16 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
                 ),
                 "",
             )
-            move_on = await self.maybe_respond_to_user(last_bot_message, user_input)
+            move_on = await self.maybe_respond_to_user(last_bot_message, human_input)
             if not move_on:
                 self.update_history("message.bot", last_bot_message)
-                return "", True
-        if self.resume and user_input:
-            await self.resume(user_input)
-        elif not self.resume and not user_input:
+                return (
+                    "",
+                    True,
+                )  # TODO: it repeats itself here, if maybe ends up saying something, no need to say it here with update
+        if self.resume and human_input:
+            await self.resume(human_input)
+        elif not self.resume and not human_input:
             self.resume = await self.handle_state("start", True)
         else:
             self.resume = await self.choose_block(state=self.current_state)
@@ -108,7 +118,7 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
 
         if state["type"] == "crossroads":
 
-            async def resume(user_input):
+            async def resume(human_input):
                 self.resume = None
                 return await self.choose_block(state=state)
 
@@ -217,6 +227,7 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
         }
         prompt = f"The user was asked: {question}\nThe user responded with: {user_response}\n\nDetermine if the user answered the question as well as whether the user asked a question of their own."
         output = await self.call_ai(prompt, continue_tool)
+        self.logger.info(f"Output: {output}")
         output = output[output.find("{") : output.rfind("}") + 1]
         output = eval(output.replace("'None'", "'none'").replace("None", "'none'"))
         if "none" in output["answered_question"]:
@@ -231,20 +242,41 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
         return True
 
     async def call_ai(self, prompt, tool=None):
-        self.update_history("message.instruction", prompt)
-        response = await self.client.chat.completions.create(
-            model=self.model,
-            messages=[
-                {"role": "system", "content": self.overall_instructions},
-                {
-                    "role": "user",
-                    "content": f"Given the chat history, follow the instructions.\nChat history:\n{self.chat_history}\nInstructions:\n{prompt}",
-                },
-            ],
-            stream=False,
-            max_tokens=500,
+        self.client = AsyncOpenAI(
+            base_url=self.base_url,
+            api_key="<HF_API_TOKEN>",  # replace with your token
         )
-        return response.choices[0].message.content
+        if not tool:
+            self.update_history("message.instruction", prompt)
+            # return input(f"[message.bot] $: ")
+            chat_completion = await self.client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {"role": "system", "content": self.overall_instructions},
+                    {
+                        "role": "user",
+                        "content": f"Given the chat history, follow the instructions.\nChat history:\n{self.chat_history}\nInstructions:\n{prompt}",
+                    },
+                ],
+                stream=False,
+                max_tokens=500,
+            )
+            return chat_completion.choices[0].message.content
+        else:
+            self.update_history("message.instruction", prompt)
+            chat_completion = await self.client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {"role": "system", "content": self.overall_instructions},
+                    {
+                        "role": "user",
+                        "content": f"Given the chat history, follow the instructions.\nChat history:\n{self.chat_history}\nInstructions:\n{prompt}\nRespond with a dictionary in the following format: {tool}",
+                    },
+                ],
+                stream=False,
+                max_tokens=500,
+            )
+            return chat_completion.choices[0].message.content
 
     def get_functions(self):
         assert self.agent_config.actions
