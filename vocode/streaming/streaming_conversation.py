@@ -1098,10 +1098,15 @@ class StreamingConversation(Generic[OutputDeviceType]):
                         await self.output_device.consume_nonblocking(
                             speech_data[:piece_size]
                         )
+
                         # Remove the sent piece from the speech data
                         speech_data = speech_data[piece_size:]
-                        # Sleep for a tenth of the chunk duration
-                        # await asyncio.sleep(seconds_per_chunk / 1)
+                        # @TODO: Is sleeping correct here? interruption issues introduced around a similar time we stopped sleeping.
+                        self.logger.debug(
+                            f"Sleeping for {piece_size / chunk_size} seconds"
+                        )
+                        await asyncio.sleep((piece_size / chunk_size) - 0.1)
+
                     if not buffer_cleared and not stop_event.is_set():
                         buffer_cleared = True
                         self.transcriptions_worker.buffer.clear()
@@ -1109,6 +1114,7 @@ class StreamingConversation(Generic[OutputDeviceType]):
                     self.transcriptions_worker.buffer.clear()
                     self.mark_last_action_timestamp()
                     await self.output_device.consume_nonblocking(speech_data)
+                    await asyncio.sleep((len(speech_data) / chunk_size) - 0.1)
                     speech_data = bytearray()
                     if not buffer_cleared:
                         buffer_cleared = True
@@ -1178,6 +1184,8 @@ class StreamingConversation(Generic[OutputDeviceType]):
             - self.per_chunk_allowance_seconds,
             0,
         )
+        self.logger.info(f"Sleeping for {speech_length_seconds} seconds")
+        await asyncio.sleep(speech_length_seconds)
 
         # Update the last action timestamp after sending speech
         self.mark_last_action_timestamp()
