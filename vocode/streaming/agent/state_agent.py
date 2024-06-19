@@ -18,6 +18,10 @@ from vocode.streaming.models.events import Sender
 from pydantic import BaseModel, Field
 from openai import AsyncOpenAI
 from vocode import getenv
+from vocode.streaming.action.phone_call_action import (
+    TwilioPhoneCallAction,
+    VonagePhoneCallAction,
+)
 
 
 class StateMachine(BaseModel):
@@ -101,6 +105,7 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
         return "", True
 
     async def print_start_message(self, state):
+        self.logger.info(f"Current State: {state}")
         start_message = state["start_message"]
         if start_message:
             if start_message["type"] == "verbatim":
@@ -186,7 +191,7 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
         self.update_history("debug", f"Choices: {choices}")
         tool = {"choice": "[insert the user's choice]"}
         response = await self.call_ai(
-            f"{state['condition']['prompt']}. Choices: {list(state['condition']['conditionToStateId'].keys())}\nChoose the right choice.",
+            f"{state['condition']['prompt']}. Choices: {list(state['condition']['conditionToStateId'].keys())}\nGiven the current state of the conversation, return the right choice. If none of the choices apply, return 'none'.",
             tool,
         )
         response = response[response.find("{") : response.rfind("}") + 1]
@@ -200,6 +205,7 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
                 self.update_history(
                     "debug", f"condition {condition} != response {response}"
                 )
+        return await self.handle_state(state["edge"])
 
     async def compose_action(self, state):
         action = state["action"]
@@ -212,15 +218,68 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
             for param_name in params.keys()
         }
         response = await self.call_ai(
-            f"Return the parameters for the function.", dict_to_fill
+            f"Based on the instructions and current conversational context, return effective parameters for the function.",
+            dict_to_fill,
         )
-        self.logger.info(f"Attempting to call with params: {response}")
+        response = response[response.find("{") : response.rfind("}") + 1]
+        params = eval(response)
+        action_config = self._get_action_config(action_name)
+
+        action = self.action_factory.create_action(action_config)
+        action_input: ActionInput
+        if isinstance(action, TwilioPhoneCallAction):
+            assert (
+                self.twilio_sid is not None
+            ), "Cannot use TwilioPhoneCallActionFactory unless the attached conversation is a TwilioCall"
+            action_input = action.create_phone_call_action_input(
+                self.conversation_id,
+                params,
+                self.twilio_sid,
+                user_message_tracker=None,
+            )
+        else:
+            action_input = action.create_action_input(
+                conversation_id=self.conversation_id,
+                params=params,
+                user_message_tracker=None,
+            )
+
+        # check if starting_phrase exists and has content
+        # TODO handle if it doesnt have one
+        if not action_config.starting_phrase or action_config.starting_phrase == "":
+            action_config.starting_phrase = "Starting action..."
+        # the value of starting_phrase is the message it says during the action
         self.update_history(
             "action-start",
             f"Running action {action_name} with params response {response}",
         )
+        to_say_start = action_config.starting_phrase
+        # if not self.streamed and not self.agent_config.use_streaming:
+        self.produce_interruptible_agent_response_event_nonblocking(
+            AgentResponseMessage(message=BaseMessage(text=to_say_start))
+        )
+        # if we're using streaming, we need to block inputs until the tool calls are done
+        self.block_inputs = True
+
+        async def run_action_and_return_input(action, action_input):
+            action_output = await action.run(action_input)
+            # also log the output
+            pretty_function_call = (
+                f"Tool Response: {action_name}, Output: {action_output}"
+            )
+            self.logger.info(
+                f"[{self.agent_config.call_type}:{self.agent_config.current_call_id}] Agent: {pretty_function_call}"
+            )
+            return action_input, action_output
+
+        # accumulate the tasks so we dont wait on each one sequentially
+        input, output = await run_action_and_return_input(action, action_input)
+        self.block_inputs = False
         # TODO: HERE we need to actually run it
-        self.update_history("action-finish", f"Action result: <fake>")
+        self.update_history(
+            "action-finish",
+            f"Action '{action_name}' with input '{input}' completed with result: {output}",
+        )
         return await self.handle_state(state["edge"])
 
     async def maybe_respond_to_user(self, question, user_response):
