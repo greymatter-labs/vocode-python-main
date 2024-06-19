@@ -1105,7 +1105,9 @@ class StreamingConversation(Generic[OutputDeviceType]):
                         self.logger.debug(
                             f"Sleeping for {piece_size / chunk_size} seconds"
                         )
-                        await asyncio.sleep((piece_size / chunk_size) - 0.1)
+                        await asyncio.sleep(
+                            (piece_size / chunk_size) - PER_CHUNK_ALLOWANCE_SECONDS
+                        )
 
                     if not buffer_cleared and not stop_event.is_set():
                         buffer_cleared = True
@@ -1114,7 +1116,15 @@ class StreamingConversation(Generic[OutputDeviceType]):
                     self.transcriptions_worker.buffer.clear()
                     self.mark_last_action_timestamp()
                     await self.output_device.consume_nonblocking(speech_data)
-                    await asyncio.sleep((len(speech_data) / chunk_size) - 0.1)
+                    # Sleep is implemented here to synchronize the timeline between the audio data sent and the time muted.
+                    # Sleep Time [s] = (Data Sent [bytes] / Chunk Size [bytes]) - Buffer Time [s]
+                    # Where:
+                    # - Chunk Size [bytes]: seconds_per_chunk [s/chunk] * (sampling_rate [samples/s] * bytes_per_sample [bytes/sample])
+                    # - Buffer Time [s]: Time to process the chunk, prevents blips in the audio output
+
+                    await asyncio.sleep(
+                        (len(speech_data) / chunk_size) - PER_CHUNK_ALLOWANCE_SECONDS
+                    )
                     speech_data = bytearray()
                     if not buffer_cleared:
                         buffer_cleared = True
