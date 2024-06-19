@@ -81,7 +81,7 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
                 (
                     msg[1]
                     for msg in reversed(self.chat_history)
-                    if msg[0] == "message.bot"
+                    if msg[0] == "message.bot" and msg[1] and len(msg[1].strip()) > 0
                 ),
                 "",
             )
@@ -203,9 +203,10 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
 
     async def compose_action(self, state):
         action = state["action"]
+        self.logger.info(f"Attempting to call: {action}")
         action_name = action["name"]
         action_description = action["description"]
-        params = action["parameter_definitions"]
+        params = action["params"]
         dict_to_fill = {
             param_name: f"{params[param_name]['description']} of type: {params[param_name]['type']}"
             for param_name in params.keys()
@@ -213,35 +214,33 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
         response = await self.call_ai(
             f"Return the parameters for the function.", dict_to_fill
         )
+        self.logger.info(f"Attempting to call with params: {response}")
         self.update_history(
             "action-start",
             f"Running action {action_name} with params response {response}",
         )
+        # TODO: HERE we need to actually run it
         self.update_history("action-finish", f"Action result: <fake>")
         return await self.handle_state(state["edge"])
 
     async def maybe_respond_to_user(self, question, user_response):
         continue_tool = {
-            "answered_question": "[insert the user's answer, or 'None']",
-            "asked_own_question": "[insert a one-sentence answer to the user's new question, or 'None']",
+            "[either 'immediate' or 'workflow']": "[insert your response to the user]",
         }
-        prompt = f"The user was asked: {question}\nThe user responded with: {user_response}\n\nDetermine if the user answered the question as well as whether the user asked a question of their own."
-        output = await self.call_ai(prompt, continue_tool)
+        prompt = f"In the current workflow, you stated: '{question}', and the user replied: '{user_response}'.\n\nDecide if you should proceed with the workflow to assist the user, or if an immediate response followed by a repetition of your statement is required to obtain a clear answer."
+        output = await self.call_ai(prompt, continue_tool, stop=["workflow"])
         self.logger.info(f"Output: {output}")
+        if "workflow" in output:
+            return True
         output = output[output.find("{") : output.rfind("}") + 1]
         output = eval(output.replace("'None'", "'none'").replace("None", "'none'"))
-        if "none" in output["answered_question"]:
-            if "none" not in output["asked_own_question"]:
-                self.update_history("message.bot", output["asked_own_question"])
-                return False
+        if "immediate" in output:
+            self.update_history("message.bot", output["immediate"])
             return False
-        else:
-            if "none" not in output["asked_own_question"]:
-                self.update_history("message.bot", output["answered_question"])
-                return True
-        return True
+        # self.update_history("message.bot", question)
+        return False
 
-    async def call_ai(self, prompt, tool=None):
+    async def call_ai(self, prompt, tool=None, stop=None):
         self.client = AsyncOpenAI(
             base_url=self.base_url,
             api_key="<HF_API_TOKEN>",  # replace with your token
@@ -259,6 +258,7 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
                     },
                 ],
                 stream=False,
+                stop=stop if stop is not None else [],
                 max_tokens=500,
             )
             return chat_completion.choices[0].message.content
@@ -274,6 +274,7 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
                     },
                 ],
                 stream=False,
+                stop=stop if stop is not None else [],
                 max_tokens=500,
             )
             return chat_completion.choices[0].message.content
