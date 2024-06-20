@@ -58,9 +58,12 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
         self.logger.info(f"Hellpo")  # I left off with it not parsing the state machien
 
         self.logger.info(f"State machine: {self.state_machine}")
-        self.overall_instructions = self.state_machine["states"]["start"][
-            "instructions"
-        ]
+        self.overall_instructions = (
+            self.agent_config.prompt_preamble
+            + "\n"
+            + self.state_machine["states"]["start"]["instructions"]
+        )
+        self.label_to_state_id = self.state_machine["labelToStateId"]
         #     self.state_machine.initial_state_id
         # )["instructions"]
 
@@ -91,7 +94,7 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
             )
             move_on = await self.maybe_respond_to_user(last_bot_message, human_input)
             if not move_on:
-                self.update_history("message.bot", last_bot_message)
+                # self.update_history("message.bot", last_bot_message)
                 return (
                     "",
                     True,
@@ -100,14 +103,14 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
             await self.resume(human_input)
         elif not self.resume and not human_input:
             self.resume = await self.handle_state("start", True)
-        else:
+        elif not self.resume:
             self.resume = await self.choose_block(state=self.current_state)
         return "", True
 
     async def print_start_message(self, state):
         self.logger.info(f"Current State: {state}")
-        start_message = state["start_message"]
-        if start_message:
+        if "start_message" in state:
+            start_message = state["start_message"]
             if start_message["type"] == "verbatim":
                 self.update_history("message.bot", start_message["message"])
             else:
@@ -139,7 +142,11 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
             return await self.handle_state(state["edge"])
 
         if state["type"] == "question":
-            self.update_history("message.bot", state["question"]["prompt"])
+            question = state["question"]
+            if question["type"] == "verbatim":
+                self.update_history("message.bot", question["message"])
+            else:
+                await self.guided_response(question["description"])
 
             async def resume(answer):
                 self.update_history(
@@ -156,11 +163,17 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
             return await self.compose_action(state)
 
     async def guided_response(self, guide):
-        self.update_history("message.instruction", f"Your prompt is {guide}")
-        message = await self.call_ai("What do you want to say?")
-        self.update_history("message.bot", message)
+        self.update_history("debug", f"Running guided response with guide: {guide}")
+        tool = {"response": "[insert your response]"}
+        message = await self.call_ai(
+            "Draft your next response to the user based on the latest chat history, taking into account the following guidance:\n'{guide}'",
+            tool,
+        )
+        message = message[message.find("{") : message.rfind("}") + 1]
+        message = eval(message)
+        self.update_history("message.bot", message["response"])
 
-    async def choose_block(self, state=None):
+    async def choose_block(self, state=None, choose_from=None):
         if state is None:
             states = self.state_machine["states"][
                 self.state_machine["startingStateId"]
@@ -170,36 +183,51 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
                 states = state["edges"]
             else:
                 states = [state["edge"]]
+        # if choose_from is set, we will let it choose from all available
+        # aadd choose_from to the states list
+        if choose_from:
+            states += (
+                choose_from
+                + self.state_machine["states"][self.state_machine["startingStateId"]][
+                    "edges"
+                ]
+            )
         if len(states) == 1:
             next_state_id = states[0]
             return await self.handle_state(next_state_id)
+        # split each on the :: and get the first element, then remove duplicates
+        states = list(set([s.split("::")[0] for s in states]))
         numbered_states = "\n".join([f"{i + 1}. {s}" for i, s in enumerate(states)])
+        self.logger.info(f"Numbered states: {numbered_states}")
         streamed_choice = await self.call_ai(
             f"Choose from the available states:\n{numbered_states}\nReturn just a single number corresponding to your choice."
         )
         match = re.search(r"\d+", streamed_choice)
         chosen_int = int(match.group()) if match else 1
         next_state_id = states[chosen_int - 1]
+        next_state_id = self.label_to_state_id[next_state_id]
         self.update_history("debug", f"The bot chose {chosen_int}, aka {next_state_id}")
+        self.logger.info(f"Chose {next_state_id}")
         return await self.handle_state(next_state_id)
 
     async def condition_check(self, state):
         self.update_history("debug", "Running condition check")
         choices = "\n".join(
-            [f"'{c}'" for c in state["condition"]["conditionToStateId"].keys()]
+            [f"'{c}'" for c in state["condition"]["conditionToStateLabel"].keys()]
         )
         self.update_history("debug", f"Choices: {choices}")
         tool = {"choice": "[insert the user's choice]"}
         response = await self.call_ai(
-            f"{state['condition']['prompt']}. Choices: {list(state['condition']['conditionToStateId'].keys())}\nGiven the current state of the conversation, return the right choice. If none of the choices apply, return 'none'.",
+            f"{state['condition']['prompt']}. Choices: {list(state['condition']['conditionToStateLabel'].keys())}\nGiven the current state of the conversation, return the right choice. If none of the choices apply, return 'none'.",
             tool,
         )
         response = response[response.find("{") : response.rfind("}") + 1]
         response = eval(response)
-        for condition, next_state_id in state["condition"][
-            "conditionToStateId"
+        for condition, next_state_label in state["condition"][
+            "conditionToStateLabel"
         ].items():
             if condition == response["choice"]:
+                next_state_id = self.label_to_state_id[next_state_label]
                 return await self.handle_state(next_state_id)
             else:
                 self.update_history(
@@ -222,6 +250,7 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
             dict_to_fill,
         )
         response = response[response.find("{") : response.rfind("}") + 1]
+        self.logger.info(f"Filled params: {response}")
         params = eval(response)
         action_config = self._get_action_config(action_name)
 
@@ -284,20 +313,52 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
 
     async def maybe_respond_to_user(self, question, user_response):
         continue_tool = {
-            "[either 'immediate' or 'workflow']": "[insert your response to the user]",
+            "[either 'PAUSE' or 'CONTINUE' or 'SWITCH']": "[insert your response to the user]",
         }
-        prompt = f"In the current workflow, you stated: '{question}', and the user replied: '{user_response}'.\n\nDecide if you should proceed with the workflow to assist the user, or if an immediate response followed by a repetition of your statement is required to obtain a clear answer."
-        output = await self.call_ai(prompt, continue_tool, stop=["workflow"])
+        if self.current_state and self.current_state["id"]:
+            current_workflow = self.current_state["id"].split("::")[0]
+        else:
+            current_workflow = "start of conversation"
+        prompt = (
+            f"In the current workflow, you stated: '{question}', and the user replied: '{user_response}'.\n\n"
+            f"The current workflow is: {current_workflow}\n"
+            "To best assist the user, decide:\n"
+            "Whether you should 'CONTINUE' with the current workflow\n"
+            "Whether you should 'PAUSE' the current workflow to obtain a clear answer from the user\n"
+            "Or, whether you should 'SWITCH' to a different workflow if the user wants to change their answer or do something else."
+        )
+        output = await self.call_ai(prompt, continue_tool, stop=["CONTINUE", "SWITCH"])
         self.logger.info(f"Output: {output}")
-        if "workflow" in output:
+        if "CONTINUE" in output:
             return True
+        if "SWITCH" in output:
+
+            def get_states_from_block():
+                if self.current_state and self.current_state["id"]:
+                    latest_state_id = self.current_state["id"].split("::")[0]
+                    # iterates through all available states
+                    block_states = []
+                    for state_id, state in self.state_machine["states"].items():
+                        current_state_id = state["id"].split("::")[0]
+                        if current_state_id == latest_state_id:
+                            block_states.append(state_id)
+                    return block_states
+                else:
+                    return []
+
+            self.resume = await self.choose_block(
+                state=self.current_state, choose_from=get_states_from_block()
+            )
+
+            # self.update_history("message.bot", question)
+            return False
         output = output[output.find("{") : output.rfind("}") + 1]
         output = eval(output.replace("'None'", "'none'").replace("None", "'none'"))
-        if "immediate" in output:
-            self.update_history("message.bot", output["immediate"])
+        if "PAUSE" in output:
+            self.update_history("message.bot", output["PAUSE"])
             return False
-        # self.update_history("message.bot", question)
-        return False
+        self.logger.info(f"falling back with {output}")
+        return True
 
     async def call_ai(self, prompt, tool=None, stop=None):
         self.client = AsyncOpenAI(
