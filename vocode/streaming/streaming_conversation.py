@@ -1098,10 +1098,10 @@ class StreamingConversation(Generic[OutputDeviceType]):
                         await self.output_device.consume_nonblocking(
                             speech_data[:piece_size]
                         )
-
                         # Remove the sent piece from the speech data
                         speech_data = speech_data[piece_size:]
-                        # @TODO: Is sleeping correct here? interruption issues introduced around a similar time we stopped sleeping.
+                        # TODO: [GRE-903] Verify if sleeping here is correct and implement necessary changes.
+                        # See https://linear.app/greymatter/issue/GRE-903/test-sleeping for more details.
                         self.logger.debug(
                             f"Sleeping for {piece_size / chunk_size} seconds"
                         )
