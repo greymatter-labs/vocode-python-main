@@ -27,7 +27,6 @@ from vocode.streaming.agent.utils import (
     translate_message,
 )
 
-
 class StateMachine(BaseModel):
     states: Dict[str, Any]
     initial_state_id: str
@@ -103,6 +102,7 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
                 self.logger.info(
                     f"[{self.agent_config.call_type}:{self.agent_config.current_call_id}] Lead:{human_input}"
                 )
+
             last_bot_message = next(
                 (
                     msg[1]
