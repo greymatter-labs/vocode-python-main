@@ -216,17 +216,32 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
             [f"'{c}'" for c in state["condition"]["conditionToStateLabel"].keys()]
         )
         self.update_history("debug", f"Choices: {choices}")
-        tool = {"choice": "[insert the user's choice]"}
-        response = await self.call_ai(
-            f"{state['condition']['prompt']}. Choices: {list(state['condition']['conditionToStateLabel'].keys())}\nGiven the current state of the conversation, return the right choice. If none of the choices apply, return 'none'.",
-            tool,
+        tool = {"condition": "[insert the condition that applies]"}
+        choices = "\n".join(
+            [f"- '{c}'" for c in state["condition"]["conditionToStateLabel"].keys()]
         )
+        self.logger.info(f"Choosing condition from:\n{choices}")
+        # check if there is more than one condition
+        if len(state["condition"]["conditionToStateLabel"]) > 1:
+            response = await self.call_ai(
+                f"{state['condition']['prompt']}. Conditions:\n{choices}\nGiven the provided context and the current state of the conversation, return the condition that applies. If none of the conditions apply, return 'none'.",
+                tool,
+            )
+        else:  # with just a single condition, change the prompt
+            single_condition = list(state["condition"]["conditionToStateLabel"].keys())[
+                0
+            ]
+            response = await self.call_ai(
+                f"{state['condition']['prompt']} Given the current state of the conversation, is the condition '{single_condition}' applicable? If so, return the condition name. If not applicable, return 'none'.",
+                tool,
+            )
         response = response[response.find("{") : response.rfind("}") + 1]
+        self.logger.info(f"Chose condition: {response}")
         response = eval(response)
         for condition, next_state_label in state["condition"][
             "conditionToStateLabel"
         ].items():
-            if condition == response["choice"]:
+            if condition == response["condition"]:
                 next_state_id = self.label_to_state_id[next_state_label]
                 return await self.handle_state(next_state_id)
             else:
@@ -241,12 +256,15 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
         action_name = action["name"]
         action_description = action["description"]
         params = action["params"]
-        dict_to_fill = {
-            param_name: f"{params[param_name]['description']} of type: {params[param_name]['type']}"
-            for param_name in params.keys()
-        }
+        dict_to_fill = {param_name: "[insert value]" for param_name in params.keys()}
+        param_descriptions = "\n".join(
+            [
+                f"'{param_name}': description: {params[param_name]['description']}, type: '{params[param_name]['type']})'"
+                for param_name in params.keys()
+            ]
+        )
         response = await self.call_ai(
-            f"Based on the instructions and current conversational context, return effective parameters for the function.",
+            f"Based on the instructions and current conversational context, please provide values for the following parameters: {param_descriptions}",
             dict_to_fill,
         )
         response = response[response.find("{") : response.rfind("}") + 1]
@@ -309,7 +327,13 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
             "action-finish",
             f"Action '{action_name}' with input '{input}' completed with result: {output}",
         )
-        return await self.handle_state(state["edge"])
+        # it seems to continue on an on
+        if state["edge"] == "start":
+            self.current_state = None
+            self.resume = None  # its continuing on so im trying to reset resume
+            return {}
+        else:
+            return await self.handle_state(state["edge"])
 
     async def maybe_respond_to_user(self, question, user_response):
         continue_tool = {
@@ -320,13 +344,15 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
         else:
             current_workflow = "start of conversation"
         prompt = (
-            f"In the current workflow, you stated: '{question}', and the user replied: '{user_response}'.\n\n"
-            f"The current workflow is: {current_workflow}\n"
-            "To best assist the user, decide:\n"
-            "Whether you should 'CONTINUE' with the current workflow\n"
-            "Whether you should 'PAUSE' the current workflow to obtain a clear answer from the user\n"
-            "Or, whether you should 'SWITCH' to a different workflow if the user wants to change their answer or do something else."
+            f"You last stated: '{question}', to which the user replied: '{user_response}'.\n\n"
+            f"You're in the process of helping the user with: {current_workflow}\n"
+            "To best assist the user, decide whether you should:\n"
+            "- 'CONTINUE' the process to the next step\n"
+            "- 'PAUSE' the current process to obtain a clear answer from the user\n"
+            "- 'SWITCH' to a different process if the user wants to do something else."
         )
+        self.logger.info(f"Prompt: {prompt}")
+        # we do not care what it has to say when switching or continuing
         output = await self.call_ai(prompt, continue_tool, stop=["CONTINUE", "SWITCH"])
         self.logger.info(f"Output: {output}")
         if "CONTINUE" in output:
