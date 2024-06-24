@@ -96,7 +96,7 @@ class SendHelloSugarBookingInstructions(
         to_phone = action_input.params.to_phone
         response = await self.send_hello_sugar_booking_instructions(to_phone, location)
         # response = await self.wait_for_response(self.action_config.to_phone)
-        if "error" in str(response).lower():
+        if response and response.get('error_code'):
             return ActionOutput(
                 action_type=action_input.action_config.type,
                 response=SendHelloSugarBookingInstructionsResponse(
