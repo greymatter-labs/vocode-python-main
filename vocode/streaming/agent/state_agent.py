@@ -66,6 +66,7 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
             + "\n"
             + self.state_machine["states"]["start"]["instructions"]
         )
+        self.logger.info(f"Overall instructions: {self.overall_instructions}")
         self.label_to_state_id = self.state_machine["labelToStateId"]
         #     self.state_machine.initial_state_id
         # )["instructions"]
@@ -125,9 +126,10 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
 
         if self.resume:
             if human_input:
-                self.resume = await self.resume(human_input)
+                await self.resume(human_input)
             else:
-                self.resume = await self.resume(None)
+                await self.resume(None)
+            self.resume = None  # Clear resume after it's been called
         elif not self.resume:
             if not human_input:
                 self.resume = await self.handle_state("start", True)
@@ -146,7 +148,7 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
                 await self.guided_response(guide)
 
     async def handle_state(self, state_id, start=False):
-        self.update_history("debug", f"STATE IS {state_id}")
+        # self.update_history("debug", f"STATE IS {state_id}")
         self.resume = None
         if not state_id:
             return
@@ -177,13 +179,12 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
                 await self.guided_response(question["description"])
 
             async def resume(answer):
-                self.update_history(
-                    "debug", f"continuing at {state_id} with user response {answer}"
-                )
                 self.logger.info(
                     f"continuing at {state_id} with user response {answer}"
                 )
-                return await self.handle_state(state["edge"])
+                next_state_id = state["edge"]
+                self.current_state = None  # Reset current state
+                return await self.handle_state(next_state_id)
 
             return resume
 
@@ -278,80 +279,110 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
         return await self.handle_state(next_state_id)
 
     async def condition_check(self, state):
-        last_bot_message = next(
-            (
-                msg
-                for role, msg in reversed(self.chat_history)
-                if (role == "message.bot" and msg)
-            ),
-            None,
-        )
-        last_user_message = next(
-            (
-                msg
-                for role, msg in reversed(self.chat_history)
-                if (role == "human" and msg)
-            ),
-            None,
-        )
-        choices = "\n".join(
-            [f"'{c}'" for c in state["condition"]["conditionToStateLabel"].keys()]
-        )
+        last_bot_message = "How can I help you today?"
+        last_user_message = None
+        last_tool_output = None
+        last_user_message_index = None
+
+        # Iterate through the chat history to find the last user message and its index
+        for i, (role, msg) in enumerate(reversed(self.chat_history)):
+            if last_user_message_index is None and role == "human" and msg:
+                last_user_message_index = len(self.chat_history) - i - 1
+                last_user_message = msg
+                break
+
+        # If a user message was found, iterate again to find the last bot message before the user message
+        if last_user_message_index is not None:
+            for i, (role, msg) in enumerate(
+                reversed(self.chat_history[:last_user_message_index])
+            ):
+                if role == "message.bot" and msg:
+                    last_bot_message = msg
+                    break
+
+        # Iterate to find the last action that comes after the last user message
+        for i, (role, msg) in enumerate(
+            self.chat_history[last_user_message_index + 1 :]
+            if last_user_message_index is not None
+            else []
+        ):
+            if role == "action-finish" and msg:
+                last_tool_output = msg
+                break
+        keys = state["condition"]["conditionToStateLabel"].keys()
+        keys = list(keys)
+
+        if self.current_state and not last_tool_output:
+            switch_key = f"user no longer needs help with '{self.current_state['id'].split('::')[0]}'"
+            continue_key = f"user still needs help with '{self.current_state['id'].split('::')[0]}' but no condition applies"
+            question_key = "user seems confused or unsure"
+
+            keys.append(switch_key)
+            keys.append(continue_key)
+            if "question" in self.current_state["id"].split("::")[-2]:
+                keys.append(question_key)
+
+        choices = "\n".join([f"- '{c.lower()}'" for c in keys])
         tool = {
-            "condition": "[insert either: the condition that applies, 'none', or 'question']"
+            "condition": "[insert the name of the condition that applies]",
         }
-        choices = "\n".join(
-            [
-                f"- '{c.lower()}'"
-                for c in state["condition"]["conditionToStateLabel"].keys()
-            ]
-        )
-        # self.logger.info(f"Choosing condition from:\n{choices}")
-        # check if there is more than one condition
-        prompt = (
+        prompt = (  # i was gonna move a negation of the current state's relevance to choces
+            f"The bot helping with: '{self.current_state['id'].split('::')[0]}'\n"
             f"Bot's last statement: '{last_bot_message}'\n"
             f"User's response: '{last_user_message}'\n"
-            "Identify the most fitting condition from the list below:\n"
-            f"{choices}\n"
-            "Instructions:\n"
-            "- Select the condition that applies.\n"
-            "- Provide the exact name of the condition.\n"
-            "- If no conditions apply, type 'none'.\n"
-            "- If the user asked a question, type 'question'."
+            f"{'Last tool output: ' + last_tool_output if last_tool_output else ''}\n\n"
+            "Identify the name of the most fitting condition from the list below:\n"
+            f"{choices}\n\n"
+            "Always return a condition from the above list. Return the exact name of the condition that best applies."
         )
         self.logger.info(f"AI prompt constructed: {prompt}")
-        if len(state["condition"]["conditionToStateLabel"]) > 1:
-            response = await self.call_ai(
-                prompt,
-                tool,
-            )
-        else:  # with just a single condition, change the prompt
-            single_condition = list(state["condition"]["conditionToStateLabel"].keys())[
-                0
-            ]
-            response = await self.call_ai(
-                f"Your previous statement was: '{last_bot_message}', to which the user replied: '{last_user_message}'.\n\nBased on your instructions and the context, assess whether the condition named '{single_condition}' currently applies.\n\n- If it is valid, provide the exact name of the condition.\n- If it does not apply, provide 'none'.\n- In the event that the user's reply is a question, provide 'question'.",
-                tool,
-            )
+        response = await self.call_ai(
+            prompt,
+            tool,
+        )
         self.logger.info(f"Chose condition: {response}")
         response = response[response.find("{") : response.rfind("}") + 1]
         try:
             response = eval(response)
             condition = response["condition"]
-            if condition.lower() == "question":
-                move_on = await self.maybe_respond_to_user(
-                    last_bot_message, last_user_message
-                )
-                if not move_on:
-                    return
-                return await self.handle_state(state["edge"])
-            if condition.lower() == "none":
-                return await self.handle_state(state["edge"])
+            condition_no_punct = "".join(
+                [c for c in condition if c.isalpha() or c.isspace()]
+            ).lower()
+            if not last_tool_output:
+                question_key_no_punct = "".join(
+                    [c for c in question_key if c.isalpha() or c.isspace()]
+                ).lower()
+                continue_key_no_punct = "".join(
+                    [c for c in continue_key if c.isalpha() or c.isspace()]
+                ).lower()
+                switch_key_no_punct = "".join(
+                    [c for c in switch_key if c.isalpha() or c.isspace()]
+                ).lower()
+                response_condition_no_punct = "".join(
+                    [c for c in response["condition"] if c.isalpha() or c.isspace()]
+                ).lower()
 
-            for condition, next_state_id in state["condition"][
-                "caseToStateId"
+                if condition_no_punct == question_key_no_punct:
+                    move_on = await self.maybe_respond_to_user(
+                        last_bot_message, last_user_message
+                    )
+                    if not move_on:
+                        return
+                    return await self.handle_state(state["edge"])
+                if condition_no_punct == continue_key_no_punct:
+                    return await self.handle_state(state["edge"])
+                if condition_no_punct == switch_key_no_punct:
+                    return await self.choose_block(state=None)
+            for condition, next_state_label in state["condition"][
+                "conditionToStateLabel"
             ].items():
-                if condition.lower() == response["condition"].lower():
+                if (
+                    "".join(
+                        [c for c in condition if c.isalpha() or c.isspace()]
+                    ).lower()
+                    == response_condition_no_punct
+                ):
+                    next_state_id = self.label_to_state_id[next_state_label]
                     return await self.handle_state(next_state_id)
             return await self.handle_state(state["edge"])
         except Exception as e:
@@ -439,7 +470,7 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
         # TODO: HERE we need to actually run it
         self.update_history(
             "action-finish",
-            f"Action '{action_name}' with input '{input}' completed with result: {output}",
+            f"Action Completed: '{action_name}' completed with the following result:\ninput:'{input}'\noutput:\n{output}",
         )
         # it seems to continue on an on
         if state["edge"] == "start":
@@ -474,10 +505,10 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
             "   Response: Proceed with the next step of the current workflow without additional commentary\n"
             "- 'PAUSE' the current process if the user asked a question of their own\n"
             "   Response: If the user didn't answer, politely restate the question and ask for a clear answer.\n"
-            "             If the user asked a question, answer it concisely and ask if they're ready to continue.\n"
-            "             Pause without suggesting any actions or offering alternatives.\n"
-            "- 'SWITCH' to a different process if current process is not relevant\n"
-            "   Response: Acknowledge the user's request and ask for clarification on what they'd like to do instead"
+            "             If the user asked a question, provide a concise answer and then pause.\n"
+            "             Ensure not to suggest any actions or offer alternatives.\n"
+            "- 'SWITCH' to a different process if current process is not relevant or the user changes the subject\n"
+            "   Response: Switch to a different process without additional commentary\n"
         )
         self.logger.info(f"Prompt: {prompt}")
         # we do not care what it has to say when switching or continuing
@@ -495,6 +526,14 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
         output = eval(output.replace("'None'", "'none'").replace("None", "'none'"))
         if "PAUSE" in output:
             self.update_history("message.bot", output["PAUSE"])
+
+            async def resume(user_response):
+                # Handle the user's response and move to the next state
+                next_state_id = self.current_state["edge"]
+                self.current_state = None  # Reset current state
+                return await self.handle_state(next_state_id)
+
+            self.resume = resume
             return False
         self.logger.info(f"falling back with {output}")
         return True
