@@ -317,8 +317,9 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
                 index += 1
 
         if len(ai_options) == 0:
-            raise "invalid options state with no options"
-        elif len(ai_options) == 1:
+            raise Exception("invalid options state with no options")
+
+        if len(ai_options) == 1:
             single_condition = ai_options[0]
             response = await self.call_ai(
                 f"Your previous statement was: '{last_bot_message}', to which the user replied: '{last_user_message}'.\n\nBased on your instructions and the context, assess whether the condition named '{single_condition}' currently applies.\n\n- If it is valid, provide the exact name of the condition.\n- If it does not apply, provide 'none'.\n- In the event that the user's reply is a question, provide 'question'.",
