@@ -57,7 +57,7 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
         self.twilio_sid = None
         self.block_inputs = False  # independent of interruptions, actions cannot be interrupted when a starting phrase is present
         self.stop = False
-        self.chat_history = []
+        self.chat_history = [("message.bot", self.agent_config.initial_message)]
         if "medusa" in self.agent_config.model_name.lower():
             self.base_url = getenv("AI_API_HUGE_BASE")
             self.model = getenv("AI_MODEL_NAME_HUGE")
@@ -138,7 +138,7 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
             else:
                 self.resume = await self.resume(None)
         elif not self.resume:
-            self.resume = await self.handle_state("start", True)
+            self.resume = await self.handle_state("start", False)
         return "", True
 
     async def print_start_message(self, state, start: bool):
