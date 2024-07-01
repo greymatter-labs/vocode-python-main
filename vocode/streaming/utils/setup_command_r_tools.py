@@ -112,6 +112,22 @@ all_optional_tools = {
             }
         },
     },
+    ActionType.CALL_ZAP: {
+        "name": "call_zap",
+        "description": "Calls a Zapier webhook with the provided parameters and returns the response",
+        "parameter_definitions": {
+            "url": {
+                "description": "The Zapier webhook URL",
+                "type": "str",
+                "required": True,
+            },
+            "params": {
+                "description": "The parameters to be sent to the Zapier webhook",
+                "type": "dict",
+                "required": True,
+            },
+        },
+    },
     ActionType.SEND_TEXT: {
         "name": "sms",
         "description": "Send an sms to the provided phone number.",
