@@ -138,15 +138,11 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
             else:
                 self.resume = await self.resume(None)
         elif not self.resume:
-            if not human_input:
-                self.resume = await self.handle_state("start", True)
-            else:
-                self.resume = await self.choose_block(state=self.current_state)
+            self.resume = await self.handle_state("start", True)
         return "", True
 
-    async def print_start_message(self, state):
-        self.logger.info(f"Current State: {state}")
-        if "start_message" in state:
+    async def print_start_message(self, state, start: bool):
+        if start and "start_message" in state:
             start_message = state["start_message"]
             if start_message["type"] == "verbatim":
                 self.update_history("message.bot", start_message["message"])
@@ -170,20 +166,13 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
         if not state_id:
             return
         state = self.state_machine["states"][state_id]
+        self.logger.info(f"Current State: {state}")
         self.current_state = state
 
         if state["type"] == "crossroads":
+            raise Exception("crossroads state is deprecated")
 
-            async def resume(human_input):
-                return await self.choose_block(state=state)
-
-            if start:
-                await self.print_start_message(state)
-                return resume
-            else:
-                return await resume("")
-
-        await self.print_start_message(state)
+        await self.print_start_message(state, start=start)
 
         if state["type"] == "basic":
             return await self.handle_state(state["edge"])
@@ -256,46 +245,6 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
         except Exception as e:
             self.logger.error(f"Agent could not respond: {e}")
 
-    async def choose_block(self, state=None, choose_from=None):
-        if state is None:
-            states = self.state_machine["states"][
-                self.state_machine["startingStateId"]
-            ]["edges"]
-        else:
-            if "edges" in state:
-                states = state["edges"]
-            else:
-                states = [state["edge"]]
-        # if choose_from is set, we will let it choose from all available
-        # aadd choose_from to the states list
-        if choose_from:
-            states += (
-                choose_from
-                + self.state_machine["states"][self.state_machine["startingStateId"]][
-                    "edges"
-                ]
-            )
-        states = list(set([s.split("::")[0] for s in states]))
-        # remove the start state from the list if it exists
-        if "start" in states:
-            states.remove("start")
-        if len(states) == 1:
-            next_state_id = states[0]
-            return await self.handle_state(next_state_id)
-        # if len is 0 then go to start
-        if len(states) == 0:
-            return await self.handle_state("start")
-        numbered_states = "\n".join([f"{i + 1}. {s}" for i, s in enumerate(states)])
-        prompt = f"Choose from the available states:\n{numbered_states}\nReturn just a single number corresponding to your choice."
-        streamed_choice = await self.call_ai(
-            prompt,
-        )
-        match = re.search(r"\d+", streamed_choice)
-        chosen_int = int(match.group()) if match else 1
-        next_state_id = states[chosen_int - 1]
-        self.logger.info(f"Chose {next_state_id}")
-        return await self.handle_state(next_state_id)
-
     async def handle_options(self, state):
         last_user_message_index = None
         last_user_message = None
@@ -327,7 +276,7 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
                 if role == "action-finish" and msg:
                     action_result_after_user_spoke = msg
                     break
-        tool = {"condition": "[insert the name of the condition that applies]"}
+        tool = {"condition": "[insert the number of the condition that applies]"}
 
         default_next_state = get_default_next_state(state)
         response_to_edge = {}
@@ -337,8 +286,9 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
         ]
 
         # add disambiguation edges unless we're at in the start state or an action just finished
+        self.logger.info(f"araus = {action_result_after_user_spoke} state id is {state['id']} and startingStateId is {self.state_machine['startingStateId']}")
         if (
-            state["id"] != self.state_machine["startingStateId"]
+            state["id"] != self.state_machine["startingStateId"] # state["id"] is 
             and not action_result_after_user_spoke
         ):
             edges.append(
@@ -373,7 +323,7 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
                 )
 
         index = 0
-        for dest_state_id, edge in state["edges"].items():
+        for dest_state_id, edge in edges:
             if "isDefault" not in edge or not edge["isDefault"]:
                 ai_option = {
                     "dest_state_id": dest_state_id,
@@ -386,8 +336,9 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
                 response_to_edge[edge["aiLabel"]] = (
                     ai_option  # in case the AI says the label not the number
                 )
+                 
                 ai_options.append(
-                    f"{index}: {edge.get('aiDescription', edge['aiLabel'])}"
+                    f"{index}: {edge.get('aiDescription', None) or edge.get('aiLabel', None)}"
                 )
                 index += 1
 
