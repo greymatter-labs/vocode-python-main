@@ -79,11 +79,7 @@ class SendHelloSugarDirections(
 
                 async with aiohttp.ClientSession(auth=auth) as session:
                     async with session.post(url, data=payload) as response:
-                        if response.status != 201:
-                            response = await response.text()
-                            return response
-                        else:
-                            return await response.json()
+                        return response
             except ValueError as e:
                 complete_error_message = f"Error finding location: {e}"
                 logging.error(complete_error_message)
@@ -97,7 +93,7 @@ class SendHelloSugarDirections(
     ) -> ActionOutput[SendHelloSugarDirectionsResponse]:
         to_phone = action_input.params.to_phone
         response = await self.send_hello_sugar_directions(to_phone)
-        if response and response.get('error_code'):
+        if response and 200 <= response.status < 300:
             return ActionOutput(
                 action_type=action_input.action_config.type,
                 response=SendHelloSugarDirectionsResponse(
