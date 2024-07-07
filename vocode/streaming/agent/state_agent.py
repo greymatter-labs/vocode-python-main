@@ -390,19 +390,12 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
         self.stop = False
         self.visited_states = {self.state_machine["startingStateId"]}
         self.chat_history = [("message.bot", self.agent_config.initial_message)]
-        if "medusa" in self.agent_config.model_name.lower():
-            self.base_url = getenv("AI_API_HUGE_BASE")
-            self.model = getenv("AI_MODEL_NAME_HUGE")
-        else:
-            self.base_url = getenv("AI_API_BASE")
-            self.model = getenv("AI_MODEL_NAME_LARGE")
-        key = getenv("AI_API_KEY")
+        self.base_url = getenv("AI_API_HUGE_BASE")
+        self.model = self.agent_config.model_name
         self.client = AsyncOpenAI(
             base_url=self.base_url,
-            api_key=key,
         )
 
-        self.logger.info(f"State machine: {self.state_machine}")
         self.overall_instructions = (
             self.agent_config.prompt_preamble
             + "\n"
