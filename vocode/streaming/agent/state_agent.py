@@ -163,7 +163,7 @@ async def handle_options(
     default_next_state = get_default_next_state(state)
     response_to_edge = {}
     ai_options = []
-    prev_state = state_history[-1]
+    prev_state = state_history[-1] if state_history else None
     logger.info(f"state edges {state}")
     edges = [
         edge
@@ -177,7 +177,7 @@ async def handle_options(
     )
     if (
         state["id"] != state_machine["startingStateId"]
-        and prev_state["type"] != "basic"
+        and (prev_state and prev_state["type"] != "basic")
         and not action_result_after_user_spoke
     ):
         edges.append(
