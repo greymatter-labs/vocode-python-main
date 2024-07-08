@@ -105,8 +105,12 @@ def translate_to_english(
 async def handle_question(
     state,
     go_to_state: Callable[[str], Awaitable[Any]],
+    speak_message: Callable[[Any], None],
     logger: logging.Logger,
 ):
+
+    await speak_message(state["question"])
+
     async def resume(human_input):
         logger.info(f"continuing at {state['id']} with user response {human_input}")
         return await go_to_state(get_default_next_state(state))
@@ -253,7 +257,7 @@ async def handle_options(
                 logger.info(
                     f"continuing at {state['id']} with user response {human_input}"
                 )
-                return await go_to_state(get_default_next_state(state))
+                return await go_to_state(state["id"])
 
             return resume
         return await go_to_state(next_state_id)
@@ -288,7 +292,10 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
         self.visited_states = {self.state_machine["startingStateId"]}
         self.chat_history = [("message.bot", self.agent_config.initial_message)]
         self.base_url = getenv("AI_API_HUGE_BASE")
-        self.model = self.agent_config.model_name or "accounts/fireworks/models/qwen2-72b-instruct"
+        self.model = (
+            self.agent_config.model_name
+            or "accounts/fireworks/models/qwen2-72b-instruct"
+        )
         self.client = AsyncOpenAI(
             base_url=self.base_url,
         )
@@ -328,12 +335,14 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
 
     async def print_start_message(self, state, start: bool):
         if start and "start_message" in state:
-            start_message = state["start_message"]
-            if start_message["type"] == "verbatim":
-                self.update_history("message.bot", start_message["message"])
-            else:
-                guide = start_message["description"]
-                await self.guided_response(guide)
+            await self.print_message(state["start_message"])
+
+    async def print_message(self, message):
+        if message["type"] == "verbatim":
+            self.update_history("message.bot", message["message"])
+        else:
+            guide = message["description"]
+            await self.guided_response(guide)
 
     # recursively traverses the state machine
     # if it returns a function, call that function on the next human input to resume traversal
@@ -354,6 +363,7 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
 
         go_to_state = lambda s: self.handle_state(s)
         speak = lambda text: self.update_history("message.bot", text)
+        speak_message = lambda message: self.print_message(message)
         call_ai = lambda prompt, tool, stop=None: self.call_ai(prompt, tool, stop)
 
         if state["type"] == "question":
@@ -372,6 +382,7 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
             return await handle_question(
                 state=state,
                 go_to_state=go_to_state,
+                speak_message=speak_message,
                 logger=self.logger,
             )
 
