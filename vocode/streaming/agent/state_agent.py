@@ -104,7 +104,7 @@ def translate_to_english(
 
 async def handle_question(
     state,
-    go_to_state: Callable[[str], Awaitable[Any]],
+    go_to_state: Callable[[str, List[str]], Awaitable[Any]],
     speak_message: Callable[[Any], None],
     logger: logging.Logger,
     state_history: List[str]
@@ -121,7 +121,7 @@ async def handle_question(
 
 async def handle_options(
     state: Any,
-    go_to_state: Callable[[str], Awaitable[Any]],
+    go_to_state: Callable[[str, List[str]], Awaitable[Any]],
     speak: Callable[[str], None],
     call_ai: Callable[[str, Dict[str, Any], Optional[str]], Awaitable[str]],
     state_machine: Any,
@@ -265,7 +265,7 @@ async def handle_options(
                 return await go_to_state(state["id"], next_state_history)
 
             return resume
-        return await go_to_state(next_state_id)
+        return await go_to_state(next_state_id, next_state_history)
     except Exception as e:
         logger.error(f"Agent chose no condition: {e}. Response was {response}")
         return await go_to_state(default_next_state, next_state_history)
@@ -366,7 +366,7 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
         if state["type"] == "basic":
             return await self.handle_state(state["edge"], state_history + [state["id"]])
 
-        go_to_state = lambda s: self.handle_state(s)
+        go_to_state = lambda s, h: self.handle_state(s, h)
         speak = lambda text: self.update_history("message.bot", text)
         speak_message = lambda message: self.print_message(message)
         call_ai = lambda prompt, tool, stop=None: self.call_ai(prompt, tool, stop)
