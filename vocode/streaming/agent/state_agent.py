@@ -177,7 +177,7 @@ async def handle_options(
     )
     if (
         state["id"] != state_machine["startingStateId"]
-        and (prev_state and prev_state["type"] != "basic")
+        and (prev_state and prev_state["type"] == "question")
         and not action_result_after_user_spoke
     ):
         edges.append(
