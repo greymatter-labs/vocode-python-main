@@ -107,14 +107,14 @@ async def handle_question(
     go_to_state: Callable[[str, List[str]], Awaitable[Any]],
     speak_message: Callable[[Any], None],
     logger: logging.Logger,
-    state_history: List[str]
+    state_history: List[Any]
 ):
 
     await speak_message(state["question"])
 
     async def resume(human_input):
         logger.info(f"continuing at {state['id']} with user response {human_input}")
-        return await go_to_state(get_default_next_state(state), state_history + [state["id"]])
+        return await go_to_state(get_default_next_state(state), state_history + [state])
 
     return resume
 
@@ -127,12 +127,12 @@ async def handle_options(
     state_machine: Any,
     get_chat_history: Callable[[], List[Tuple[str, str]]],
     logger: logging.Logger,
-    state_history: List[str],
+    state_history: List[Any],
 ):
     last_user_message_index = None
     last_user_message = None
     last_bot_message = state_machine["states"]["start"]["start_message"]["message"]
-    next_state_history = state_history + [state["id"]]
+    next_state_history = state_history + [state]
     action_result_after_user_spoke = None
     # Iterate through the chat history to find the last user message
     for i, (role, msg) in enumerate(reversed(get_chat_history())):
@@ -351,7 +351,7 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
 
     # recursively traverses the state machine
     # if it returns a function, call that function on the next human input to resume traversal
-    async def handle_state(self, state_id_or_label: str, state_history: List[str]):
+    async def handle_state(self, state_id_or_label: str, state_history: List[Any]):
         start = state_id_or_label not in self.visited_states
         self.visited_states.add(state_id_or_label)
         state = get_state(state_id_or_label, self.state_machine)
@@ -364,7 +364,7 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
         await self.print_start_message(state, start=start)
 
         if state["type"] == "basic":
-            return await self.handle_state(state["edge"], state_history + [state["id"]])
+            return await self.handle_state(state["edge"], state_history + [state])
 
         go_to_state = lambda s, h: self.handle_state(s, h)
         speak = lambda text: self.update_history("message.bot", text)
@@ -411,9 +411,9 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
         except Exception as e:
             self.logger.error(f"Agent could not respond: {e}")
 
-    async def compose_action(self, state, state_history: List[str]):
+    async def compose_action(self, state, state_history: List[Any]):
         action = state["action"]
-        next_state_history = state_history + [state["id"]]
+        next_state_history = state_history + [state]
         self.logger.info(f"Attempting to call: {action}")
         action_name = action["name"]
         action_config = self._get_action_config(action_name)
