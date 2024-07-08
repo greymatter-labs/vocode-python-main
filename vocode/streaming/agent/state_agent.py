@@ -288,7 +288,7 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
         super().__init__(agent_config=agent_config, logger=logger)
         self.state_machine = self.agent_config.user_json_prompt["converted"]
         self.current_state = None
-        self.resume = lambda _: self.handle_state(self.state_machine["startingStateId"])
+        self.resume = lambda _: self.handle_state(self.state_machine["startingStateId"], [])
         self.can_send = False
         self.conversation_id = None
         self.twilio_sid = None
