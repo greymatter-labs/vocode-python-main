@@ -20,6 +20,13 @@ from transformers import (
     AutoTokenizer,
 )
 
+from opentelemetry import trace
+from opentelemetry.trace import Span
+from vocode.streaming.utils.setup_tracer import start_span_in_ctx, span_event, end_span
+
+
+tracer = trace.get_tracer(__name__)
+
 HEADERS = {
     "Content-Type": "application/json",
     "Authorization": f"Bearer 'EMPTY'",
@@ -306,7 +313,14 @@ def format_commandr_chat_completion_from_transcript(
     return input_ids, merged_messages
 
 
-async def get_commandr_response(prompt_buffer: str, model: str, logger: Logger):
+async def get_commandr_response(
+    prompt_buffer: str, model: str, logger: Logger, span: Span
+):
+    get_commandr_response_span = start_span_in_ctx(
+        name="get_commandr_response",
+        parent_span=span,
+    )
+
     response_text = ""
     prompt_buffer = prompt_buffer.replace("directly_answer", "answer")
     prompt_buffer = prompt_buffer.replace("directly-answer", "answer")
@@ -348,12 +362,19 @@ async def get_commandr_response(prompt_buffer: str, model: str, logger: Logger):
                 )
     # remove end of turn
     response_text = response_text.replace("<|END_OF_TURN_TOKEN|>", "")
+    span_event(
+        span=get_commandr_response_span,
+        event_name="commandr_non_streaming_response",
+        event_data={"response": response_text},
+    )
+    end_span(get_commandr_response_span)
     return response_text
 
 
 async def get_commandr_response_streaming(
-    prompt_buffer: str, model: str, logger: Logger
+    prompt_buffer: str, model: str, logger: Logger, span: Span
 ):
+
     prompt_buffer = prompt_buffer.replace("directly_answer", "answer")
     prompt_buffer = prompt_buffer.replace("directly-answer", "answer")
     to_add = '''Action: ```json
@@ -383,8 +404,10 @@ async def get_commandr_response_streaming(
         async with session.post(
             f"{base_url}/completions", headers=HEADERS, json=data
         ) as response:
+
             # first yield out the prefix
             yield to_add
+
             # Since we are streaming, we need to process the response as it arrives
             async for chunk in response.content:
                 if chunk == b"\n":
@@ -405,12 +428,17 @@ async def get_commandr_response_streaming(
 
 
 async def get_commandr_response_chat_streaming(
-    transcript: Transcript, model: str, prompt_preamble: str, logger: Logger
+    transcript: Transcript, model: str, prompt_preamble: str, logger: Logger, span: Span
 ):
+    get_commandr_response_chat_streaming_span = start_span_in_ctx(
+        name="get_commandr_response_chat_streaming",
+        parent_span=span,
+    )
     prompt_buffer, messages = format_commandr_chat_completion_from_transcript(
         prompt_preamble=prompt_preamble,
         transcript=transcript,
     )
+    has_streamed = False
     # TODO: Change at some point, this is bc haproxy can't do ngrok
     if "medusa" in model.lower():
         base_url = getenv("AI_API_HUGE_BASE")
@@ -439,6 +467,13 @@ async def get_commandr_response_chat_streaming(
                     continue
                 chunk = chunk.decode("utf-8")
                 if chunk.startswith("data:"):
+                    if not has_streamed:
+                        has_streamed = True
+                        span_event(
+                            span=get_commandr_response_chat_streaming_span,
+                            event_name="streamed_response",
+                            event_data={"response": chunk},
+                        )
                     try:
                         json_payload = json.loads(chunk.lstrip("data:").rstrip("/n"))
                         text = json_payload.get("choices", "")[0].get("text", "")
@@ -447,3 +482,5 @@ async def get_commandr_response_chat_streaming(
                         )
                     except Exception as e:
                         logger.error(f"Error while processing response: {str(e)}")
+
+    end_span(get_commandr_response_chat_streaming_span)

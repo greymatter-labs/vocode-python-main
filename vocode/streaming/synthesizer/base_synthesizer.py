@@ -84,17 +84,20 @@ tracer = trace.get_tracer(__name__)
 
 class SynthesisResult:
     class ChunkResult:
-        def __init__(self, chunk: bytes, is_last_chunk: bool):
+        def __init__(self, chunk: bytes, is_first_chunk: bool, is_last_chunk: bool):
             self.chunk = chunk
+            self.is_first_chunk = is_first_chunk
             self.is_last_chunk = is_last_chunk
 
     def __init__(
         self,
         chunk_generator: AsyncGenerator[ChunkResult, None],
         get_message_up_to: Callable[[float], str],
+        span: Span,
     ):
         self.chunk_generator = chunk_generator
         self.get_message_up_to = get_message_up_to
+        self.span = span
 
 
 class FillerAudio:
@@ -123,14 +126,11 @@ class FillerAudio:
 
         async def chunk_generator(chunk_transform=lambda x: x):
             for i in range(0, len(self.audio_data), chunk_size):
-                if i + chunk_size > len(self.audio_data):
-                    yield SynthesisResult.ChunkResult(
-                        chunk_transform(self.audio_data[i:]), True
-                    )
-                else:
-                    yield SynthesisResult.ChunkResult(
-                        chunk_transform(self.audio_data[i : i + chunk_size]), False
-                    )
+                yield SynthesisResult.ChunkResult(
+                    chunk=chunk_transform(self.audio_data[i:]),
+                    is_last_chunk=i + chunk_size > len(self.audio_data),
+                    is_first_chunk=i == 0,
+                )
 
         if self.synthesizer_config.should_encode_as_wav:
             output_generator = chunk_generator(
@@ -236,6 +236,7 @@ class BaseSynthesizer(Generic[SynthesizerConfigType]):
         message: BaseMessage,
         chunk_size: int,
         bot_sentiment: Optional[BotSentiment] = None,
+        span: Optional[Span] = None,
     ) -> SynthesisResult:
         raise NotImplementedError
 
