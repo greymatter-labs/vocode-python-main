@@ -210,8 +210,6 @@ class StreamingConversation(Generic[OutputDeviceType]):
                 time_silent=self.time_silent,
             )
             current_phrase = self.chosen_affirmative_phrase
-            # if self.conversation.agent.agent_config.pending_action == "pending":
-
             event = self.interruptible_event_factory.create_interruptible_event(
                 payload=TranscriptionAgentInput(
                     transcription=transcription,
@@ -238,7 +236,9 @@ class StreamingConversation(Generic[OutputDeviceType]):
         async def process(self, transcription: Transcription):
             # Ignore the transcription if we are currently in-flight (i.e., the agent is speaking)
             # log the current transcript
-            if self.conversation.agent.block_inputs:
+            if (
+                self.conversation.agent.block_inputs
+            ):  # the two block inputs are different
                 self.conversation.logger.debug(
                     "Ignoring transcription since we are awaiting a tool call."
                 )
@@ -715,10 +715,12 @@ class StreamingConversation(Generic[OutputDeviceType]):
                     # Await the completion of the speech output task and retrieve the message sent and cutoff status.
                     message_sent, cut_off = await self.current_task
                     self.conversation.started_event.clear()
+                    self.current_task = None
                 except Exception as e:
                     # If an exception occurs, log it and set the message as cut off.
                     self.conversation.logger.debug(f"Detected Task cancelled: {e}")
                     message_sent, cut_off = "", True
+                    self.current_task = None
                     return
 
                 # Once the speech output is complete, publish the transcript message with the actual content spoken.
@@ -757,6 +759,7 @@ class StreamingConversation(Generic[OutputDeviceType]):
                         pass
             except asyncio.CancelledError:
                 # If the task was cancelled, do nothing.
+                self.current_task = None
                 pass
 
     def __init__(
@@ -989,6 +992,15 @@ class StreamingConversation(Generic[OutputDeviceType]):
     def mark_last_action_timestamp(self):
         self.last_action_timestamp = time.time()
 
+    def is_agent_speaking(self) -> bool:
+        """
+        Checks if the agent is currently speaking.
+        """
+        return (
+            self.synthesis_results_worker.current_task is not None
+            and not self.synthesis_results_worker.current_task.done()
+        )
+
     async def broadcast_interrupt(self):
         """Stops all inflight events and cancels all workers that are sending output
 
@@ -996,8 +1008,19 @@ class StreamingConversation(Generic[OutputDeviceType]):
         """
         self.logger.debug("Broadcasting interrupt")
         self.stop_event.set()
-        if isinstance(self.agent, CommandAgent) or isinstance(self.agent, StateAgent):
+        if isinstance(self.agent, CommandAgent):
             self.agent.stop = not self.agent.stop
+        elif isinstance(self.agent, StateAgent):
+            # Only call set_stop if the agent is not currently speaking
+            if not self.is_agent_speaking():
+                self.logger.debug(
+                    "NOT STOPPING BECAUSE AGENT IS NOT TALKING"
+                )  # on this one we would move back
+            else:
+                self.logger.debug(
+                    "STOPPING BECAUSE THE AGENT IS TALKING"
+                )  # we would stay in the same place here instead of notstopping we still want to stop
+                self.agent.set_stop()  # TODO: we want to instead have two types of stopping, moving back and staying still
 
         num_interrupts = 0
         while True:
