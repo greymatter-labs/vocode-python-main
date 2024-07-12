@@ -308,6 +308,7 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
         super().__init__(agent_config=agent_config, logger=logger)
         self.state_machine = self.agent_config.user_json_prompt["converted"]
         self.current_state = None
+        self.resume_task = None
         self.resume = lambda _: self.handle_state(
             self.state_machine["startingStateId"], []
         )
@@ -355,9 +356,9 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
         self.logger.info(
             f"[{self.agent_config.call_type}:{self.agent_config.current_call_id}] Lead:{human_input}"
         )
-        if self.resume:
-            self.resume = await self.resume(human_input)
-
+        if self.resume_task:
+            self.resume_task.cancel()
+        self.resume_task = asyncio.create_task(self.resume(human_input))
         return "", True
 
     async def print_start_message(self, state, start: bool):
@@ -588,3 +589,8 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
             self.action_factory.create_action(action_config).get_openai_function()
             for action_config in self.agent_config.actions
         ]
+
+    def set_stop(self):
+        if self.resume_task:
+            self.resume_task.cancel()
+            self.resume_task = None
