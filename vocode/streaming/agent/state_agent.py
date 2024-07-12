@@ -359,6 +359,10 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
         if self.resume_task:
             self.resume_task.cancel()
         self.resume_task = asyncio.create_task(self.resume(human_input))
+        try:
+            await self.resume_task
+        except asyncio.CancelledError:
+            self.logger.info(f"Resume task cancelled")
         return "", True
 
     async def print_start_message(self, state, start: bool):
