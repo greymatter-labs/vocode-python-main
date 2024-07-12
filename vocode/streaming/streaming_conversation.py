@@ -871,9 +871,12 @@ class StreamingConversation(Generic[OutputDeviceType]):
         self.logger.debug("Convo starting")
 
         self.transcriber.start()
+        self.transcriptions_worker.start()
+
         if self.agent.get_agent_config().call_type == CallType.INBOUND:
             self.transcriber.mute()
-        self.transcriptions_worker.start()
+        else:
+            self.transcriber.unmute()  # take in audio immediately in outbound
         self.agent_responses_worker.start()
         self.synthesis_results_worker.start()
         self.output_device.start()
@@ -1010,20 +1013,21 @@ class StreamingConversation(Generic[OutputDeviceType]):
         self.stop_event.set()
         if isinstance(self.agent, CommandAgent):
             self.agent.stop = not self.agent.stop
-        elif isinstance(self.agent, StateAgent):
-            # Only call set_stop if the agent is not currently speaking
-            if not self.is_agent_speaking():
-                self.logger.debug(
-                    "AGENT IS NOT TALKING"
-                )  # new note: we want to stop in both instances, on this one we stay and the one below we move forward
-                self.agent.set_stop()  # TODO: we want to instead have two types of stopping, moving back and staying still
+        # elif isinstance(self.agent, StateAgent):
+        #     # Only call set_stop if the agent is not currently speaking
+        #     if not self.is_agent_speaking():
+        #         self.logger.debug(
+        #             "AGENT IS NOT TALKING"
+        #         )  # new note: we want to stop in both instances, on this one we stay and the one below we move forward
+        #         self.agent.set_stop()  # TODO: we want to instead have two types of stopping, moving back and staying still
 
-            else:
-                self.logger.debug(
-                    "STOPPING BECAUSE THE AGENT IS TALKING"
-                )  # we would stay in the same place here instead of notstopping we still want to stop
-                self.agent.set_stop()  # TODO: we want to instead have two types of stopping, moving back and staying still
+        #     else:
+        #         self.logger.debug(
+        #             "STOPPING BECAUSE THE AGENT IS TALKING"
+        #         )  # we would stay in the same place here instead of notstopping we still want to stop
+        #         self.agent.set_stop()  # TODO: we want to instead have two types of stopping, moving back and staying still
 
+        # this above is done by just calling generate completion
         num_interrupts = 0
         while True:
             try:
@@ -1096,7 +1100,9 @@ class StreamingConversation(Generic[OutputDeviceType]):
         speech_data = bytearray()
         held_buffer = self.transcriptions_worker.buffer.to_message()
         # Asynchronously generate speech data from the synthesis result
+        time_started_speaking = 0
         buffer_cleared = False
+        moved_back = False
         async for chunk_result in synthesis_result.chunk_generator:
             if len(speech_data) > chunk_size:
                 self.transcriptions_worker.synthesis_done = True
@@ -1115,10 +1121,25 @@ class StreamingConversation(Generic[OutputDeviceType]):
                     for _ in range(1):
                         # Check if the stop event is set before sending each piece
                         if stop_event.is_set():
+                            if (
+                                time.time() - time_started_speaking < 1
+                                and isinstance(self.agent, StateAgent)
+                                and not moved_back
+                            ):
+                                self.logger.debug(
+                                    "moving back because agent hasn't been talking long and had already moved forward"
+                                )
+                                moved_back = True
+                                self.agent.move_back_state()
+                            if time.time() - time_started_speaking >= 1:
+                                # dont move back but set flag so we dont too
+                                moved_back = True
                             return "", False
                         # Calculate the size of each piece
                         piece_size = len(speech_data) // 1
                         # Send the piece to the output device
+                        if time_started_speaking == 0:
+                            time_started_speaking = time.time()
                         await self.output_device.consume_nonblocking(
                             speech_data[:piece_size]
                         )
@@ -1136,6 +1157,20 @@ class StreamingConversation(Generic[OutputDeviceType]):
                     if not buffer_cleared and not stop_event.is_set():
                         buffer_cleared = True
                         self.transcriptions_worker.buffer.clear()
+                    elif stop_event.is_set():
+                        if (
+                            time.time() - time_started_speaking < 1
+                            and isinstance(self.agent, StateAgent)
+                            and not moved_back
+                        ):
+                            self.logger.debug(
+                                "moving back because agent hasn't been talking long and had already moved forward"
+                            )
+                            moved_back = True
+                            self.agent.move_back_state()
+                        if time.time() - time_started_speaking >= 1:
+                            # dont move back but set flag so we dont too
+                            moved_back = True
                 else:
                     self.transcriptions_worker.buffer.clear()
                     self.mark_last_action_timestamp()
@@ -1163,6 +1198,16 @@ class StreamingConversation(Generic[OutputDeviceType]):
             # Calculate the remaining time to sleep based on a 16k chunk size
             remaining_time_to_sleep = (chunk_size - len(speech_data)) / 16000.0
         else:
+            if (
+                time.time() - time_started_speaking < 1
+                and isinstance(self.agent, StateAgent)
+                and not moved_back
+            ):
+                self.logger.debug(
+                    "moving back because agent hasn't been talking long and had already moved forward"
+                )
+                moved_back = True
+                self.agent.move_back_state()
             self.logger.debug("Interrupted speech output on the last chunk")
             return "", False
 
@@ -1234,6 +1279,9 @@ class StreamingConversation(Generic[OutputDeviceType]):
 
         # Reset the synthesis done flag and prepare for the next synthesis
         self.transcriptions_worker.synthesis_done = False
+        if stop_event.is_set() and not moved_back:
+            moved_back = True
+            self.agent.move_back_state()
 
         # Reset the transcription worker's flags and buffer status
         # check if there is more in the queue making this one be called again, if so, dont unblock
