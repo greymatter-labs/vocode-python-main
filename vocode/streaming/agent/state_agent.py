@@ -345,7 +345,7 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
             and not self.resume_task.done()
         ):  # if something in progress, we want to move back when cancelling
             self.resume_task.cancel()
-            self.move_back_state()
+            # self.move_back_state()
             try:
                 await self.resume_task
             except asyncio.CancelledError:
@@ -438,7 +438,7 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
         self.produce_interruptible_agent_response_event_nonblocking(
             AgentResponseMessage(message=BaseMessage(text=to_say_start))
         )
-        self.block_inputs = True
+        # self.block_inputs = True
         action_description = action["description"]
         params = action["params"]
 
@@ -516,6 +516,8 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
             [
                 f"{'Bot' if role == 'message.bot' else 'Human'}: {message.text if isinstance(message, BaseMessage) else message}"
                 for role, message in self.chat_history
+                if (isinstance(message, BaseMessage) and len(message.text) > 0)
+                or (not isinstance(message, BaseMessage) and len(str(message)) > 0)
             ]
         )
         if not tool or tool == {}:
@@ -572,12 +574,44 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
         ]
 
     def move_back_state(self):
-        if len(self.state_history) > 1:
-            self.state_history.pop()
-            previous_state = self.state_history[-1]
-            self.resume = lambda _: self.handle_state(previous_state["id"])
+        self.state_history.pop()
+        while len(self.state_history) > 2:
+            previous_state = self.state_history.pop()
+            if previous_state["type"] in ["question"]:
+                # We've found a state that waits for a response
+                previous_state = self.state_history.pop()
+                self.state_history.append(previous_state)
+                break
 
+        # Merge consecutive messages to enable easier removal of last two
+        merged_messages = []
+        for role, message in reversed(self.chat_history):
+            if merged_messages and merged_messages[-1][0] == role:
+                merged_messages[-1] = (
+                    role,
+                    f"{message} {merged_messages[-1][1]}",
+                )
+            else:
+                merged_messages.append((role, message))
+        # self.chat_history = list(reversed(merged_messages))
+        # Remove the latest bot message
+        for i, (role, message) in enumerate(reversed(self.chat_history)):
+            if role == "message.bot":
+                del self.chat_history[-(i + 1)]
+                break
+
+        if len(self.state_history) > 0:
+            self.resume = lambda _: self.handle_state(self.state_history[-1]["id"])
+        else:
+            self.resume = lambda _: self.handle_state(
+                self.state_machine["startingStateId"]
+            )
+
+    # this might not be needed.
     def restore_resume_state(self):
         if self.state_history:
             current_state = self.state_history[-1]
-            self.resume = lambda _: self.handle_state(current_state["id"])
+            if "edge" in current_state:
+                self.resume = lambda _: self.handle_state(current_state["edge"])
+            else:
+                self.resume = lambda _: self.handle_state("start")
