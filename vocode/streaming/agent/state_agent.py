@@ -574,25 +574,36 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
         ]
 
     def move_back_state(self):
-        self.state_history.pop()
-        while len(self.state_history) > 2:
-            previous_state = self.state_history.pop()
-            if previous_state["type"] in ["question"]:
-                # We've found a state that waits for a response
-                previous_state = self.state_history.pop()
-                self.state_history.append(previous_state)
-                break
+        # Remove the current state
+        if self.state_history:
+            self.state_history.pop()
 
-        # Merge consecutive messages to enable easier removal of last two
+        # Find the last question state
+        while self.state_history:
+            previous_state = self.state_history[-1]
+            if previous_state["type"] == "question":
+                break
+            self.state_history.pop()
+
+        # Merge consecutive messages of the same role
         merged_messages = []
-        for role, message in reversed(self.chat_history):
+        for role, message in self.chat_history:
             if merged_messages and merged_messages[-1][0] == role:
-                merged_messages[-1] = (
-                    role,
-                    f"{message} {merged_messages[-1][1]}",
-                )
+                if isinstance(merged_messages[-1][1], BaseMessage):
+                    merged_messages[-1] = (
+                        role,
+                        BaseMessage(
+                            text=f"{merged_messages[-1][1].text} {message.text if isinstance(message, BaseMessage) else message}"
+                        ),
+                    )
+                else:
+                    merged_messages[-1] = (
+                        role,
+                        f"{merged_messages[-1][1]} {message.text if isinstance(message, BaseMessage) else message}",
+                    )
             else:
                 merged_messages.append((role, message))
+        self.chat_history = merged_messages
         # self.chat_history = list(reversed(merged_messages))
         # Remove the latest bot message
         for i, (role, message) in enumerate(reversed(self.chat_history)):
@@ -600,7 +611,8 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
                 del self.chat_history[-(i + 1)]
                 break
 
-        if len(self.state_history) > 0:
+        # Set the resume state
+        if self.state_history:
             self.resume = lambda _: self.handle_state(self.state_history[-1]["id"])
         else:
             self.resume = lambda _: self.handle_state(
