@@ -167,7 +167,7 @@ async def handle_options(
     )
     if (
         state["id"] != state_machine["startingStateId"]
-        and (prev_state and prev_state["type"] == "question")
+        and (prev_state and "question" in prev_state["id"].lower())
         and not action_result_after_user_spoke
     ):
         if len(edges) > 0:
@@ -588,29 +588,61 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
         # Merge consecutive messages of the same role
         merged_messages = []
         for role, message in self.chat_history:
+            current_message = (
+                message.text if isinstance(message, BaseMessage) else message
+            )
             if merged_messages and merged_messages[-1][0] == role:
-                if isinstance(merged_messages[-1][1], BaseMessage):
+                last_message = merged_messages[-1][1]
+                if isinstance(last_message, BaseMessage):
                     merged_messages[-1] = (
                         role,
-                        BaseMessage(
-                            text=f"{merged_messages[-1][1].text} {message.text if isinstance(message, BaseMessage) else message}"
-                        ),
+                        BaseMessage(text=f"{last_message.text} {current_message}"),
                     )
                 else:
-                    merged_messages[-1] = (
-                        role,
-                        f"{merged_messages[-1][1]} {message.text if isinstance(message, BaseMessage) else message}",
-                    )
+                    merged_messages[-1] = (role, f"{last_message} {current_message}")
             else:
-                merged_messages.append((role, message))
+                if isinstance(message, BaseMessage):
+                    merged_messages.append((role, BaseMessage(text=current_message)))
+                else:
+                    merged_messages.append((role, current_message))
+
+        # Log the merged messages for debugging
+        self.logger.info(f"Merged messages: {merged_messages}")
         self.chat_history = merged_messages
         # self.chat_history = list(reversed(merged_messages))
-        # Remove the latest bot message
-        for i, (role, message) in enumerate(reversed(self.chat_history)):
-            if role == "message.bot":
-                del self.chat_history[-(i + 1)]
-                break
+        # Remove everything after the second to latest user message and replace the second to latest with the removed latest
+        user_messages = [
+            i for i, (role, _) in enumerate(merged_messages) if role == "human"
+        ]
+        if len(user_messages) >= 2:
+            second_last_user_index = user_messages[-2]
+            last_user_index = user_messages[-1]
+            merged_messages[second_last_user_index] = merged_messages[last_user_index]
+            self.chat_history = merged_messages[: second_last_user_index + 1]
+        else:
+            self.chat_history = merged_messages
+        merged_messages = []
+        for role, message in self.chat_history:
+            current_message = (
+                message.text if isinstance(message, BaseMessage) else message
+            )
+            if merged_messages and merged_messages[-1][0] == role:
+                last_message = merged_messages[-1][1]
+                if isinstance(last_message, BaseMessage):
+                    merged_messages[-1] = (
+                        role,
+                        BaseMessage(text=f"{last_message.text} {current_message}"),
+                    )
+                else:
+                    merged_messages[-1] = (role, f"{last_message} {current_message}")
+            else:
+                if isinstance(message, BaseMessage):
+                    merged_messages.append((role, BaseMessage(text=current_message)))
+                else:
+                    merged_messages.append((role, current_message))
 
+        # Log the merged messages for debugging
+        self.chat_history = merged_messages
         # Set the resume state
         if self.state_history:
             self.resume = lambda _: self.handle_state(self.state_history[-1]["id"])

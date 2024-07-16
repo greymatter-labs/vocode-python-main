@@ -220,10 +220,16 @@ class StreamingConversation(Generic[OutputDeviceType]):
                 ),
             )
             # wait until the time since last interrupt is at least 1.5 seconds
-            if self.conversation.interrupt_count > 1:
+            if self.conversation.interrupt_count == 2:
                 # while time.time() - self.conversation.interrupt_count < 1.5:
+                await asyncio.sleep(0.5)
+                self.conversation.logger.debug("Sleeping... recent interrupt")
+            if self.conversation.interrupt_count >= 1:
                 await asyncio.sleep(1)
-                self.conversation.logger.debug("Sleeping for recent interrupt")
+
+                self.conversation.logger.debug(
+                    "Sleeping for even longer... recent interrupt"
+                )
             # Place the event in the output queue for further processing
             self.output_queue.put_nowait(event)
 
@@ -1014,7 +1020,6 @@ class StreamingConversation(Generic[OutputDeviceType]):
 
         Returns true if any events were interrupted - which is used as a flag for the agent (is_interrupt)
         """
-        self.interrupt_count += 1
         self.logger.debug("Broadcasting interrupt")
         self.stop_event.set()
         if isinstance(self.agent, CommandAgent):
@@ -1115,6 +1120,8 @@ class StreamingConversation(Generic[OutputDeviceType]):
                 self.transcriptions_worker.synthesis_done = True
                 started_event.set()
             if stop_event.is_set() and self.agent.agent_config.allow_interruptions:
+                self.interrupt_count += 1
+
                 if not resumed and not moved_back and self.interrupt_count == 1:
                     self.agent.move_back_state()
                 return "", False
@@ -1130,6 +1137,8 @@ class StreamingConversation(Generic[OutputDeviceType]):
                     for _ in range(1):
                         # Check if the stop event is set before sending each piece
                         if stop_event.is_set():
+                            self.interrupt_count += 1
+
                             if (
                                 time.time() - time_started_speaking < 3
                                 and isinstance(self.agent, StateAgent)
@@ -1157,6 +1166,7 @@ class StreamingConversation(Generic[OutputDeviceType]):
                                 # dont move back but set flag so we dont too
                                 self.agent.restore_resume_state()
                                 resumed = True
+                                self.interrupt_count = 0
                             return "", False
                         # Calculate the size of each piece
                         piece_size = len(speech_data) // 1
@@ -1181,6 +1191,8 @@ class StreamingConversation(Generic[OutputDeviceType]):
                         buffer_cleared = True
                         self.transcriptions_worker.buffer.clear()
                     elif stop_event.is_set():
+                        self.interrupt_count += 1
+
                         if (
                             time.time() - time_started_speaking < 3
                             and isinstance(self.agent, StateAgent)
@@ -1202,6 +1214,7 @@ class StreamingConversation(Generic[OutputDeviceType]):
                             # dont move back but set flag so we dont too
                             self.agent.restore_resume_state()
                             resumed = True
+                            self.interrupt_count = 0
                 else:
                     self.transcriptions_worker.buffer.clear()
                     self.mark_last_action_timestamp()
@@ -1231,6 +1244,8 @@ class StreamingConversation(Generic[OutputDeviceType]):
             # Calculate the remaining time to sleep based on a 16k chunk size
             remaining_time_to_sleep = (chunk_size - len(speech_data)) / 16000.0
         else:
+            self.interrupt_count += 1
+
             if (
                 time.time() - time_started_speaking < 3
                 and isinstance(self.agent, StateAgent)
@@ -1253,6 +1268,7 @@ class StreamingConversation(Generic[OutputDeviceType]):
         ):
             self.agent.restore_resume_state()
             resumed = True
+        self.interrupt_count = 0
 
         self.transcriptions_worker.synthesis_done = True
 
@@ -1328,6 +1344,7 @@ class StreamingConversation(Generic[OutputDeviceType]):
         if not moved_back and not resumed:
             self.agent.restore_resume_state()
             resumed = True
+            self.interrupt_count = 0
 
         # Reset the transcription worker's flags and buffer status
         # check if there is more in the queue making this one be called again, if so, dont unblock
