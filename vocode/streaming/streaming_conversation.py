@@ -1239,7 +1239,8 @@ class StreamingConversation(Generic[OutputDeviceType]):
                     # - Buffer Time [s]: Time to process the chunk, prevents blips in the audio output
 
                     await asyncio.sleep(
-                        (len(speech_data) / chunk_size) - PER_CHUNK_ALLOWANCE_SECONDS
+                        ((len(speech_data) / chunk_size) - PER_CHUNK_ALLOWANCE_SECONDS)
+                        * TEXT_TO_SPEECH_CHUNK_SIZE_SECONDS
                     )
                     speech_data = bytearray()
                     if not buffer_cleared:
