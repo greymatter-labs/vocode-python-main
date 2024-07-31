@@ -10,8 +10,10 @@ class StateAgentTranscriptEntry(BaseModel):
    message: str
    timestamp: str
 
-   def __init__(self):
+   def __init__(self, role, message):
       self.timestamp = datetime.datetime.now().isoformat()
+      self.role = role
+      self.message = message
 
 class StateAgentTranscript(JsonTranscript):
    version: str = "StateAgent_v0" 
