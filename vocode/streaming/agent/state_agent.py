@@ -13,6 +13,7 @@ from vocode.streaming.agent.base_agent import (
 from vocode.streaming.models.agent import CommandAgentConfig
 from vocode.streaming.models.message import BaseMessage
 from vocode.streaming.models.actions import ActionInput
+from vocode.streaming.models.state_agent_transcript import StateAgentTranscript, StateAgentTranscriptEntry
 from vocode.streaming.transcriber.base_transcriber import Transcription
 from vocode.streaming.models.events import Sender
 from pydantic import BaseModel, Field
@@ -315,6 +316,7 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
         self.client = AsyncOpenAI(
             base_url=self.base_url,
         )
+        self.json_transcript = StateAgentTranscript()
 
         self.overall_instructions = (
             self.agent_config.prompt_preamble
@@ -325,10 +327,14 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
 
     def update_history(self, role, message):
         self.chat_history.append((role, message))
+        self.transcript.entries.append(StateAgentTranscriptEntry(role=role, message=message))
         if role == "message.bot":
             self.produce_interruptible_agent_response_event_nonblocking(
                 AgentResponseMessage(message=BaseMessage(text=message))
             )
+        
+    def get_json_transcript(self):
+        return self.json_transcript
 
     def get_latest_bot_message(self):
         for role, message in reversed(self.chat_history):

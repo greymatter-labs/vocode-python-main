@@ -179,6 +179,9 @@ class BaseAgent(AbstractAgent[AgentConfigType], InterruptibleWorker):
 
     def attach_transcript(self, transcript: Transcript):
         self.transcript = transcript
+    
+    def get_json_transcript(self):
+        return None
 
     def attach_conversation_state_manager(
         self, conversation_state_manager: ConversationStateManager

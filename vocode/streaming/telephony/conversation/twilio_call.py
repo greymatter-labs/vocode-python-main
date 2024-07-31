@@ -174,6 +174,7 @@ class TwilioCall(Call[TwilioOutputDevice]):
                     telephony_id=data["stop"]["callSid"],
                     call_status=CallStatus.ENDED_BEFORE_TRANSFER,
                     call_type=self.agent.agent_config.call_type,
+                    json_transcript=self.agent.get_json_transcript()
                 )
             )
             send_call_end_notification_task = asyncio.create_task(
