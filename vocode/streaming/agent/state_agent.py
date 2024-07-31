@@ -309,10 +309,7 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
         self.state_history = []
         self.chat_history = [("message.bot", self.agent_config.initial_message)]
         self.base_url = getenv("AI_API_HUGE_BASE")
-        self.model = (
-            self.agent_config.model_name
-            or "accounts/fireworks/models/qwen2-72b-instruct"
-        )
+        self.model = self.agent_config.model_name
         self.client = AsyncOpenAI(
             base_url=self.base_url,
         )
