@@ -2,10 +2,10 @@ from typing import Any, Dict, List
 from pydantic import BaseModel
 import datetime
 
-class JsonTranscript:
+class JsonTranscript(BaseModel):
    version: str
 
-class StateAgentTranscriptEntry:
+class StateAgentTranscriptEntry(BaseModel):
    role: str
    message: str
    timestamp: str = datetime.datetime.now().isoformat()
