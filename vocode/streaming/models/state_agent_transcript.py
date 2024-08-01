@@ -8,12 +8,16 @@ class JsonTranscript(TypedDict):
 class StateAgentTranscriptEntry(TypedDict):
    role: str
    message: str
-   timestamp: str = datetime.datetime.now().isoformat()
+   timestamp: str
 
    def __init__(self, role: str, message: str):
       self.role = role
       self.message = message
+      self.timestamp = datetime.datetime.now().isoformat()
 
 class StateAgentTranscript(JsonTranscript):
-   version: str = "StateAgent_v0" 
-   entries: List[StateAgentTranscriptEntry] = []
+   entries: List[StateAgentTranscriptEntry]
+
+   def __init__(self):
+      self.version = "StateAgent_v0" 
+      self.entries = []
