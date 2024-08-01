@@ -2,16 +2,13 @@ from typing import Any, Dict, List
 from pydantic import BaseModel
 import datetime
 
-class JsonTranscript(BaseModel):
+class JsonTranscript:
    version: str
 
-class StateAgentTranscriptEntry(BaseModel):
+class StateAgentTranscriptEntry:
    role: str
    message: str
    timestamp: str = datetime.datetime.now().isoformat()
-
-   # def __init__(self, role: str, message: str):
-   #    super().__init__(role=role, message=message, timestamp=datetime.datetime.now().isoformat())
 
 class StateAgentTranscript(JsonTranscript):
    version: str = "StateAgent_v0" 
