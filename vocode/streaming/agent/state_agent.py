@@ -324,7 +324,7 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
 
     def update_history(self, role, message):
         self.chat_history.append((role, message))
-        self.json_transcript.entries.append(StateAgentTranscriptEntry(role=role, message=message))
+        self.json_transcript["entries"].append(StateAgentTranscriptEntry(role=role, message=message))
         if role == "message.bot":
             self.produce_interruptible_agent_response_event_nonblocking(
                 AgentResponseMessage(message=BaseMessage(text=message))
