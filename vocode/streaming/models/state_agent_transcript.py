@@ -2,22 +2,18 @@ from typing import Any, Dict, List, TypedDict
 from pydantic import BaseModel
 import datetime
 
-class JsonTranscript(TypedDict):
+class JsonTranscript(BaseModel):
    version: str
 
-class StateAgentTranscriptEntry(TypedDict):
+class StateAgentTranscriptEntry(BaseModel):
    role: str
    message: str
-   timestamp: str
+   timestamp: str = datetime.datetime.now().isoformat()
 
    def __init__(self, role: str, message: str):
       self.role = role
       self.message = message
-      self.timestamp = datetime.datetime.now().isoformat()
 
 class StateAgentTranscript(JsonTranscript):
-   entries: List[StateAgentTranscriptEntry]
-
-   def __init__(self):
-      self.version = "StateAgent_v0" 
-      self.entries = []
+   version: str = "StateAgent_v0"
+   entries: List[StateAgentTranscriptEntry] = []
