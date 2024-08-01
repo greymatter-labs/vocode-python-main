@@ -1,11 +1,11 @@
-from typing import Any, Dict, List
+from typing import Any, Dict, List, TypedDict
 from pydantic import BaseModel
 import datetime
 
-class JsonTranscript:
+class JsonTranscript(TypedDict):
    version: str
 
-class StateAgentTranscriptEntry:
+class StateAgentTranscriptEntry(TypedDict):
    role: str
    message: str
    timestamp: str = datetime.datetime.now().isoformat()
