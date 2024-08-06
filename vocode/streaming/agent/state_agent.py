@@ -13,7 +13,14 @@ from vocode.streaming.agent.base_agent import (
 from vocode.streaming.models.agent import CommandAgentConfig
 from vocode.streaming.models.message import BaseMessage
 from vocode.streaming.models.actions import ActionInput
-from vocode.streaming.models.state_agent_transcript import StateAgentTranscript, StateAgentTranscriptActionError, StateAgentTranscriptActionInvoke, StateAgentTranscriptEntry, StateAgentTranscriptHandleState, StateAgentTranscriptInvariantViolation
+from vocode.streaming.models.state_agent_transcript import (
+    StateAgentTranscript,
+    StateAgentTranscriptActionError,
+    StateAgentTranscriptActionInvoke,
+    StateAgentTranscriptEntry,
+    StateAgentTranscriptHandleState,
+    StateAgentTranscriptInvariantViolation,
+)
 from vocode.streaming.transcriber.base_transcriber import Transcription
 from vocode.streaming.models.events import Sender
 from pydantic import BaseModel, Field
@@ -325,12 +332,14 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
     def update_history(self, role, message):
         self.chat_history.append((role, message))
         self.logger.info(f"json t is {self.json_transcript}")
-        self.json_transcript.entries.append(StateAgentTranscriptEntry(role=role, message=message))
+        self.json_transcript.entries.append(
+            StateAgentTranscriptEntry(role=role, message=message)
+        )
         if role == "message.bot":
             self.produce_interruptible_agent_response_event_nonblocking(
                 AgentResponseMessage(message=BaseMessage(text=message))
             )
-        
+
     def get_json_transcript(self):
         return self.json_transcript
 
@@ -388,9 +397,15 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
         self.current_state = state
 
         if not state:
-            self.json_transcript.entries.append(StateAgentTranscriptInvariantViolation(message=f"state {state_id_or_label} does not exist"))
+            self.json_transcript.entries.append(
+                StateAgentTranscriptInvariantViolation(
+                    message=f"state {state_id_or_label} does not exist"
+                )
+            )
             return
-        self.json_transcript.entries.append(StateAgentTranscriptHandleState(state_id=state["id"]))
+        self.json_transcript.entries.append(
+            StateAgentTranscriptHandleState(state_id=state["id"])
+        )
 
         self.state_history.append(state)
         self.logger.info(f"Current State: {state}")
@@ -434,7 +449,11 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
                 return await self.compose_action(state)
             except Exception as e:
                 # invariant violation, not action error, because compose_action is supposed to do it's own error handling
-                self.json_transcript.entries.append(StateAgentTranscriptInvariantViolation(message=f"uncaught exception in compose_action. State is {state}"))
+                self.json_transcript.entries.append(
+                    StateAgentTranscriptInvariantViolation(
+                        message=f"uncaught exception in compose_action. State is {state}"
+                    )
+                )
 
     async def guided_response(self, guide):
         tool = {"response": "[insert your response]"}
@@ -454,7 +473,12 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
 
     async def compose_action(self, state):
         action = state["action"]
-        self.json_transcript.entries.append(StateAgentTranscriptActionInvoke(state_id=state["id"], action_name=action["name"]))
+        self.json_transcript.entries.append(
+            StateAgentTranscriptActionInvoke(
+                state_id=state["id"],
+                action_name=action.get("name", "action has no name"),
+            )
+        )
         self.state_history.append(state)
         self.logger.info(f"Attempting to call: {action}")
         action_name = action["name"]
@@ -471,10 +495,7 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
 
         async def saveActionResultAndMoveOn(action_result: str):
             self.block_inputs = False
-            self.update_history(
-                "action-finish",
-                action_result
-            )
+            self.update_history("action-finish", action_result)
             return await self.handle_state(state["edge"])
 
         if params:
@@ -509,8 +530,16 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
         try:
             action = self.action_factory.create_action(action_config)
         except Exception as e:
-            self.json_transcript.entries.append(StateAgentTranscriptActionError(state_id=state["id"], action_name=action_name, raw_error_message=e, debug_message=f"Failed to instantiate action. Action config was {action_config}"))
-            return saveActionResultAndMoveOn(action_result=f"action {action_name} failed to run due to an internal error")
+            self.json_transcript.entries.append(
+                StateAgentTranscriptActionError(
+                    action_name=action_name or "action has no name",
+                    message=f"Failed to instantiate action. Action config was {action_config}",
+                    raw_error_message=str(e),
+                )
+            )
+            return saveActionResultAndMoveOn(
+                action_result=f"action {action_name} failed to run due to an internal error"
+            )
 
         action_input: ActionInput
         if isinstance(action, TwilioPhoneCallAction):
@@ -531,8 +560,16 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
                     user_message_tracker=None,
                 )
             except Exception as e:
-                self.json_transcript.entries.append(StateAgentTranscriptActionError(state_id=state["id"], action_name=action_name, raw_error_message=e, debug_message=f"Failed to instantiate action input. Params were {params}"))
-                return saveActionResultAndMoveOn(action_result=f"action {action_name} failed to run due to an internal error")
+                self.json_transcript.entries.append(
+                    StateAgentTranscriptActionError(
+                        action_name=action_name or "an action has no name",
+                        message=f"Failed to instantiate action input. Params were {params}",
+                        raw_error_message=str(e),
+                    )
+                )
+                return saveActionResultAndMoveOn(
+                    action_result=f"action {action_name} failed to run due to an internal error"
+                )
 
         async def run_action_and_return_input(action, action_input):
             action_output = await action.run(action_input)
@@ -549,9 +586,17 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
         try:
             input, output = await run_action_and_return_input(action, action_input)
         except Exception as e:
-            self.json_transcript.entries.append(StateAgentTranscriptActionError(state_id=state["id"], action_name=action_name, raw_error_message=e, debug_message=f"Failed to run action. Raw input was {action_input}"))
+            self.json_transcript.entries.append(
+                StateAgentTranscriptActionError(
+                    action_name=action_name,
+                    message=f"Failed to run action. Raw input was {action_input}",
+                    raw_error_message=str(e),
+                )
+            )
 
-        return saveActionResultAndMoveOn(f"Action Completed: '{action_name}' completed with the following result:\ninput:'{input}'\noutput:\n{output}")
+        return saveActionResultAndMoveOn(
+            f"Action Completed: '{action_name}' completed with the following result:\ninput:'{input}'\noutput:\n{output}"
+        )
 
     async def call_ai(self, prompt, tool=None, stop=None):
         stop_tokens = stop if stop is not None else []
