@@ -5,35 +5,33 @@ import re
 from enum import Enum
 from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple
 
-from vocode.streaming.agent.base_agent import (
-    RespondAgent,
-    AgentInput,
-    AgentResponseMessage,
-)
-from vocode.streaming.models.agent import CommandAgentConfig
-from vocode.streaming.models.message import BaseMessage
-from vocode.streaming.models.actions import ActionInput
-from vocode.streaming.models.state_agent_transcript import (
-    StateAgentTranscript,
-    StateAgentTranscriptActionError,
-    StateAgentTranscriptActionInvoke,
-    StateAgentTranscriptEntry,
-    StateAgentTranscriptHandleState,
-    StateAgentTranscriptInvariantViolation,
-)
-from vocode.streaming.transcriber.base_transcriber import Transcription
-from vocode.streaming.models.events import Sender
-from pydantic import BaseModel, Field
 from openai import AsyncOpenAI
+from pydantic import BaseModel, Field
 from vocode import getenv
 from vocode.streaming.action.phone_call_action import (
     TwilioPhoneCallAction,
     VonagePhoneCallAction,
 )
-
-from vocode.streaming.agent.utils import (
-    translate_message,
+from vocode.streaming.agent.base_agent import (
+    AgentInput,
+    AgentResponseMessage,
+    RespondAgent,
 )
+from vocode.streaming.agent.utils import translate_message
+from vocode.streaming.models.actions import ActionInput
+from vocode.streaming.models.agent import CommandAgentConfig
+from vocode.streaming.models.events import Sender
+from vocode.streaming.models.message import BaseMessage
+from vocode.streaming.models.state_agent_transcript import (
+    StateAgentTranscript,
+    StateAgentTranscriptActionError,
+    StateAgentTranscriptActionInvoke,
+    StateAgentTranscriptHandleState,
+    StateAgentTranscriptInvariantViolation,
+    StateAgentTranscriptMessage,
+)
+from vocode.streaming.transcriber.base_transcriber import Transcription
+from vocode.streaming.utils.conversation_logger_adapter import wrap_logger
 from vocode.streaming.utils.find_sparse_subarray import find_last_sparse_subarray
 
 
@@ -329,11 +327,61 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
         )
         self.label_to_state_id = self.state_machine["labelToStateId"]
 
+    def update_state_from_transcript(self, transcript: StateAgentTranscript):
+        self.json_transcript = transcript
+        self.chat_history = []
+        self.state_history = []
+        self.visited_states = set()
+        self.current_state = None
+
+        for entry in transcript.entries:
+            type_of_entry = type(entry)
+            self.logger.info(f"Type of entry: {type_of_entry}")
+            if isinstance(entry, StateAgentTranscriptHandleState):
+                state_id = entry.state_id
+                state = get_state(state_id, self.state_machine)
+                if state:
+                    self.state_history.append(state)
+                    self.visited_states.add(state_id)
+                    self.current_state = state
+                    self.logger.info(f"Updated state: {state_id}")
+            elif isinstance(entry, StateAgentTranscriptMessage):
+                role = entry.role
+                message = entry.message
+                if role in [
+                    "human",
+                    "message.bot",
+                    "action-finish",
+                ]:
+                    if len(message.strip()) > 0:
+                        self.chat_history.append((role, message))
+                        self.logger.info(
+                            f"Added chat history entry: {role} - {message}"
+                        )
+
+            elif isinstance(entry, StateAgentTranscriptActionInvoke):
+                self.logger.info(f"Action invoked: {entry}")
+            elif isinstance(entry, StateAgentTranscriptActionError):
+                self.logger.error(
+                    f"Action error in transcript: {entry.raw_error_message}"
+                )
+            elif isinstance(entry, StateAgentTranscriptInvariantViolation):
+                self.logger.error(f"Invariant violation in transcript: {entry.message}")
+            else:
+                self.logger.warning(f"Unknown entry type: {type(entry)}")
+
+        # Update the resume function based on the final state
+        self.logger.debug(f"State history: {self.state_history}")
+
+        self.logger.debug(
+            f"Updated state from transcript. Chat history: {self.chat_history}"
+        )
+
     def update_history(self, role, message):
         self.chat_history.append((role, message))
         self.logger.info(f"json t is {self.json_transcript}")
         self.json_transcript.entries.append(
-            StateAgentTranscriptEntry(role=role, message=message)
+            StateAgentTranscriptMessage(role=role, message=message)
         )
         if role == "message.bot":
             self.produce_interruptible_agent_response_event_nonblocking(
