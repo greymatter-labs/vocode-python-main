@@ -546,7 +546,10 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
                 finalized_params.update(ai_filled_params)
 
         if action_name.lower() == "zapier":
-            exposed_app_action_id = finalized_params.pop("exposed_app_action_id", None)
+            exposed_app_action_id = finalized_params.pop(
+                "exposed_app_action_id",
+                finalized_params.pop("action_id", finalized_params.pop("id", None)),
+            )
             if exposed_app_action_id:
                 params = {
                     "exposed_app_action_id": exposed_app_action_id,
