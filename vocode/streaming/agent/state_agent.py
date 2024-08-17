@@ -376,7 +376,6 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
         self.logger.debug(
             f"Updated state from transcript. Chat history: {self.chat_history}"
         )
-        self.conversation_id = "1"
 
     def update_history(self, role, message):
         self.chat_history.append((role, message))

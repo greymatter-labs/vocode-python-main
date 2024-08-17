@@ -77,7 +77,7 @@ class ChatConversation:
             self.output_queue = output_queue
             self.conversation = conversation
             self.interruptible_event_factory = interruptible_event_factory
-            self.agent = agent
+            self.conversation_id = conversation.conversation_id
 
         async def process(self, transcription: Transcription):
             # Strip the transcription message and log the time silent
@@ -149,7 +149,7 @@ class ChatConversation:
                         f"Agent: {agent_response_message.message.text}"
                     )
 
-                    self.produce_nonblocking(agent_response_message)
+                    self.output_queue.put_nowait(agent_response_message)
             except asyncio.CancelledError:
                 self.conversation.logger.debug("Agent responses worker cancelled")
 
@@ -164,13 +164,12 @@ class ChatConversation:
 
         self.agent = agent
         self.conversation_id = conversation_id
+        self.agent.conversation_id = conversation_id
         self.logger = wrap_logger(logger, conversation_id=conversation_id)
         self.stop_event = threading.Event()
         self.started_event = threading.Event()
-        self.message_queue = message_queue or queue.Queue[Transcription]
-        self.agent_message_output_queue = (
-            agent_message_output_queue or queue.Queue[AgentResponseMessage]
-        )
+        self.message_queue = message_queue or queue.Queue()
+        self.agent_message_output_queue = agent_message_output_queue or queue.Queue()
         self.agent.attach_transcript(Transcript())
         self.interruptible_events: queue.Queue[InterruptibleEvent] = queue.Queue()
         self.interruptible_event_factory = self.QueueingInterruptibleEventFactory(
@@ -181,7 +180,7 @@ class ChatConversation:
         self.prompt_worker = self.PromptWorker(
             conversation=self,
             agent=self.agent,
-            input_queue=self.message_queue(),
+            input_queue=asyncio.Queue(),
             output_queue=self.agent.get_input_queue(),
             interruptible_event_factory=self.interruptible_event_factory,
         )
@@ -189,7 +188,7 @@ class ChatConversation:
         self.agent_responses_worker = self.AgentResponsesWorker(
             conversation=self,
             input_queue=self.agent.get_output_queue(),
-            output_queue=self.agent_message_output_queue(),
+            output_queue=asyncio.Queue(),
             interruptible_event_factory=self.interruptible_event_factory,
         )
 
@@ -234,7 +233,7 @@ class ChatConversation:
             f"Conversation Agent State: {self.agent.get_json_transcript()}"
         )
         self.agent_response_tracker.clear()
-        self.prompt_worker.consume_nonblocking(item=transcription)
+        await self.prompt_worker.input_queue.put(transcription)
         await self.agent_response_tracker.wait()
 
     def mark_last_action_timestamp(self):
