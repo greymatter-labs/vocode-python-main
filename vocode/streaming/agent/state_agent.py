@@ -376,6 +376,7 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
         self.logger.debug(
             f"Updated state from transcript. Chat history: {self.chat_history}"
         )
+        self.conversation_id = "1"
 
     def update_history(self, role, message):
         self.chat_history.append((role, message))
@@ -742,10 +743,14 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
         assert self.agent_config.actions
         if not self.action_factory:
             return None
-        return [
-            self.action_factory.create_action(action_config).get_openai_function()
-            for action_config in self.agent_config.actions
-        ]
+
+        functions = []
+        for action_config in self.agent_config.actions:
+            if action_config is not None:
+                action = self.action_factory.create_action(action_config)
+                if action is not None:
+                    functions.append(action.get_openai_function())
+        return functions
 
     def move_back_state(self):
         # Remove the current state
