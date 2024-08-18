@@ -131,6 +131,7 @@ async def handle_options(
     last_user_message_index = None
     last_user_message = None
     last_bot_message = state_machine["states"]["start"]["start_message"]["message"]
+    truly_last_bot_message = None
     action_result_after_user_spoke = None
     next_state_history = state_history + [state]
 
@@ -155,6 +156,11 @@ async def handle_options(
             if role == "action-finish" and msg:
                 action_result_after_user_spoke = msg
                 break
+
+    for role, msg in reversed(get_chat_history()):
+        if role == "message.bot" and msg:
+            truly_last_bot_message = msg
+            break
     tool = {"condition": "[insert the number of the condition that applies]"}
 
     default_next_state = get_default_next_state(state)
@@ -240,6 +246,16 @@ async def handle_options(
         f"{ai_options_str}\n\n"
         "Always return a number from the above list. Return the number of the condition that best applies."
     )
+    if truly_last_bot_message:
+        prompt = (
+            f"Bot's last statement: '{last_bot_message}'\n"
+            f"User's response: '{last_user_message}'\n"
+            f"{'Last tool output: ' + action_result_after_user_spoke if action_result_after_user_spoke else ''}\n\n"
+            f"Bot is thinking: '{truly_last_bot_message}'\n"
+            "Identify the number associated with the most fitting condition from the list below:\n"
+            f"{ai_options_str}\n\n"
+            "Always return a number from the above list. Return the number of the condition that best applies."
+        )
     logger.info(f"AI prompt constructed: {prompt}")
     response = await call_ai(
         prompt,
@@ -428,6 +444,9 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
         return "", True
 
     async def print_start_message(self, state, start: bool):
+        if "start_message" in state:
+            if state["start_message"]["type"] != "verbatim":
+                start = True  # no need to skip the print if its relative since it wont be repetitive
         if start and "start_message" in state:
             await self.print_message(state["start_message"])
 
@@ -499,7 +518,7 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
                 # invariant violation, not action error, because compose_action is supposed to do it's own error handling
                 self.json_transcript.entries.append(
                     StateAgentTranscriptInvariantViolation(
-                        message=f"uncaught exception in compose_action. State is {state}"
+                        message=f"uncaught exception in compose_action. State is {state} and error is {e}"
                     )
                 )
 
@@ -510,14 +529,36 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
             tool,
         )
         self.logger.info(f"Guided response: {message}")
-        message = message[message.find("{") : message.find("}") + 1]
-        self.logger.info(f"Guided response2: {message}")
+        first_brace = message.find("{")
+        last_brace = message.rfind("}")
+        message_to_parse = (
+            message[first_brace : last_brace + 1]
+            if first_brace != -1 and last_brace != -1
+            else message
+        )
+        self.logger.info(f"Guided response2: {message_to_parse}")
         try:
-            message = parse_llm_dict(message)
-            self.update_history("message.bot", message["response"])
-            return message.get("response")
+            message_to_parse = parse_llm_dict(message_to_parse)
+            self.update_history("message.bot", message_to_parse["response"])
+            return message_to_parse.get("response")
         except Exception as e:
-            self.logger.error(f"Agent could not respond: {e}")
+            self.logger.error(
+                f"Agent did not respond with a dictionary: {e}. Possible complexity overload. Using as is."
+            )
+            # Look for opening and closing HTML tags
+            opening_tag = message.find("<")
+            closing_tag = message.rfind(">")
+            if opening_tag != -1 and closing_tag != -1 and closing_tag > opening_tag:
+                self.logger.error(
+                    f"Detected and extracting html tags from message: {message}"
+                )
+                # Extract content between the outermost HTML tags
+                message = message[opening_tag : closing_tag + 1]
+            # If no HTML tags found, use the message as is
+            # log the type
+            self.logger.error(f"Message: {message}")
+            self.update_history("message.bot", message)
+            return message
 
     async def compose_action(self, state):
         action = state["action"]
@@ -568,7 +609,7 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
                 else:
                     dict_to_fill[param_name] = "[insert value]"
                     param_descriptions.append(
-                        f"'{param_name}': description: {param_info['description']}, type: '{param_info['type']}'"
+                        f"'{param_name}' - Description: {param_info['description']}, Type: '{param_info['type']}'"
                     )
 
             if dict_to_fill:
@@ -577,22 +618,26 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
                     prompt=f"Based on the current conversation and the instructions provided, return a python dictionary with values inserted for these parameters:\n{param_descriptions_str}",
                     tool=dict_to_fill,
                 )
-                self.logger.info(f"Filled params: {response}")
-                response = response[response.find("{") : response.find("}") + 1]
-                self.logger.info(f"Filled params: {response}")
+                self.logger.info(f"Raw AI response: {response}")
+                response = response[response.find("{") : response.rfind("}") + 1]
+                self.logger.info(f"Extracted dictionary: {response}")
+
                 try:
-                    ai_filled_params = parse_llm_dict(response)
+                    ai_filled_params = eval(response)
                 except Exception as e:
-                    response = await self.call_ai(
-                        prompt=f"You must return a dictionary as described. Provide the values for these parameters based on the current conversation and the instructions provided: {param_descriptions_str}",
-                        tool=dict_to_fill,
+                    self.logger.error(
+                        f"Agent did not respond with a valid dictionary, trying to parse as JSON: {e}."
                     )
-                    self.logger.info(f"Filled params2: {response}")
-                    response = response[response.find("{") : response.find("}") + 1]
+                    # response = await self.call_ai(
+                    #     prompt=f"You must return a valid Python dictionary. Provide the values for these parameters based on the current conversation and the instructions provided: {param_descriptions_str}",
+                    #     tool=dict_to_fill,
+                    # )
+                    # self.logger.info(f"Second attempt raw response: {response}")
+                    # response = response[response.find("{") : response.rfind("}") + 1]
+                    # self.logger.info(f"Second attempt extracted dictionary: {response}")
                     ai_filled_params = parse_llm_dict(response)
 
                 finalized_params.update(ai_filled_params)
-
         if action_name.lower() == "zapier":
             exposed_app_action_id = finalized_params.pop(
                 "exposed_app_action_id",
@@ -601,13 +646,14 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
             if exposed_app_action_id:
                 params = {
                     "exposed_app_action_id": exposed_app_action_id,
-                    "params": json.dumps(finalized_params),
+                    "params": finalized_params,
                 }
             else:
-                params = {"params": json.dumps(finalized_params)}
+                params = {"params": finalized_params}
         else:
             params = finalized_params
-        self.logger.info(f"Parsed params: {params}")
+
+        self.logger.info(f"Final params for action {action_name}: {params}")
 
         try:
             action = self.action_factory.create_action(action_config)
@@ -684,7 +730,7 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
 
     async def call_ai(self, prompt, tool=None, stop=None):
         stop_tokens = stop if stop is not None else []
-        stop_tokens.append("}")
+        # stop_tokens.append("}")
         response_text = ""
         pretty_chat_history = "\n".join(
             [
@@ -707,7 +753,7 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
                 ],
                 stream=True,
                 temperature=0.1,
-                max_tokens=500,
+                max_tokens=4000,
             )
             async for chunk in stream:
                 text_chunk = chunk.choices[0].delta.content
@@ -728,7 +774,7 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
                 ],
                 stream=True,
                 temperature=0.1,
-                max_tokens=500,
+                max_tokens=4000,
             )
             async for chunk in stream:
                 text_chunk = chunk.choices[0].delta.content
