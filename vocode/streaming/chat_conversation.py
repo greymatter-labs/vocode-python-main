@@ -130,16 +130,6 @@ class ChatConversation:
                 agent_response_message = typing.cast(
                     AgentResponseMessage, agent_response
                 )
-                item.agent_response_tracker.set()
-
-                if not agent_response_message.message.text.strip() or not any(
-                    char.isalpha() or char.isdigit()
-                    for char in agent_response_message.message.text
-                ):
-                    self.conversation.logger.debug(
-                        f"Ignoring empty or non-letter agent response message: {agent_response_message.message.text}"
-                    )
-                    return
                 # get the prompt preamble
                 if isinstance(self.conversation.agent, StateAgent):
                     agent_response_message.message.text = (
@@ -148,10 +138,27 @@ class ChatConversation:
                     self.conversation.logger.info(
                         f"Agent: {agent_response_message.message.text}"
                     )
+                    if len(agent_response_message.message.text) > 0:
+                        await self.output_queue.put(agent_response_message)
+                        await asyncio.sleep(0.5)
+                if not agent_response_message.message.text.strip() or not any(
+                    char.isalpha() or char.isdigit()
+                    for char in agent_response_message.message.text
+                ):
+                    # wait for half a second
+                    await asyncio.sleep(0.5)
+                    # if the queue is empty, set the agent response tracker
+                    if self.output_queue.empty() and self.input_queue.empty():
+                        item.agent_response_tracker.set()
+                    self.conversation.logger.debug(
+                        f"Ignoring empty or non-letter agent response message: {agent_response_message.message.text}"
+                    )
+                    return
 
-                    self.output_queue.put_nowait(agent_response_message)
             except asyncio.CancelledError:
                 self.conversation.logger.debug("Agent responses worker cancelled")
+            except Exception as e:
+                self.conversation.logger.error(f"Error in agent responses worker: {e}")
 
     def __init__(
         self,

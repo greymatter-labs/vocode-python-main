@@ -395,11 +395,11 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
 
     def update_history(self, role, message):
         self.chat_history.append((role, message))
-        self.logger.info(f"json t is {self.json_transcript}")
+        # self.logger.info(f"json t is {self.json_transcript}")
         self.json_transcript.entries.append(
             StateAgentTranscriptMessage(role=role, message=message)
         )
-        if role == "message.bot":
+        if role == "message.bot" and len(message.strip()) > 0:
             self.produce_interruptible_agent_response_event_nonblocking(
                 AgentResponseMessage(message=BaseMessage(text=message))
             )
@@ -528,37 +528,17 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
             f"Draft a single response to the user based on the latest chat history, taking into account the following guidance:\n'{guide}'",
             tool,
         )
+        # replace all single quotes with double quotes
+        message = message.replace("'", '"')
+        # remove "{"response": ""
+        message = message.replace('{"response": "', "")
+        message = message.replace('"}', "")
+        # put the single quotes back
+        message = message.replace('"', "'")
+        message = message.strip()
         self.logger.info(f"Guided response: {message}")
-        first_brace = message.find("{")
-        last_brace = message.rfind("}")
-        message_to_parse = (
-            message[first_brace : last_brace + 1]
-            if first_brace != -1 and last_brace != -1
-            else message
-        )
-        self.logger.info(f"Guided response2: {message_to_parse}")
-        try:
-            message_to_parse = parse_llm_dict(message_to_parse)
-            self.update_history("message.bot", message_to_parse["response"])
-            return message_to_parse.get("response")
-        except Exception as e:
-            self.logger.error(
-                f"Agent did not respond with a dictionary: {e}. Possible complexity overload. Using as is."
-            )
-            # Look for opening and closing HTML tags
-            opening_tag = message.find("<")
-            closing_tag = message.rfind(">")
-            if opening_tag != -1 and closing_tag != -1 and closing_tag > opening_tag:
-                self.logger.error(
-                    f"Detected and extracting html tags from message: {message}"
-                )
-                # Extract content between the outermost HTML tags
-                message = message[opening_tag : closing_tag + 1]
-            # If no HTML tags found, use the message as is
-            # log the type
-            self.logger.error(f"Message: {message}")
-            self.update_history("message.bot", message)
-            return message
+        self.update_history("message.bot", message)
+        return message.strip()
 
     async def compose_action(self, state):
         action = state["action"]
@@ -582,9 +562,10 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
             if not action_config.starting_phrase or action_config.starting_phrase == "":
                 action_config.starting_phrase = "One moment please..."
             to_say_start = action_config.starting_phrase
-            self.produce_interruptible_agent_response_event_nonblocking(
-                AgentResponseMessage(message=BaseMessage(text=to_say_start))
-            )
+            if len(to_say_start.strip()) > 0:
+                self.produce_interruptible_agent_response_event_nonblocking(
+                    AgentResponseMessage(message=BaseMessage(text=to_say_start))
+                )
         except Exception as e:
             self.logger.error(f"Action config not found. Simulating action completion.")
             to_say_start = "One moment please..."
