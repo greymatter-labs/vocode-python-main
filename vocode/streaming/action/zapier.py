@@ -27,7 +27,7 @@ class ZapierActionConfig(ActionConfig, type=ActionType.ZAPIER):
 
 
 class ZapierParameters(BaseModel):
-    action_name: str = Field(..., description="The Zapier action name to be executed")
+    zapier_name: str = Field(..., description="The Zapier action name to be executed")
     params: dict = Field(
         ..., description="Parameters for the Zapier action as a DICT-encoded string"
     )
@@ -67,6 +67,7 @@ class Zapier(BaseAction[ZapierActionConfig, ZapierParameters, ZapierResponse]):
         self, action_id: str, params: Dict[str, Any]
     ) -> Dict[str, Any]:
         url = f"https://actions.zapier.com/api/v1/exposed/{action_id}/execute/"
+        logger.error(f"URL: {url}")
         headers = {
             "Content-Type": "application/json",
             "X-API-Key": self.action_config.api_key,
@@ -121,27 +122,30 @@ class Zapier(BaseAction[ZapierActionConfig, ZapierParameters, ZapierResponse]):
     async def run(
         self, action_input: ActionInput[ZapierParameters]
     ) -> ActionOutput[ZapierResponse]:
+        logger.debug(f"Action input: {action_input}")
         actions = await self.get_zapier_actions()
         action = next(
-            (a for a in actions if a.description == action_input.params.action_name),
+            (a for a in actions if a.description == action_input.params.zapier_name),
             None,
         )
+        logger.debug(f"Action: {action}")
 
         if not action:
+            logger.error(f"Action '{action_input.params.zapier_name}' not found")
             return ActionOutput(
                 action_type=action_input.action_config.type,
                 response=ZapierResponse(
                     status="error",
                     response={
-                        "error": f"Action '{action_input.params.action_name}' not found"
+                        "error": f"Action '{action_input.params.zapier_name}' not found"
                     },
                 ),
             )
-
         params = action_input.params.params
         response_content = await self.execute_zapier_action(
             action_id=action.id, params=params
         )
+        logger.debug(f"Response: {response_content}")
 
         return ActionOutput(
             action_type=action_input.action_config.type,

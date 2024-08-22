@@ -121,6 +121,11 @@ all_optional_tools = {
                 "type": "dict",
                 "required": True,
             },
+            "zapier_name": {
+                "description": "The name of the Zapier action to execute",
+                "type": "str",
+                "required": True,
+            },
         },
     },
     ActionType.SEND_TEXT: {
