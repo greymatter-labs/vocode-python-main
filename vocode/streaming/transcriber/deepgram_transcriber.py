@@ -164,7 +164,7 @@ class DeepgramTranscriber(BaseAsyncTranscriber[DeepgramTranscriberConfig]):
         # Convert to int16 or int8 for Silero VAD
         if self.transcriber_config.audio_encoding == AudioEncoding.LINEAR16:
             chunk = np.frombuffer(chunk, dtype=np.int16).astype(DTYPE).tobytes()
-        self.vad_queue.put(chunk)
+        self.vad_queue.put_nowait(chunk)  # Use put_nowait to avoid blocking
         super().send_audio(chunk)
 
     def terminate(self):
