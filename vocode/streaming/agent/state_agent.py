@@ -7,6 +7,7 @@ from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple
 
 from openai import AsyncOpenAI
 from pydantic import BaseModel, Field
+
 from vocode import getenv
 from vocode.streaming.action.phone_call_action import (
     TwilioPhoneCallAction,
@@ -167,16 +168,16 @@ async def handle_options(
     response_to_edge = {}
     ai_options = []
     prev_state = state_history[-1] if state_history else None
-    logger.info(f"state edges {state}")
+    # logger.info(f"state edges {state}")
     edges = [
         edge
         for edge in state["edges"]
         if (edge.get("aiLabel") or edge.get("aiDescription"))
     ]
 
-    logger.info(
-        f"araus = {action_result_after_user_spoke} state id is {state['id']} and startingStateId is {state_machine['startingStateId']}"
-    )
+    # logger.info(
+    #     f"araus = {action_result_after_user_spoke} state id is {state['id']} and startingStateId is {state_machine['startingStateId']}"
+    # )
     if (
         state["id"] != state_machine["startingStateId"]
         and (prev_state and "question" in prev_state["id"].lower())
@@ -256,7 +257,7 @@ async def handle_options(
             f"{ai_options_str}\n\n"
             "Always return a number from the above list. Return the number of the condition that best applies."
         )
-    logger.info(f"AI prompt constructed: {prompt}")
+    # logger.info(f"AI prompt constructed: {prompt}")
     response = await call_ai(
         prompt,
         tool,
@@ -389,9 +390,10 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
         # Update the resume function based on the final state
         self.logger.debug(f"State history: {self.state_history}")
 
-        self.logger.debug(
-            f"Updated state from transcript. Chat history: {self.chat_history}"
-        )
+        # self.logger.debug(
+        #     f"Updated state from transcript. Chat history: {self.chat_history}"
+        # )
+        self.logger.info(f"Updated state from transcript. Chat history: \n\n")
 
     def update_history(self, role, message):
         self.chat_history.append((role, message))
@@ -763,7 +765,8 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
         )
         if not tool or tool == {}:
             prompt = f"{self.overall_instructions}\n\n Given the chat history, follow the instructions.\nChat history:\n{pretty_chat_history}\n\n\nInstructions:\n{prompt}\n\nReturn a single response."
-            self.logger.debug(f"prompt is: {prompt}")
+            # self.logger.debug(f"prompt is: {prompt}")
+            self.logger.info(f"Prompt: \n\n{prompt}\n\n")
             stream = await self.client.chat.completions.create(
                 model=self.model,
                 messages=[
@@ -785,7 +788,8 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
                         break
         else:
             prompt = f"Given the chat history, follow the instructions.\nChat history:\n{pretty_chat_history}\n\n\nInstructions:\n{prompt}\nYour response must always be dictionary in the following format: {str(tool)}. Return just the dictionary without any additional commentary."
-            self.logger.debug(f"prompt is: {prompt}")
+            # self.logger.debug(f"prompt is: {prompt}")
+            self.logger.info(f"Prompt: \n\n")
 
             stream = await self.client.chat.completions.create(
                 model=self.model,

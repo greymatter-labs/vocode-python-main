@@ -2,15 +2,19 @@ import asyncio
 import audioop
 import json
 import logging
-from typing import Optional, List, Deque
-from urllib.parse import urlencode
 import queue
 import threading
-from collections import deque
 import time
+from collections import deque
+from typing import Deque, List, Optional
+from urllib.parse import urlencode
 
+import numpy as np
+import torch
 import websockets
 from openai import AsyncOpenAI, OpenAI
+from websockets.client import WebSocketClientProtocol
+
 from vocode import getenv
 from vocode.streaming.models.audio_encoding import AudioEncoding
 from vocode.streaming.models.transcriber import (
@@ -26,10 +30,6 @@ from vocode.streaming.transcriber.base_transcriber import (
     Transcription,
     meter,
 )
-from websockets.client import WebSocketClientProtocol
-
-import torch
-import numpy as np
 
 PUNCTUATION_TERMINATORS = [".", "!", "?"]
 MAX_SILENCE_DURATION = 2.0
@@ -46,7 +46,7 @@ CHANNELS = 1
 SAMPLE_RATE = 16000 if USE_INT16 else 8000
 DTYPE = np.int16 if USE_INT16 else np.int8
 CHUNK = 512 if USE_INT16 else 256
-WINDOWS = 3
+WINDOWS = 5
 WINDOW_SIZE = WINDOWS * SAMPLE_RATE // CHUNK  # 5 seconds window
 VAD_THRESHOLD = 0.75  # Adjust this threshold as needed
 
@@ -86,16 +86,14 @@ class DeepgramTranscriber(BaseAsyncTranscriber[DeepgramTranscriberConfig]):
         self.logger = logger or logging.getLogger(__name__)
         self.audio_cursor = 0.0
         self.openai_client = OpenAI(api_key="EMPTY", base_url=getenv("AI_API_BASE"))
-        self.vad_queue = queue.Queue()
+        self.vad_input_queue = queue.Queue()
+        self.vad_buffer = b""
         self.voiced_confidences: Deque[float] = deque([0.0] * WINDOWS, maxlen=WINDOWS)
         self.vad_thread = threading.Thread(target=self.vad_worker)
         self.vad_thread.start()
-        self.vad_buffer = b""
         self.last_vad_output_time = 0
 
     def int2float(self, sound):
-        if isinstance(sound, bytes):
-            sound = np.frombuffer(sound, dtype=DTYPE)
         abs_max = np.abs(sound).max()
         sound = sound.astype("float32")
         if abs_max > 0:
@@ -104,46 +102,84 @@ class DeepgramTranscriber(BaseAsyncTranscriber[DeepgramTranscriberConfig]):
         return sound
 
     def vad_worker(self):
+        CURSORINDEX = 0
         while not self._ended:
             try:
-                chunk = self.vad_queue.get(timeout=0.1)
-                self.vad_buffer += chunk
-                while len(self.vad_buffer) >= CHUNK:
-                    audio_chunk = self.vad_buffer[:CHUNK]
-                    self.vad_buffer = self.vad_buffer[CHUNK:]
-                    audio_float32 = self.int2float(audio_chunk)
-                    new_confidence = model(
-                        torch.from_numpy(audio_float32), SAMPLE_RATE
-                    ).item()
-                    self.voiced_confidences.append(new_confidence)
 
-                    # Calculate rolling average
-                    rolling_avg = sum(self.voiced_confidences) / len(
-                        self.voiced_confidences
+                CURSORINDEX += 1
+                chunk = self.vad_input_queue.get()
+
+                self.vad_buffer += chunk
+
+                if CURSORINDEX % 500 == 0:
+                    size = len(self.vad_buffer)
+                    self.logger.debug(
+                        f"""\n
+                        ----
+                        received: {CURSORINDEX}\n
+                        chunk_size: {len(chunk)}\n
+                        size: {size}\n
+                        ----
+                        """
                     )
 
-                    current_time = time.time()
-                    if (
-                        current_time - self.last_vad_output_time >= 1
-                        and rolling_avg > 0.75
-                    ):
-                        self.logger.debug(f"SPEAKING: {rolling_avg}")
-                        self.output_queue.put_nowait(
-                            Transcription(
-                                message="vad",
-                                confidence=rolling_avg,
-                                is_final=False,
-                            )
+                while len(self.vad_buffer) >= CHUNK:
+                    # Get the current chunk from the VAD buffer of size CHUNK
+                    audio_chunk = self.vad_buffer[:CHUNK]
+
+                    self.vad_buffer = self.vad_buffer[CHUNK:]
+
+                    audio_int = np.frombuffer(audio_chunk, DTYPE)
+                    audio_float32 = self.int2float(audio_int)
+
+                    if audio_float32 is not None:
+                        new_confidence = model(
+                            torch.from_numpy(audio_float32), SAMPLE_RATE
+                        ).item()
+                        self.voiced_confidences.append(new_confidence)
+
+                        # Calculate rolling average
+                        rolling_avg = sum(self.voiced_confidences) / len(
+                            self.voiced_confidences
                         )
-                        self.last_vad_output_time = current_time
-                        # reset the rolling average
-                        self.voiced_confidences = deque([0.0] * WINDOWS, maxlen=WINDOWS)
-                    # else:
-                    # self.logger.debug(f"SILENT: {rolling_avg}")
+
+                        current_time = time.time()
+                        if (
+                            current_time - self.last_vad_output_time >= 2
+                            and rolling_avg > 0.75
+                        ):
+                            self.logger.debug(
+                                f"""\n\n------[VAD] SPEAKING with \n\t\tconfidence: {rolling_avg}
+                                \n\t\ttime since last: {current_time - self.last_vad_output_time}
+                                \n\t\tsize of buffer: {len(self.vad_buffer)}------\n\n"""
+                            )
+
+                            self.output_queue.put_nowait(
+                                Transcription(
+                                    message="vad",
+                                    confidence=rolling_avg,
+                                    is_final=False,
+                                )
+                            )
+                            self.last_vad_output_time = time.time()
+                            # reset the rolling average
+                            self.logger.debug(
+                                "Sent VAD at %s",
+                                time.strftime(
+                                    "%Y-%m-%d %H:%M:%S", time.localtime(current_time)
+                                ),
+                            )
+                        else:
+                            if rolling_avg > 0.20:
+                                self.logger.debug(
+                                    f"Not sending VAD, ROLLING AVG: {rolling_avg: 0.2f}"
+                                )
+                    else:
+                        self.logger.warning("Warning: Empty audio chunk detected")
 
             except queue.Empty:
                 pass
-            except ValueError as e:
+            except Exception as e:
                 self.logger.warning(f"VAD error: {str(e)}")
 
     async def _run_loop(self):
@@ -172,7 +208,7 @@ class DeepgramTranscriber(BaseAsyncTranscriber[DeepgramTranscriberConfig]):
         # Convert to int16 or int8 for Silero VAD
         if self.transcriber_config.audio_encoding == AudioEncoding.LINEAR16:
             chunk = np.frombuffer(chunk, dtype=np.int16).astype(DTYPE).tobytes()
-        self.vad_queue.put_nowait(chunk)  # Use put_nowait to avoid blocking
+        self.vad_input_queue.put_nowait(chunk)
         super().send_audio(chunk)
 
     def terminate(self):
@@ -317,19 +353,18 @@ class DeepgramTranscriber(BaseAsyncTranscriber[DeepgramTranscriberConfig]):
                     time_silent = self.calculate_time_silent(data)
                     top_choice = data["channel"]["alternatives"][0]
                     confidence = top_choice["confidence"]
-                    current_time = time.time()
-                    if current_time - last_output_time >= 1:
-                        self.output_queue.put_nowait(
-                            Transcription(
-                                message=json.dumps(
-                                    top_choice
-                                ),  # since we're doing interim results, we can just send the whole data dict
-                                confidence=confidence,
-                                is_final=is_final,
-                                time_silent=time_silent,
-                            )
+
+                    self.output_queue.put_nowait(
+                        Transcription(
+                            message=json.dumps(
+                                top_choice
+                            ),  # since we're doing interim results, we can just send the whole data dict
+                            confidence=confidence,
+                            is_final=is_final,
+                            time_silent=time_silent,
                         )
-                        last_output_time = current_time
+                    )
+
                 self.logger.debug("Terminating Deepgram transcriber receiver")
 
             await asyncio.gather(sender(ws), receiver(ws))

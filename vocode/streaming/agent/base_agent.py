@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import asyncio
-from enum import Enum
 import json
 import logging
 import random
+import typing
+from enum import Enum
 from typing import (
+    TYPE_CHECKING,
     AsyncGenerator,
     Generator,
     Generic,
@@ -13,11 +15,11 @@ from typing import (
     Tuple,
     TypeVar,
     Union,
-    TYPE_CHECKING,
 )
-import typing
+
 from opentelemetry import trace
 from opentelemetry.trace import Span
+
 from vocode.streaming.action.factory import ActionFactory
 from vocode.streaming.action.phone_call_action import (
     TwilioPhoneCallAction,
@@ -30,7 +32,6 @@ from vocode.streaming.models.actions import (
     FunctionCall,
     FunctionFragment,
 )
-
 from vocode.streaming.models.agent import (
     AgentConfig,
     ChatGPTAgentConfig,
@@ -40,10 +41,11 @@ from vocode.streaming.models.agent import (
 from vocode.streaming.models.message import BaseMessage
 from vocode.streaming.models.model import BaseModel, TypedModel
 from vocode.streaming.models.state_agent_transcript import JsonTranscript
+from vocode.streaming.models.transcript import Transcript
 from vocode.streaming.transcriber.base_transcriber import Transcription
 from vocode.streaming.utils import remove_non_letters_digits
 from vocode.streaming.utils.goodbye_model import GoodbyeModel
-from vocode.streaming.models.transcript import Transcript
+from vocode.streaming.utils.setup_tracer import end_span, span_event, start_span_in_ctx
 from vocode.streaming.utils.worker import (
     InterruptibleAgentResponseEvent,
     InterruptibleEvent,
@@ -71,6 +73,7 @@ class AgentInput(TypedModel, type=AgentInputType.BASE.value):
     vonage_uuid: Optional[str]
     twilio_sid: Optional[str]
     agent_response_tracker: Optional[asyncio.Event] = None
+    span: Optional[Span] = None
 
     class Config:
         arbitrary_types_allowed = True
@@ -180,7 +183,7 @@ class BaseAgent(AbstractAgent[AgentConfigType], InterruptibleWorker):
 
     def attach_transcript(self, transcript: Transcript):
         self.transcript = transcript
-    
+
     def get_json_transcript(self) -> Optional[JsonTranscript]:
         return None
 
@@ -217,11 +220,18 @@ class RespondAgent(BaseAgent[AgentConfigType]):
         conversation_id = agent_input.conversation_id
         tracer_name_start = await self.get_tracer_name_start()
 
-        agent_span = tracer.start_span(
-            f"{tracer_name_start}.generate_total"  # type: ignore
+        tracer_name_start = await self.get_tracer_name_start()
+
+        agent_span = start_span_in_ctx(
+            name=f"{tracer_name_start}.generate_total",
+            parent_span=agent_input.span,
+            attributes={
+                "message": transcription.message,
+            },
         )
-        agent_span_first = tracer.start_span(
-            f"{tracer_name_start}.generate_first"  # type: ignore
+        agent_span_first = start_span_in_ctx(
+            name=f"{tracer_name_start}.generate_first",
+            parent_span=agent_input.span,
         )
         if not transcription:
             self.logger.debug("No transcription, skipping response generation")

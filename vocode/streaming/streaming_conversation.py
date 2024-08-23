@@ -1,67 +1,33 @@
 from __future__ import annotations
-from copy import deepcopy
 
 import asyncio
-from enum import Enum
 import json
+import logging
 import math
 import queue
 import random
 import threading
-from typing import Any, Awaitable, Callable, Generic, Optional, Tuple, TypeVar, cast
-import logging
 import time
 import typing
-import numpy
-import requests
+from copy import deepcopy
+from enum import Enum
+from typing import Any, Awaitable, Callable, Generic, Optional, Tuple, TypeVar, cast
+
 import aiohttp
 import httpx
-
-from telephony_app.models.call_type import CallType
-from vocode import getenv
+import numpy
+import requests
 from openai import AsyncOpenAI, OpenAI
+from opentelemetry import trace
+from opentelemetry.exporter.cloud_trace import CloudTraceSpanExporter
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import BatchSpanProcessor, ConsoleSpanExporter
+from opentelemetry.trace import Span, Status, StatusCode
+from telephony_app.models.call_type import CallType
+from telephony_app.utils.call_information_handler import update_call_transcripts
 
-
+from vocode import getenv
 from vocode.streaming.action.worker import ActionsWorker
-
-from vocode.streaming.agent.bot_sentiment_analyser import (
-    BotSentimentAnalyser,
-)
-from vocode.streaming.agent.command_agent import CommandAgent
-from vocode.streaming.agent.state_agent import StateAgent
-from vocode.streaming.models.actions import ActionInput
-from vocode.streaming.models.events import Sender
-from vocode.streaming.models.transcript import (
-    Message,
-    Transcript,
-    TranscriptCompleteEvent,
-)
-from vocode.streaming.models.message import BaseMessage
-from vocode.streaming.models.transcriber import EndpointingConfig, TranscriberConfig
-from vocode.streaming.output_device.base_output_device import BaseOutputDevice
-from vocode.streaming.utils.conversation_logger_adapter import wrap_logger
-from vocode.streaming.utils.events_manager import EventsManager
-from vocode.streaming.utils.goodbye_model import GoodbyeModel
-
-from vocode.streaming.models.agent import CommandAgentConfig, FillerAudioConfig
-from vocode.streaming.models.synthesizer import (
-    SentimentConfig,
-)
-
-from vocode.streaming.agent.utils import (
-    format_openai_chat_messages_from_transcript,
-    collate_response_async,
-    openai_get_tokens,
-    translate_message,
-    vector_db_result_to_openai_chat_message,
-)
-from vocode.streaming.constants import (
-    TEXT_TO_SPEECH_CHUNK_SIZE_SECONDS,
-    PER_CHUNK_ALLOWANCE_SECONDS,
-    ALLOWED_IDLE_TIME,
-    INCOMPLETE_SCALING_FACTOR,
-    MAX_SILENCE_DURATION,
-)
 from vocode.streaming.agent.base_agent import (
     AgentInput,
     AgentResponse,
@@ -72,27 +38,62 @@ from vocode.streaming.agent.base_agent import (
     BaseAgent,
     TranscriptionAgentInput,
 )
+from vocode.streaming.agent.bot_sentiment_analyser import BotSentimentAnalyser
+from vocode.streaming.agent.command_agent import CommandAgent
+from vocode.streaming.agent.state_agent import StateAgent
+from vocode.streaming.agent.utils import (
+    collate_response_async,
+    format_openai_chat_messages_from_transcript,
+    openai_get_tokens,
+    translate_message,
+    vector_db_result_to_openai_chat_message,
+)
+from vocode.streaming.constants import (
+    ALLOWED_IDLE_TIME,
+    INCOMPLETE_SCALING_FACTOR,
+    MAX_SILENCE_DURATION,
+    PER_CHUNK_ALLOWANCE_SECONDS,
+    TEXT_TO_SPEECH_CHUNK_SIZE_SECONDS,
+)
+from vocode.streaming.models.actions import ActionInput
+from vocode.streaming.models.agent import CommandAgentConfig, FillerAudioConfig
+from vocode.streaming.models.events import Sender
+from vocode.streaming.models.message import BaseMessage
+from vocode.streaming.models.synthesizer import SentimentConfig
+from vocode.streaming.models.transcriber import EndpointingConfig, TranscriberConfig
+from vocode.streaming.models.transcript import (
+    Message,
+    Transcript,
+    TranscriptCompleteEvent,
+)
+from vocode.streaming.output_device.base_output_device import BaseOutputDevice
 from vocode.streaming.synthesizer.base_synthesizer import (
     BaseSynthesizer,
-    SynthesisResult,
     FillerAudio,
+    SynthesisResult,
 )
+from vocode.streaming.transcriber.base_transcriber import BaseTranscriber, Transcription
 from vocode.streaming.utils import create_conversation_id, get_chunk_size_per_second
-from vocode.streaming.transcriber.base_transcriber import (
-    Transcription,
-    BaseTranscriber,
+from vocode.streaming.utils.conversation_logger_adapter import wrap_logger
+from vocode.streaming.utils.events_manager import EventsManager
+from vocode.streaming.utils.goodbye_model import GoodbyeModel
+from vocode.streaming.utils.setup_tracer import (
+    end_span,
+    setup_tracer,
+    span_event,
+    start_span_in_ctx,
 )
 from vocode.streaming.utils.state_manager import ConversationStateManager
 from vocode.streaming.utils.worker import (
     AsyncQueueWorker,
+    InterruptibleAgentResponseEvent,
     InterruptibleAgentResponseWorker,
     InterruptibleEvent,
     InterruptibleEventFactory,
-    InterruptibleAgentResponseEvent,
     InterruptibleWorker,
 )
 
-from telephony_app.utils.call_information_handler import update_call_transcripts
+tracer = setup_tracer()
 
 OutputDeviceType = TypeVar("OutputDeviceType", bound=BaseOutputDevice)
 
@@ -196,6 +197,10 @@ class StreamingConversation(Generic[OutputDeviceType]):
             self.chosen_filler_phrase = None
             self.initial_message = None
             self.vad_detected = False
+            self.transcription_span = start_span_in_ctx(
+                name="first-turn-span",
+                parent_span=self.conversation.conversation_turn_span,
+            )
 
         async def _buffer_check(self, initial_buffer: str):
             try:
@@ -210,6 +215,14 @@ class StreamingConversation(Generic[OutputDeviceType]):
                     time_silent=self.time_silent,
                 )
                 current_phrase = self.chosen_affirmative_phrase
+                self.transcription_span = start_span_in_ctx(
+                    name="new-turn-span",
+                    parent_span=self.conversation.conversation_turn_span,
+                    attributes={
+                        "message": self.buffer.to_message(),
+                        "time_silent": self.time_silent,
+                    },
+                )
                 event = self.interruptible_event_factory.create_interruptible_event(
                     payload=TranscriptionAgentInput(
                         transcription=transcription,
@@ -217,6 +230,7 @@ class StreamingConversation(Generic[OutputDeviceType]):
                         conversation_id=self.conversation.id,
                         vonage_uuid=getattr(self.conversation, "vonage_uuid", None),
                         twilio_sid=getattr(self.conversation, "twilio_sid", None),
+                        span=self.transcription_span,
                     ),
                 )
 
@@ -239,6 +253,11 @@ class StreamingConversation(Generic[OutputDeviceType]):
 
                         # Make the async request
                         start_time = time.time()
+                        span_event(
+                            span=self.transcription_span,
+                            event_name="Fetching Sleep Time",
+                            event_data={},
+                        )
                         async with httpx.AsyncClient() as client:
                             response = await client.post(
                                 "http://148.64.105.83:58000/inference/",
@@ -264,12 +283,22 @@ class StreamingConversation(Generic[OutputDeviceType]):
                             self.conversation.logger.info(
                                 f"heuristically sleeping for {sleep_time} seconds"
                             )
+                            span_event(
+                                span=self.transcription_span,
+                                event_name="sleep_time",
+                                event_data={"sleep_time": str(sleep_time)},
+                            )
                             await asyncio.sleep(sleep_time)
                     except Exception as e:
                         self.conversation.logger.error(f"Error making request: {e}")
 
                     # Place the event in the output queue for further processing
                 self.output_queue.put_nowait(event)
+                span_event(
+                    span=self.transcription_span,
+                    event_name="Transcription event put in output queue",
+                    event_data={},
+                )
 
                 self.conversation.logger.info("Transcription event put in output queue")
                 # release the action, if there is one
@@ -308,34 +337,62 @@ class StreamingConversation(Generic[OutputDeviceType]):
 
             # If the message is just "vad", handle it without resetting the buffer check
             if transcription.message.strip() == "vad":
-                self.vad_detected = True
-                await self.conversation.broadcast_interrupt()
-                if self.buffer_check_task:
-                    try:
-                        self.conversation.logger.info("Cancelling buffer check task")
-                        cancelled = self.buffer_check_task.cancel()
-                        self.conversation.logger.info(f"BufferCancel? {cancelled}")
-                        self.buffer_check_task = None
-                    except Exception as e:
-                        self.conversation.logger.error(
-                            f"Error cancelling buffer check task: {e}"
-                        )
-                self.buffer_check_task = asyncio.create_task(
-                    self._buffer_check(deepcopy(self.buffer.to_message()))
-                )
-                return
+
+                if len(self.buffer) > 0:
+                    self.conversation.logger.info("[VAD] Non-empty buffer detected.")
+                    self.vad_detected = True
+
+                    span_event(
+                        span=self.transcription_span,
+                        event_name="VAD detected",
+                        event_data={},
+                    )
+                    end_span(self.transcription_span)
+                    await self.conversation.broadcast_interrupt()
+
+                    self.conversation.logger.info(
+                        f"Transcription Confidence: {transcription.confidence}"
+                    )
+
+                    self.conversation.logger.info("[VAD] Broadcasted interrupt.")
+                    if self.buffer_check_task:
+                        try:
+                            self.conversation.logger.info(
+                                "Cancelling buffer check task"
+                            )
+                            cancelled = self.buffer_check_task.cancel()
+                            self.conversation.logger.info(f"BufferCancel? {cancelled}")
+                            self.buffer_check_task = None
+                        except Exception as e:
+                            self.conversation.logger.error(
+                                f"Error cancelling buffer check task: {e}"
+                            )
+
+                    self.buffer_check_task = asyncio.create_task(
+                        self._buffer_check(deepcopy(self.buffer.to_message()))
+                    )
+                    return
+                else:
+                    span_event(
+                        span=self.transcription_span,
+                        event_name="VAD detected",
+                        event_data={},
+                    )
+                    self.conversation.logger.info("[VAD] Empty buffer detected.")
+                    self.vad_detected = True
+                    return
             else:
                 self.vad_detected = False
             if "words" not in json.loads(transcription.message):
-                self.conversation.logger.info(
-                    "Ignoring transcription, no word content."
-                )
+                # self.conversation.logger.info(
+                #     "Ignoring transcription, no word content."
+                # )
                 return
             elif len(json.loads(transcription.message)["words"]) == 0:
                 # when we wait more, they were silent so we want to push out a filler audio
-                self.conversation.logger.info(
-                    "Ignoring transcription, zero words in words."
-                )
+                # self.conversation.logger.debug(
+                #     "Ignoring transcription, zero words in words."
+                # )
                 return
 
             self.conversation.logger.debug(
@@ -356,11 +413,16 @@ class StreamingConversation(Generic[OutputDeviceType]):
                 return
             self.time_silent = 0.0
             # Update the buffer with the new message if it contains new content and log it
+
             new_words = json.loads(transcription.message)["words"]
 
             self.buffer.update_buffer(new_words, transcription.is_final)
             # we also want to update the last user message
-
+            span_event(
+                span=self.transcription_span,
+                event_name="Buffer updated",
+                event_data={"buffer": self.buffer.to_message()},
+            )
             self.vad_time = 2.0
             self.time_silent = transcription.time_silent
 
@@ -394,6 +456,7 @@ class StreamingConversation(Generic[OutputDeviceType]):
             self.buffer_check_task = asyncio.create_task(
                 self._buffer_check(deepcopy(self.buffer.to_message()))
             )
+            end_span(self.transcription_span)
             return
 
     class FillerAudioWorker(InterruptibleAgentResponseWorker):
@@ -840,6 +903,14 @@ class StreamingConversation(Generic[OutputDeviceType]):
             conversation_id=self.id,
         )
         self.logger.debug(f"Conversation ID: {self.id}")
+        self.global_span = tracer.start_span(
+            "conversation",
+            attributes={"conversation_id": self.id},
+        )
+        self.conversation_turn_span = start_span_in_ctx(
+            name="conversation_turn",
+            parent_span=self.global_span,
+        )
         # threadingevent
         self.stop_event = threading.Event()
         self.interrupt_count = 0
@@ -971,7 +1042,7 @@ class StreamingConversation(Generic[OutputDeviceType]):
         self.agent.attach_transcript(self.transcript)
 
         if initial_message and call_type == CallType.INBOUND:
-            self.logger.debug(f"Sending initial message: {initial_message}")
+            # self.logger.debug(f"Sending initial message: {initial_message}")
             asyncio.create_task(
                 self.send_initial_message(initial_message)
             )  # TODO: this seems like its hanging, why not await?
@@ -1069,7 +1140,7 @@ class StreamingConversation(Generic[OutputDeviceType]):
 
         Returns true if any events were interrupted - which is used as a flag for the agent (is_interrupt)
         """
-        self.logger.debug("Broadcasting interrupt")
+        self.logger.debug("[Broadcast] Broadcasting interrupt")
         self.stop_event.set()
         if isinstance(self.agent, CommandAgent):
             self.agent.stop = not self.agent.stop
@@ -1189,9 +1260,9 @@ class StreamingConversation(Generic[OutputDeviceType]):
                 self.transcriptions_worker.block_inputs = True
                 self.transcriptions_worker.time_silent = 0.0
                 self.transcriptions_worker.triggered_affirmative = False
-                self.logger.debug(
-                    f"Sending in synth buffer early, len {len(speech_data)}"
-                )
+                # self.logger.debug(
+                #     f"Sending in synth buffer early, len {len(speech_data)}"
+                # )
                 if self.agent.agent_config.allow_interruptions:
                     self.mark_last_action_timestamp()
                     for _ in range(1):
@@ -1301,7 +1372,7 @@ class StreamingConversation(Generic[OutputDeviceType]):
 
             speech_data.extend(chunk_result.chunk)
         if not stop_event.is_set():
-            self.logger.debug(f"Sending in final synth buffer, len {len(speech_data)}")
+            # self.logger.debug(f"Sending in final synth buffer, len {len(speech_data)}")
             self.interrupt_count = (
                 0  # reset the interrupt count since we made it through the speech
             )
@@ -1394,6 +1465,7 @@ class StreamingConversation(Generic[OutputDeviceType]):
 
         # Reset the synthesis done flag and prepare for the next synthesis
         self.transcriptions_worker.synthesis_done = False
+
         # if stop_event.is_set() and not moved_back and self.interrupt_count == 1:
         #     moved_back = True
         #     self.agent.move_back_state() #maybe dont do this because it would have finished talking lol
@@ -1428,6 +1500,13 @@ class StreamingConversation(Generic[OutputDeviceType]):
         self.transcriptions_worker.ready_to_send = BufferStatus.DISCARD
 
         # Return the message sent and the cutoff status
+        end_span(self.conversation_turn_span)
+        end_span(self.transcriptions_worker.transcription_span)
+        self.conversation_turn_span = start_span_in_ctx(
+            name="conversation_turn",
+            parent_span=self.global_span,
+        )
+
         return message_sent, cut_off
 
     def mark_terminated(self):
@@ -1435,6 +1514,7 @@ class StreamingConversation(Generic[OutputDeviceType]):
 
     async def terminate(self):
         self.mark_terminated()
+        end_span(self.global_span)
         await self.broadcast_interrupt()
         if self.synthesis_results_worker.current_task:
             self.synthesis_results_worker.current_task.cancel()

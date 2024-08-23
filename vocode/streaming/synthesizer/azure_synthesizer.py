@@ -1,34 +1,32 @@
 import asyncio
-from concurrent.futures import ThreadPoolExecutor
 import logging
 import os
 import random
 import re
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any, List, Optional, Tuple
 from xml.etree import ElementTree
+
 import aiohttp
-from vocode import getenv
+import azure.cognitiveservices.speech as speechsdk
 from opentelemetry.context.context import Context
 
+from vocode import getenv
 from vocode.streaming.agent.bot_sentiment_analyser import BotSentiment
+from vocode.streaming.models.audio_encoding import AudioEncoding
 from vocode.streaming.models.message import BaseMessage, SSMLMessage
-
+from vocode.streaming.models.synthesizer import AzureSynthesizerConfig, SynthesizerType
 from vocode.streaming.synthesizer.base_synthesizer import (
-    BaseSynthesizer,
-    SynthesisResult,
-    FILLER_PHRASES,
+    AFFIRMATIVE_AUDIO_PATH,
     AFFIRMATIVE_PHRASES,
     FILLER_AUDIO_PATH,
-    AFFIRMATIVE_AUDIO_PATH,
+    FILLER_PHRASES,
+    BaseSynthesizer,
     FillerAudio,
+    SynthesisResult,
     encode_as_wav,
     tracer,
 )
-from vocode.streaming.models.synthesizer import AzureSynthesizerConfig, SynthesizerType
-from vocode.streaming.models.audio_encoding import AudioEncoding
-
-import azure.cognitiveservices.speech as speechsdk
-
 
 NAMESPACES = {
     "mstts": "https://www.w3.org/2001/mstts",
@@ -407,7 +405,7 @@ class AzureSynthesizer(BaseSynthesizer[AzureSynthesizerConfig]):
                     self.thread_pool_executor,
                     lambda: audio_data_stream.read_data(audio_buffer),
                 )
-                self.logger.debug(f"Filled size: {filled_size}")
+                # self.logger.debug(f"Filled size: {filled_size}")
                 if filled_size == 0 and not yielded:
                     self.logger.debug(
                         "No audio data returned, attempting to resume speech"
