@@ -195,6 +195,7 @@ class StreamingConversation(Generic[OutputDeviceType]):
             self.triggered_affirmative = False
             self.chosen_filler_phrase = None
             self.initial_message = None
+            self.vad_detected = False
 
         async def _buffer_check(self, initial_buffer: str):
             try:
@@ -253,6 +254,8 @@ class StreamingConversation(Generic[OutputDeviceType]):
                         if not isinstance(response, str):
                             response = response.text
                         sleep_time = (float(response) ** 2) * 1.5 - request_duration
+                        if self.vad_detected:
+                            sleep_time = sleep_time * 2
                         if sleep_time > 0:
                             # TODO: HERE, CONNECT IT TO THE SLIDER
                             self.conversation.logger.info(
@@ -286,7 +289,7 @@ class StreamingConversation(Generic[OutputDeviceType]):
                 return
             if self.block_inputs and not self.agent.agent_config.allow_interruptions:
                 self.conversation.logger.debug(
-                    "Ignoring transcription since we are in-flight"
+                    "Ignoring transcription since we are in-flight..."
                 )
                 return
 
@@ -295,7 +298,9 @@ class StreamingConversation(Generic[OutputDeviceType]):
 
             # If the message is just "vad", handle it without resetting the buffer check
             if transcription.message.strip() == "vad":
+                self.vad_detected = True
                 return
+            self.vad_detected = False
             if "words" not in json.loads(transcription.message):
                 self.conversation.logger.info(
                     "Ignoring transcription, no word content."

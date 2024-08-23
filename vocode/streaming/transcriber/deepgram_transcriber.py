@@ -2,8 +2,11 @@ import asyncio
 import audioop
 import json
 import logging
-from typing import Optional
+from typing import Optional, List, Deque
 from urllib.parse import urlencode
+import queue
+import threading
+from collections import deque
 
 import websockets
 from openai import AsyncOpenAI, OpenAI
@@ -24,10 +27,26 @@ from vocode.streaming.transcriber.base_transcriber import (
 )
 from websockets.client import WebSocketClientProtocol
 
+import torch
+import numpy as np
+
 PUNCTUATION_TERMINATORS = [".", "!", "?"]
 MAX_SILENCE_DURATION = 2.0
 NUM_RESTARTS = 5
 
+# Silero VAD setup
+torch.set_num_threads(5)
+model, utils = torch.hub.load(repo_or_dir="snakers4/silero-vad", model="silero_vad")
+(get_speech_timestamps, save_audio, read_audio, VADIterator, collect_chunks) = utils
+
+# Constants for Silero VAD
+USE_INT16 = False
+CHANNELS = 1
+SAMPLE_RATE = 16000 if USE_INT16 else 8000
+DTYPE = np.int16 if USE_INT16 else np.int8
+CHUNK = 512 if USE_INT16 else 256
+WINDOW_SIZE = 3 * SAMPLE_RATE // CHUNK  # 5 seconds window
+VAD_THRESHOLD = 0.75  # Adjust this threshold as needed
 
 avg_latency_hist = meter.create_histogram(
     name="transcriber.deepgram.avg_latency",
@@ -65,6 +84,59 @@ class DeepgramTranscriber(BaseAsyncTranscriber[DeepgramTranscriberConfig]):
         self.logger = logger or logging.getLogger(__name__)
         self.audio_cursor = 0.0
         self.openai_client = OpenAI(api_key="EMPTY", base_url=getenv("AI_API_BASE"))
+        self.vad_queue = queue.Queue()
+        self.voiced_confidences: Deque[float] = deque([0.0] * 3, maxlen=3)
+        self.vad_thread = threading.Thread(target=self.vad_worker)
+        self.vad_thread.start()
+        self.vad_buffer = b""
+
+    def int2float(self, sound):
+        if isinstance(sound, bytes):
+            sound = np.frombuffer(sound, dtype=DTYPE)
+        abs_max = np.abs(sound).max()
+        sound = sound.astype("float32")
+        if abs_max > 0:
+            sound *= 1 / 32768 if USE_INT16 else 1 / 128
+        sound = sound.squeeze()
+        return sound
+
+    def vad_worker(self):
+        while not self._ended:
+            try:
+                chunk = self.vad_queue.get(timeout=0.1)
+                self.vad_buffer += chunk
+                while len(self.vad_buffer) >= CHUNK:
+                    audio_chunk = self.vad_buffer[:CHUNK]
+                    self.vad_buffer = self.vad_buffer[CHUNK:]
+                    audio_float32 = self.int2float(audio_chunk)
+                    new_confidence = model(
+                        torch.from_numpy(audio_float32), SAMPLE_RATE
+                    ).item()
+                    self.voiced_confidences.append(new_confidence)
+
+                    # Calculate rolling average
+                    rolling_avg = sum(self.voiced_confidences) / len(
+                        self.voiced_confidences
+                    )
+
+                    if rolling_avg > VAD_THRESHOLD:
+                        self.logger.debug(f"SPEAKING: {rolling_avg}")
+                        self.output_queue.put_nowait(
+                            Transcription(
+                                message="vad",
+                                confidence=rolling_avg,
+                                is_final=False,
+                            )
+                        )
+                        # reset the rolling average
+                        self.voiced_confidences = deque([0.0] * 3, maxlen=3)
+                    # else:
+                    # self.logger.debug(f"SILENT: {rolling_avg}")
+
+            except queue.Empty:
+                pass
+            except ValueError as e:
+                self.logger.warning(f"VAD error: {str(e)}")
 
     async def _run_loop(self):
         restarts = 0
@@ -89,12 +161,17 @@ class DeepgramTranscriber(BaseAsyncTranscriber[DeepgramTranscriberConfig]):
                 self.transcriber_config.sampling_rate,
                 None,
             )
+        # Convert to int16 or int8 for Silero VAD
+        if self.transcriber_config.audio_encoding == AudioEncoding.LINEAR16:
+            chunk = np.frombuffer(chunk, dtype=np.int16).astype(DTYPE).tobytes()
+        self.vad_queue.put(chunk)
         super().send_audio(chunk)
 
     def terminate(self):
         terminate_msg = json.dumps({"type": "CloseStream"})
         self.input_queue.put_nowait(terminate_msg)
         self._ended = True
+        self.vad_thread.join()
         super().terminate()
 
     def get_deepgram_url(self):
@@ -106,7 +183,7 @@ class DeepgramTranscriber(BaseAsyncTranscriber[DeepgramTranscriberConfig]):
             "encoding": encoding,
             "sample_rate": self.transcriber_config.sampling_rate,
             "channels": 1,
-            "vad_events": "true",
+            "vad_events": "false",  # Disable Deepgram VAD
             "interim_results": "true",
             "filler_words": "false",
         }
@@ -129,42 +206,6 @@ class DeepgramTranscriber(BaseAsyncTranscriber[DeepgramTranscriberConfig]):
             extra_params["punctuate"] = "true"
         url_params.update(extra_params)
         return f"wss://api.deepgram.com/v1/listen?{urlencode(url_params, doseq=True)}"
-
-    # This function will return how long the time silence for endpointing should be
-    def get_classify_endpointing_silence_duration(self, transcript: str):
-        preamble = """You are an amazing live transcript classifier! Your task is to classify, with provided confidence, whether a provided message transcript is: 'complete', 'incomplete' or 'garbled'. The message should be considered 'complete' if it is a full thought or question. The message is 'incomplete' if there is still more the user might add. Finally, the message is 'garbled' if it appears to be a complete transcription attempt but, despite best efforts, the meaning is unclear.
-
-Based on which class is demonstrated in the provided message transcript, return the confidence level of your classification on a scale of 1-100 with 100 being the most confident followed by a space followed by either 'complete', 'incomplete', or 'garbled'.
-
-The exact format to return is:
-<confidence level> <classification>"""
-        user_message = f"{transcript}"
-        messages = [
-            {"role": "system", "content": preamble},
-            {"role": "user", "content": user_message},
-        ]
-        parameters = {
-            "model": "Qwen/Qwen1.5-72B-Chat-GPTQ-Int4",
-            "messages": messages,
-            "max_tokens": 5,
-            "temperature": 0,
-            "stop": ["User:", "\n", "<|im_end|>", "?"],
-        }
-
-        response = self.openai_client.chat.completions.create(**parameters)
-
-        classification = (response.choices[0].message.content.split(" "))[-1]
-        silence_duration_1_to_100 = "".join(
-            filter(str.isdigit, response.choices[0].message.content)
-        )
-        duration_to_return = 0.1
-        if "incomplete" in classification.lower():
-            duration_to_return = (
-                float(silence_duration_1_to_100) / INCOMPLETE_SCALING_FACTOR / 100.0
-            )
-        elif "complete" in classification.lower():
-            duration_to_return = 1.0 - (float(silence_duration_1_to_100) / 100.0)
-        return duration_to_return * MAX_SILENCE_DURATION
 
     def is_speech_final(
         self, current_buffer: str, deepgram_response: dict, time_silent: float
@@ -199,13 +240,6 @@ The exact format to return is:
                 and (time_silent + deepgram_response["duration"])
                 > self.transcriber_config.endpointing_config.time_cutoff_seconds
             )
-            # For shorter transcripts, check if the combined silence duration exceeds a fixed threshold
-            # return (
-            #     time_silent + deepgram_response["duration"]
-            #     > self.transcriber_config.endpointing_config.time_cutoff_seconds
-            #     if time_silent and deepgram_response["duration"]
-            #     else False
-            # )
 
         raise Exception("Endpointing config not supported")
 
@@ -253,16 +287,6 @@ The exact format to return is:
                         self.logger.debug(f"Got error {e} in Deepgram receiver")
                         break
                     data = json.loads(msg)
-                    if data["type"] == "SpeechStarted":
-                        # self.logger.debug("VAD triggered")
-                        self.output_queue.put_nowait(
-                            Transcription(
-                                message="vad",
-                                confidence=1.0,
-                                is_final=False,
-                            )
-                        )
-                        continue
                     if (
                         not "is_final" in data
                     ):  # means we've finished receiving transcriptions
