@@ -7,6 +7,7 @@ from urllib.parse import urlencode
 import queue
 import threading
 from collections import deque
+import time
 
 import websockets
 from openai import AsyncOpenAI, OpenAI
@@ -45,7 +46,8 @@ CHANNELS = 1
 SAMPLE_RATE = 16000 if USE_INT16 else 8000
 DTYPE = np.int16 if USE_INT16 else np.int8
 CHUNK = 512 if USE_INT16 else 256
-WINDOW_SIZE = 3 * SAMPLE_RATE // CHUNK  # 5 seconds window
+WINDOWS = 3
+WINDOW_SIZE = WINDOWS * SAMPLE_RATE // CHUNK  # 5 seconds window
 VAD_THRESHOLD = 0.75  # Adjust this threshold as needed
 
 avg_latency_hist = meter.create_histogram(
@@ -85,10 +87,11 @@ class DeepgramTranscriber(BaseAsyncTranscriber[DeepgramTranscriberConfig]):
         self.audio_cursor = 0.0
         self.openai_client = OpenAI(api_key="EMPTY", base_url=getenv("AI_API_BASE"))
         self.vad_queue = queue.Queue()
-        self.voiced_confidences: Deque[float] = deque([0.0] * 3, maxlen=3)
+        self.voiced_confidences: Deque[float] = deque([0.0] * WINDOWS, maxlen=WINDOWS)
         self.vad_thread = threading.Thread(target=self.vad_worker)
         self.vad_thread.start()
         self.vad_buffer = b""
+        self.last_vad_output_time = 0
 
     def int2float(self, sound):
         if isinstance(sound, bytes):
@@ -119,7 +122,11 @@ class DeepgramTranscriber(BaseAsyncTranscriber[DeepgramTranscriberConfig]):
                         self.voiced_confidences
                     )
 
-                    if rolling_avg > VAD_THRESHOLD:
+                    current_time = time.time()
+                    if (
+                        current_time - self.last_vad_output_time >= 1
+                        and rolling_avg > 0.75
+                    ):
                         self.logger.debug(f"SPEAKING: {rolling_avg}")
                         self.output_queue.put_nowait(
                             Transcription(
@@ -128,8 +135,9 @@ class DeepgramTranscriber(BaseAsyncTranscriber[DeepgramTranscriberConfig]):
                                 is_final=False,
                             )
                         )
+                        self.last_vad_output_time = current_time
                         # reset the rolling average
-                        self.voiced_confidences = deque([0.0] * 3, maxlen=3)
+                        self.voiced_confidences = deque([0.0] * WINDOWS, maxlen=WINDOWS)
                     # else:
                     # self.logger.debug(f"SILENT: {rolling_avg}")
 
@@ -280,6 +288,7 @@ class DeepgramTranscriber(BaseAsyncTranscriber[DeepgramTranscriberConfig]):
                 num_buffer_utterances = 1
                 time_silent = 0
                 transcript_cursor = 0.0
+                last_output_time = 0
                 while not self._ended:
                     try:
                         msg = await ws.recv()
@@ -308,16 +317,20 @@ class DeepgramTranscriber(BaseAsyncTranscriber[DeepgramTranscriberConfig]):
                     time_silent = self.calculate_time_silent(data)
                     top_choice = data["channel"]["alternatives"][0]
                     confidence = top_choice["confidence"]
-                    self.output_queue.put_nowait(
-                        Transcription(
-                            message=json.dumps(
-                                top_choice
-                            ),  # since we're doing interim results, we can just send the whole data dict
-                            confidence=confidence,
-                            is_final=is_final,
-                            time_silent=time_silent,
+                    current_time = time.time()
+                    if current_time - last_output_time >= 1:
+                        self.output_queue.put_nowait(
+                            Transcription(
+                                message=json.dumps(
+                                    top_choice
+                                ),  # since we're doing interim results, we can just send the whole data dict
+                                confidence=confidence,
+                                is_final=is_final,
+                                time_silent=time_silent,
+                            )
                         )
-                    )
+                        last_output_time = current_time
                 self.logger.debug("Terminating Deepgram transcriber receiver")
 
             await asyncio.gather(sender(ws), receiver(ws))
+            self.logger.debug("Terminating Deepgram transcriber receiver")

@@ -253,9 +253,12 @@ class StreamingConversation(Generic[OutputDeviceType]):
                         # Parse the response and calculate sleep time
                         if not isinstance(response, str):
                             response = response.text
-                        sleep_time = (float(response) ** 2) * 1.5 - request_duration
-                        if self.vad_detected:
-                            sleep_time = sleep_time * 2
+                        # sleep_time = (float(response) ** 2) * 1.5 - request_duration
+                        sleep_time = (
+                            float(response) * float(response)
+                        ) - request_duration
+                        # if self.vad_detected:
+                        #     sleep_time = sleep_time * 2
                         if sleep_time > 0:
                             # TODO: HERE, CONNECT IT TO THE SLIDER
                             self.conversation.logger.info(
@@ -279,6 +282,13 @@ class StreamingConversation(Generic[OutputDeviceType]):
         async def process(self, transcription: Transcription):
             # Ignore the transcription if we are currently in-flight (i.e., the agent is speaking)
             # log the current transcript
+            # if (
+            #     self.initial_message
+            #     and self.conversation.agent.get_agent_config().call_type
+            #     == CallType.INBOUND
+            # ):
+            #     self.conversation.logger.info(f"Waiting for initial message to be sent")
+            #     return
             if (
                 self.conversation.agent.block_inputs
             ):  # the two block inputs are different
@@ -299,8 +309,23 @@ class StreamingConversation(Generic[OutputDeviceType]):
             # If the message is just "vad", handle it without resetting the buffer check
             if transcription.message.strip() == "vad":
                 self.vad_detected = True
+                await self.conversation.broadcast_interrupt()
+                if self.buffer_check_task:
+                    try:
+                        self.conversation.logger.info("Cancelling buffer check task")
+                        cancelled = self.buffer_check_task.cancel()
+                        self.conversation.logger.info(f"BufferCancel? {cancelled}")
+                        self.buffer_check_task = None
+                    except Exception as e:
+                        self.conversation.logger.error(
+                            f"Error cancelling buffer check task: {e}"
+                        )
+                self.buffer_check_task = asyncio.create_task(
+                    self._buffer_check(deepcopy(self.buffer.to_message()))
+                )
                 return
-            self.vad_detected = False
+            else:
+                self.vad_detected = False
             if "words" not in json.loads(transcription.message):
                 self.conversation.logger.info(
                     "Ignoring transcription, no word content."
@@ -911,6 +936,8 @@ class StreamingConversation(Generic[OutputDeviceType]):
 
         if self.agent.get_agent_config().call_type == CallType.INBOUND:
             self.transcriber.mute()
+            initial_message = self.agent.get_agent_config().initial_message
+            self.transcriptions_worker.initial_message = initial_message
         else:
             self.transcriber.unmute()  # take in audio immediately in outbound
         self.agent_responses_worker.start()
@@ -940,7 +967,6 @@ class StreamingConversation(Generic[OutputDeviceType]):
         if isinstance(self.agent, CommandAgent) or isinstance(self.agent, StateAgent):
             self.agent.conversation_id = self.id
             self.agent.twilio_sid = getattr(self, "twilio_sid", None)
-        initial_message = self.agent.get_agent_config().initial_message
         call_type = self.agent.get_agent_config().call_type
         self.agent.attach_transcript(self.transcript)
 
@@ -949,10 +975,8 @@ class StreamingConversation(Generic[OutputDeviceType]):
             asyncio.create_task(
                 self.send_initial_message(initial_message)
             )  # TODO: this seems like its hanging, why not await?
-        elif initial_message and call_type == CallType.OUTBOUND:
-            self.transcriptions_worker.initial_message = initial_message
-        else:
-            self.logger.debug("ERROR: INVALID CALL TYPE")
+            self.transcriptions_worker.initial_message = None
+
         if mark_ready:
             await mark_ready()
         if self.synthesizer.get_synthesizer_config().sentiment_config:
