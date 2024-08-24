@@ -568,11 +568,11 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
         message = await self.call_ai(prompt, tool)
         message = (
             message.replace("'", '"')
+            .replace("' }", "'}")
+            .replace("{ '", "{'")
             .replace('{"response": "', "")
             .replace('"}', "")
             .replace('"', "'")
-            .replace("' }", "'}")
-            .replace("{ '", "{'")
             .strip()
         )
         self.logger.info(f"Guided response: {message}")
