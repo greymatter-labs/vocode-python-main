@@ -568,8 +568,8 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
         message = await self.call_ai(prompt, tool)
         message = (
             message.replace("' }", "'}")
-            .replace("' }", "'}")
             .replace("{ '", "{'")
+            .replace("'", '"')
             .replace('{"response": "', "")
             .replace('"}', "")
             .replace('"', "'")
