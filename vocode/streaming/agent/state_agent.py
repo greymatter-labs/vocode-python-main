@@ -571,6 +571,8 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
             .replace('{"response": "', "")
             .replace('"}', "")
             .replace('"', "'")
+            .replace("' }", "'}")
+            .replace("{ '", "{'")
             .strip()
         )
         self.logger.info(f"Guided response: {message}")
