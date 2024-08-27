@@ -256,7 +256,7 @@ async def handle_options(
             f"{ai_options_str}\n\n"
             "Always return a number from the above list. Return the number of the condition that best applies."
         )
-    logger.info(f"AI prompt constructed: {prompt}")
+    # logger.info(f"AI prompt constructed: {prompt}")
     response = await call_ai(
         prompt,
         tool,

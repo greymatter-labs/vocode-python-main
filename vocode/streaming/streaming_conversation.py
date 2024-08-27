@@ -309,7 +309,9 @@ class StreamingConversation(Generic[OutputDeviceType]):
             # If the message is just "vad", handle it without resetting the buffer check
             if transcription.message.strip() == "vad":
                 self.vad_detected = True
+
                 await self.conversation.broadcast_interrupt()
+                self.conversation.transcriber.VOLUME_THRESHOLD = 700
                 if self.buffer_check_task:
                     try:
                         self.conversation.logger.info("Cancelling buffer check task")
@@ -1168,6 +1170,10 @@ class StreamingConversation(Generic[OutputDeviceType]):
             if len(speech_data) > chunk_size:
                 self.transcriptions_worker.synthesis_done = True
                 started_event.set()
+                self.transcriber.VOLUME_THRESHOLD = 1000
+                self.logger.info(
+                    f"VOLUME_THRESHOLD: {self.transcriber.VOLUME_THRESHOLD}"
+                )
             if stop_event.is_set() and self.agent.agent_config.allow_interruptions:
                 if (
                     time.time() - time_started_speaking < 3
