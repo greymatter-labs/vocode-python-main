@@ -20,6 +20,7 @@ from vocode.streaming.agent.base_agent import (
 from vocode.streaming.agent.utils import translate_message
 from vocode.streaming.models.actions import ActionInput
 from vocode.streaming.models.agent import CommandAgentConfig
+from vocode.streaming.models.call_type import CallType
 from vocode.streaming.models.events import Sender
 from vocode.streaming.models.message import BaseMessage
 from vocode.streaming.models.state_agent_transcript import (
@@ -50,7 +51,12 @@ def parse_llm_dict(s):
     if isinstance(s, dict):
         return s
 
-    s = s.replace('"', "'").replace("\n", "").replace("  ", " ").replace("','", "', '")
+    s = (
+        s.replace('"', "'")
+        .replace("\n", "<newline>")
+        .replace("  ", " ")
+        .replace("','", "', '")
+    )
     result = {}
     input_string = s.strip("{}")
     pairs = input_string.split("', '")
@@ -63,7 +69,6 @@ def parse_llm_dict(s):
 
             if value.isdigit():
                 value = int(value)
-
             result[key] = value
 
     return result
@@ -560,7 +565,6 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
                 elif msg == last_user_message:
                     user_found = True
 
-        tool = {"response": "[insert your response]"}
         prompt = (
             f"Draft a single response to the user based on the latest chat history, taking into account the following guidance:\n'{guide}'\n\n"
             f"Bot's last statement before user: '{last_bot_message_before_user}'\n"
@@ -570,18 +574,13 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
             prompt += f"Last tool output: {action_result_after_user}\n"
         if bot_message_after_user:
             prompt += f"Bot's is thinking: '{bot_message_after_user}'\n"
+        prompt += "\nNow, respond as the BOT directly."
 
-        message = await self.call_ai(prompt, tool)
-        message = (
-            message.replace("'", '"')
-            .replace('{"response": "', "")
-            .replace('"}', "")
-            .replace('"', "'")
-            .strip()
-        )
+        message = await self.call_ai(prompt, None)
+        message = message.strip()
         self.logger.info(f"Guided response: {message}")
         self.update_history("message.bot", message)
-        return message.strip()
+        return message
 
     async def compose_action(self, state):
         action = state["action"]
@@ -653,13 +652,6 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
                     self.logger.error(
                         f"Agent did not respond with a valid dictionary, trying to parse as JSON: {e}."
                     )
-                    # response = await self.call_ai(
-                    #     prompt=f"You must return a valid Python dictionary. Provide the values for these parameters based on the current conversation and the instructions provided: {param_descriptions_str}",
-                    #     tool=dict_to_fill,
-                    # )
-                    # self.logger.info(f"Second attempt raw response: {response}")
-                    # response = response[response.find("{") : response.rfind("}") + 1]
-                    # self.logger.info(f"Second attempt extracted dictionary: {response}")
                     ai_filled_params = parse_llm_dict(response)
 
                 finalized_params.update(ai_filled_params)
@@ -677,6 +669,13 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
                 return await saveActionResultAndMoveOn(
                     action_result=f"action {action_name} failed to run due missing action description"
                 )
+        elif action_name.lower() == "run_python":
+            # remove the code from the params
+            code = finalized_params.pop("code")
+            params = {
+                "code": code,
+                "params": finalized_params,
+            }
         else:
             params = finalized_params
 
