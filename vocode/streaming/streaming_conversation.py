@@ -1,67 +1,25 @@
 from __future__ import annotations
-from copy import deepcopy
 
 import asyncio
-from enum import Enum
 import json
+import logging
 import math
 import queue
 import random
 import threading
-from typing import Any, Awaitable, Callable, Generic, Optional, Tuple, TypeVar, cast
-import logging
 import time
 import typing
-import numpy
-import requests
+from copy import deepcopy
+from enum import Enum
+from typing import Any, Awaitable, Callable, Generic, Optional, Tuple, TypeVar, cast
+
 import aiohttp
 import httpx
-
-from telephony_app.models.call_type import CallType
-from vocode import getenv
+import numpy
+import requests
 from openai import AsyncOpenAI, OpenAI
-
-
+from vocode import getenv
 from vocode.streaming.action.worker import ActionsWorker
-
-from vocode.streaming.agent.bot_sentiment_analyser import (
-    BotSentimentAnalyser,
-)
-from vocode.streaming.agent.command_agent import CommandAgent
-from vocode.streaming.agent.state_agent import StateAgent
-from vocode.streaming.models.actions import ActionInput
-from vocode.streaming.models.events import Sender
-from vocode.streaming.models.transcript import (
-    Message,
-    Transcript,
-    TranscriptCompleteEvent,
-)
-from vocode.streaming.models.message import BaseMessage
-from vocode.streaming.models.transcriber import EndpointingConfig, TranscriberConfig
-from vocode.streaming.output_device.base_output_device import BaseOutputDevice
-from vocode.streaming.utils.conversation_logger_adapter import wrap_logger
-from vocode.streaming.utils.events_manager import EventsManager
-from vocode.streaming.utils.goodbye_model import GoodbyeModel
-
-from vocode.streaming.models.agent import CommandAgentConfig, FillerAudioConfig
-from vocode.streaming.models.synthesizer import (
-    SentimentConfig,
-)
-
-from vocode.streaming.agent.utils import (
-    format_openai_chat_messages_from_transcript,
-    collate_response_async,
-    openai_get_tokens,
-    translate_message,
-    vector_db_result_to_openai_chat_message,
-)
-from vocode.streaming.constants import (
-    TEXT_TO_SPEECH_CHUNK_SIZE_SECONDS,
-    PER_CHUNK_ALLOWANCE_SECONDS,
-    ALLOWED_IDLE_TIME,
-    INCOMPLETE_SCALING_FACTOR,
-    MAX_SILENCE_DURATION,
-)
 from vocode.streaming.agent.base_agent import (
     AgentInput,
     AgentResponse,
@@ -72,26 +30,56 @@ from vocode.streaming.agent.base_agent import (
     BaseAgent,
     TranscriptionAgentInput,
 )
+from vocode.streaming.agent.bot_sentiment_analyser import BotSentimentAnalyser
+from vocode.streaming.agent.command_agent import CommandAgent
+from vocode.streaming.agent.state_agent import StateAgent
+from vocode.streaming.agent.utils import (
+    collate_response_async,
+    format_openai_chat_messages_from_transcript,
+    openai_get_tokens,
+    translate_message,
+    vector_db_result_to_openai_chat_message,
+)
+from vocode.streaming.constants import (
+    ALLOWED_IDLE_TIME,
+    INCOMPLETE_SCALING_FACTOR,
+    MAX_SILENCE_DURATION,
+    PER_CHUNK_ALLOWANCE_SECONDS,
+    TEXT_TO_SPEECH_CHUNK_SIZE_SECONDS,
+)
+from vocode.streaming.models.actions import ActionInput
+from vocode.streaming.models.agent import CommandAgentConfig, FillerAudioConfig
+from vocode.streaming.models.events import Sender
+from vocode.streaming.models.message import BaseMessage
+from vocode.streaming.models.synthesizer import SentimentConfig
+from vocode.streaming.models.transcriber import EndpointingConfig, TranscriberConfig
+from vocode.streaming.models.transcript import (
+    Message,
+    Transcript,
+    TranscriptCompleteEvent,
+)
+from vocode.streaming.output_device.base_output_device import BaseOutputDevice
 from vocode.streaming.synthesizer.base_synthesizer import (
     BaseSynthesizer,
-    SynthesisResult,
     FillerAudio,
+    SynthesisResult,
 )
+from vocode.streaming.transcriber.base_transcriber import BaseTranscriber, Transcription
 from vocode.streaming.utils import create_conversation_id, get_chunk_size_per_second
-from vocode.streaming.transcriber.base_transcriber import (
-    Transcription,
-    BaseTranscriber,
-)
+from vocode.streaming.utils.conversation_logger_adapter import wrap_logger
+from vocode.streaming.utils.events_manager import EventsManager
+from vocode.streaming.utils.goodbye_model import GoodbyeModel
 from vocode.streaming.utils.state_manager import ConversationStateManager
 from vocode.streaming.utils.worker import (
     AsyncQueueWorker,
+    InterruptibleAgentResponseEvent,
     InterruptibleAgentResponseWorker,
     InterruptibleEvent,
     InterruptibleEventFactory,
-    InterruptibleAgentResponseEvent,
     InterruptibleWorker,
 )
 
+from telephony_app.models.call_type import CallType
 from telephony_app.utils.call_information_handler import update_call_transcripts
 
 OutputDeviceType = TypeVar("OutputDeviceType", bound=BaseOutputDevice)
@@ -1171,9 +1159,9 @@ class StreamingConversation(Generic[OutputDeviceType]):
                 self.transcriptions_worker.synthesis_done = True
                 started_event.set()
                 self.transcriber.VOLUME_THRESHOLD = 1000
-                self.logger.info(
-                    f"VOLUME_THRESHOLD: {self.transcriber.VOLUME_THRESHOLD}"
-                )
+                # self.logger.info(
+                #     f"VOLUME_THRESHOLD: {self.transcriber.VOLUME_THRESHOLD}"
+                # )
             if stop_event.is_set() and self.agent.agent_config.allow_interruptions:
                 if (
                     time.time() - time_started_speaking < 3

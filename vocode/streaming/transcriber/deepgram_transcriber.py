@@ -11,8 +11,6 @@ from urllib.parse import urlencode
 import numpy as np
 import torch
 import websockets
-from websockets.client import WebSocketClientProtocol
-
 from vocode import getenv
 from vocode.streaming.models.audio_encoding import AudioEncoding
 from vocode.streaming.models.transcriber import (
@@ -25,6 +23,7 @@ from vocode.streaming.transcriber.base_transcriber import (
     Transcription,
 )
 from vocode.streaming.utils.worker import AsyncWorker
+from websockets.client import WebSocketClientProtocol
 
 PUNCTUATION_TERMINATORS = [".", "!", "?"]
 MAX_SILENCE_DURATION = 2.0
@@ -226,7 +225,6 @@ class DeepgramTranscriber(BaseAsyncTranscriber[DeepgramTranscriberConfig]):
         is_silence = self.is_volume_low(chunk)
 
         if is_silence:
-            self.logger.debug("Detected silence")
             self.vad_worker.send_audio(
                 {
                     "chunk": b"\xFF" * len(chunk),
@@ -236,7 +234,7 @@ class DeepgramTranscriber(BaseAsyncTranscriber[DeepgramTranscriberConfig]):
                 }
             )
         if not is_silence:
-            self.logger.debug("sound ------------ detected")
+            # self.logger.debug("sound ------------ detected")
             self.vad_worker.send_audio(
                 {
                     "chunk": chunk,
