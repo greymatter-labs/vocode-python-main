@@ -1,22 +1,22 @@
+import ast
 import asyncio
+import inspect
+import io
 import json
 import logging
 import os
-import traceback
-import inspect
-import io
 import sys
-from typing import Type, Dict, Any, List
-from pydantic import BaseModel, Field
+import traceback
+from typing import Any, Dict, List, Type
 
+from pydantic import BaseModel, Field
+from vocode.streaming.action.base_action import BaseAction
 from vocode.streaming.models.actions import (
     ActionConfig,
     ActionInput,
     ActionOutput,
     ActionType,
 )
-from vocode.streaming.action.base_action import BaseAction
-
 
 logging.basicConfig()
 logger = logging.getLogger(__name__)
@@ -47,6 +47,27 @@ class RunPython(
     description: str = "Executes a Python function and returns the response"
     parameters_type: Type[RunPythonParameters] = RunPythonParameters
     response_type: Type[RunPythonResponse] = RunPythonResponse
+
+    def parse_value(self, value: str, expected_type: Type):
+        try:
+            if expected_type == str:
+                return value
+            elif expected_type == int:
+                return int(value)
+            elif expected_type == float:
+                return float(value)
+            elif expected_type == bool:
+                return value.lower() in ["true", "1", "yes", "y"]
+            elif expected_type == list or expected_type == tuple:
+                return ast.literal_eval(value)
+            elif expected_type == dict:
+                return json.loads(value)
+            else:
+                # For complex types, attempt to use ast.literal_eval
+                return ast.literal_eval(value)
+        except:
+            # If parsing fails, return the original string
+            return value
 
     def code_runner(self, func_or_string, input_dict):
         output = {"result": None, "error": None, "metadata": {}, "stdout": ""}
@@ -82,14 +103,16 @@ class RunPython(
                     f"Missing required arguments: {', '.join(missing_args)}"
                 )
 
-            valid_args = {k: v for k, v in input_dict.items() if k in params}
-
-            for param, value in valid_args.items():
-                if params[param].annotation != inspect.Parameter.empty:
-                    if not isinstance(value, params[param].annotation):
-                        raise TypeError(
-                            f"Argument '{param}' should be of type {params[param].annotation.__name__}, but got {type(value).__name__}"
-                        )
+            valid_args = {}
+            for param, value in input_dict.items():
+                if param in params:
+                    expected_type = (
+                        params[param].annotation
+                        if params[param].annotation != inspect.Parameter.empty
+                        else Any
+                    )
+                    parsed_value = self.parse_value(value, expected_type)
+                    valid_args[param] = parsed_value
 
             result = func(**valid_args)
             output["result"] = result
