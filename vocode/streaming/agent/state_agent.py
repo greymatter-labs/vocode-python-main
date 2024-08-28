@@ -394,11 +394,17 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
         )
 
     def update_history(self, role, message):
+        if role == "human":
+            # Remove the last human message if it exists
+            while self.chat_history and self.chat_history[-1][0] == "human":
+                self.chat_history.pop()
+                self.json_transcript.entries.pop()
+
         self.chat_history.append((role, message))
-        # self.logger.info(f"json t is {self.json_transcript}")
         self.json_transcript.entries.append(
             StateAgentTranscriptMessage(role=role, message=message)
         )
+
         if role == "message.bot" and len(message.strip()) > 0:
             self.produce_interruptible_agent_response_event_nonblocking(
                 AgentResponseMessage(message=BaseMessage(text=message))
