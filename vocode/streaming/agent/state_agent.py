@@ -396,7 +396,9 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
 
         if self.state_history:
             last_state = self.state_history[-1]
-            self.resume = lambda _: self.handle_state(last_state["id"])
+            self.resume = lambda _: self.handle_state(
+                get_default_next_state(last_state)
+            )
         else:
             self.resume = lambda _: self.handle_state(
                 self.state_machine["startingStateId"]
