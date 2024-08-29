@@ -923,7 +923,7 @@ class StreamingConversation(Generic[OutputDeviceType]):
 
         self.transcriber.start()
         self.transcriptions_worker.start()
-
+        initial_message = None
         if self.agent.get_agent_config().call_type == CallType.INBOUND:
             self.transcriber.mute()
             initial_message = self.agent.get_agent_config().initial_message
