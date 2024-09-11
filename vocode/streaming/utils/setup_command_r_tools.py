@@ -318,6 +318,27 @@ all_optional_tools = {
             }
         },
     },
+    ActionType.CHECK_BOULEVARD_RESCHEDULE_AVAILABILITY: {
+        "name": "check_boulevard_reschedule_availability",
+        "description": "Check the availability of appointments on Boulevard for a specific date and time.",
+        "parameter_definitions": {},
+    },
+    ActionType.RESCHEDULE_BOULEVARD_APPOINTMENT: {
+        "name": "reschedule_boulevard_appointment",
+        "description": "Reschedule an appointment on Boulevard.",
+        "parameter_definitions": {
+            "available_times": {
+                "description": "The available times for rescheduling",
+                "type": "list",
+                "required": True,
+            },
+            "selected_time": {
+                "description": "The selected time for rescheduling",
+                "type": "str",
+                "required": True,
+            },
+        },
+    },
 }
 
 
