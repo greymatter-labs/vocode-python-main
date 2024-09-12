@@ -8,6 +8,14 @@ from vocode.streaming.action.check_calendar_availability import (
     CheckCalendarAvailabilityActionConfig,
 )
 from vocode.streaming.action.create_agent import CreateAgent, CreateAgentActionConfig
+from vocode.streaming.action.check_boulevard_reschedule_availability import (
+    CheckBoulevardRescheduleAvailability,
+    CheckBoulevardRescheduleAvailabilityActionConfig,
+)
+from vocode.streaming.action.reschedule_boulevard_appointment import (
+    RescheduleBoulevardAppointment,
+    RescheduleBoulevardAppointmentActionConfig,
+)
 from vocode.streaming.action.create_sunshine_conversation import (
     CreateSunshineConversation,
     CreateSunshineConversationActionConfig,
@@ -87,6 +95,10 @@ class ActionFactory:
             return ForwardCallToMoovs(action_config)
         elif isinstance(action_config, CreateSunshineConversationActionConfig):
             return CreateSunshineConversation(action_config)
+        elif isinstance(action_config, CheckBoulevardRescheduleAvailabilityActionConfig):
+            return CheckBoulevardRescheduleAvailability(action_config)
+        elif isinstance(action_config, RescheduleBoulevardAppointmentActionConfig):
+            return RescheduleBoulevardAppointment(action_config)
         else:
             # raise Exception("Invalid action type")
             return None
