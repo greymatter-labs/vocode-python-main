@@ -123,10 +123,13 @@ class TranscriptEventManager(events_manager.EventsManager):
         self.logger = logger or logging.getLogger(__name__)
 
     async def handle_event(self, event: Event):
+        self.logger.info(f"got event {event.type}")
         if event.type == EventType.TRANSCRIPT:
             transcript_event = typing.cast(TranscriptEvent, event)
             self.output_device.consume_transcript(transcript_event)
             # self.logger.debug(event.dict())
+        if event.type == EventType.PHONE_CALL_ENDED:
+            self.logger.info("call ended")
 
     def restart(self, output_device: WebsocketOutputDevice):
         self.output_device = output_device

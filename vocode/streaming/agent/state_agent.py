@@ -797,7 +797,6 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
             async for chunk in stream:
                 text_chunk = chunk.choices[0].delta.content
                 if text_chunk:
-                    self.logger.info(f"Chunk: {chunk}")
                     response_text += text_chunk
                     if any(token in text_chunk for token in stop_tokens):
                         break

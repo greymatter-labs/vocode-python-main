@@ -5,6 +5,7 @@ import time
 
 from typing import Optional
 
+import urllib.parse
 from aioify import aioify
 from twilio.rest import Client
 from xml.etree import ElementTree as ET
@@ -48,19 +49,21 @@ class TwilioClient(BaseTelephonyClient):
     ) -> str:
         # TODO: Make this async. This is blocking.
         twiml = self.get_connection_twiml(conversation_id=conversation_id)
+        logging.error("about to create call")
         twilio_call = self.twilio_client.calls.create(
             twiml=twiml.body.decode("utf-8"),
             to=to_phone,
             from_=from_phone,
             send_digits=digits,
             record=record,
-            timeout=20,
-            status_callback=f"{os.getenv('BASE_URL')}/handle_status_callback",
+            timeout=5,
+            status_callback=f"https://{os.getenv('BASE_URL')}/handle_status_callback/{urllib.parse.quote_plus(conversation_id)}",
             status_callback_event=['initiated', 'ringing', 'answered', 'completed'],
             status_callback_method="POST",
             # machine_detection="Enable",
             **self.get_telephony_config().extra_params,
         )
+        logging.error(f"created call {twilio_call.sid}")
         return twilio_call.sid
 
     def get_connection_twiml(self, conversation_id: str):

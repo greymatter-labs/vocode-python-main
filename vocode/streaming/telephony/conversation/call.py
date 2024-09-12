@@ -29,6 +29,9 @@ from vocode.streaming.utils import create_conversation_id
 TelephonyOutputDeviceType = TypeVar(
     "TelephonyOutputDeviceType", bound=Union[TwilioOutputDevice, VonageOutputDevice]
 )
+logging.basicConfig()
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.DEBUG)
 
 
 class Call(StreamingConversation[TelephonyOutputDeviceType]):
@@ -79,5 +82,6 @@ class Call(StreamingConversation[TelephonyOutputDeviceType]):
         raise NotImplementedError
 
     async def tear_down(self):
+        logger.error("-----teardown------") 
         self.events_manager.publish_event(PhoneCallEndedEvent(conversation_id=self.id))
         await self.terminate()

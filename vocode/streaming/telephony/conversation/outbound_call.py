@@ -125,6 +125,7 @@ class OutboundCall:
             record=self.telephony_client.get_telephony_config().record,
             digits=self.digits,
         )
+        self.logger.error(f"telephony id {self.telephony_id}")
         if isinstance(self.telephony_client, TwilioClient):
             call_config = TwilioCallConfig(
                 transcriber_config=self.transcriber_config,

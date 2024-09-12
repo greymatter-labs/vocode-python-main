@@ -407,7 +407,6 @@ class AzureSynthesizer(BaseSynthesizer[AzureSynthesizerConfig]):
                     self.thread_pool_executor,
                     lambda: audio_data_stream.read_data(audio_buffer),
                 )
-                self.logger.debug(f"Filled size: {filled_size}")
                 if filled_size == 0 and not yielded:
                     self.logger.debug(
                         "No audio data returned, attempting to resume speech"

@@ -243,6 +243,7 @@ class StreamingConversation(Generic[OutputDeviceType]):
                                     "Content-Type": "application/json",
                                 },
                                 json=request_data,
+                                timeout=0.5
                             )
                         request_duration = time.time() - start_time
 
@@ -294,9 +295,6 @@ class StreamingConversation(Generic[OutputDeviceType]):
                 self.conversation.mark_last_action_timestamp()
                 return
             if self.block_inputs and not self.agent.agent_config.allow_interruptions:
-                self.conversation.logger.debug(
-                    "Ignoring transcription since we are in-flight..."
-                )
                 return
 
             # Mark the timestamp of the last action
@@ -1198,9 +1196,6 @@ class StreamingConversation(Generic[OutputDeviceType]):
                 self.transcriptions_worker.block_inputs = True
                 self.transcriptions_worker.time_silent = 0.0
                 self.transcriptions_worker.triggered_affirmative = False
-                self.logger.debug(
-                    f"Sending in synth buffer early, len {len(speech_data)}"
-                )
                 if self.agent.agent_config.allow_interruptions:
                     self.mark_last_action_timestamp()
                     for _ in range(1):
@@ -1448,6 +1443,7 @@ class StreamingConversation(Generic[OutputDeviceType]):
         await self.broadcast_interrupt()
         if self.synthesis_results_worker.current_task:
             self.synthesis_results_worker.current_task.cancel()
+        self.logger.error('publishing transcript complete event from terminate')
         self.events_manager.publish_event(
             TranscriptCompleteEvent(conversation_id=self.id, transcript=self.transcript)
         )

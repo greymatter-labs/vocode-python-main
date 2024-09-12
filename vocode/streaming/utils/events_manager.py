@@ -1,8 +1,13 @@
 from __future__ import annotations
 import asyncio
+import logging
 
 
 from vocode.streaming.models.events import Event
+
+logging.basicConfig()
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.DEBUG)
 
 
 async def flush_event(event):
@@ -19,6 +24,8 @@ class EventsManager:
         self.active = False
 
     def publish_event(self, event: Event):
+        print("got event!!")
+        logging.error(f"got event {event.type}")
         if event.type in self.subscriptions:
             self.queue.put_nowait(event)
 

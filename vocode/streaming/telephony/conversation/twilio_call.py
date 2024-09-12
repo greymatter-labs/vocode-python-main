@@ -92,10 +92,12 @@ class TwilioCall(Call[TwilioOutputDevice]):
         return TwilioCallStateManager(self)
 
     async def attach_ws_and_start(self, ws: WebSocket):
+        logging.error(f"attach_ws_and_start")
         super().attach_ws(ws)
 
         twilio_call_ref = self.telephony_client.twilio_client.calls(self.twilio_sid)
         twilio_call = twilio_call_ref.fetch()
+        logging.error(f"starting call. call is ${twilio_call}")
 
         if self.twilio_config.record:
             recordings_create_params = (
@@ -118,8 +120,10 @@ class TwilioCall(Call[TwilioOutputDevice]):
             time.sleep(4)
             twilio_call.update(status="completed")
         else:
+            logging.error("about to wait for call to start")
             await self.wait_for_twilio_start(ws)
             await super().start()
+            logging.error("publishing call connected event")
             self.events_manager.publish_event(
                 PhoneCallConnectedEvent(
                     conversation_id=self.id,
@@ -137,7 +141,12 @@ class TwilioCall(Call[TwilioOutputDevice]):
 
     async def wait_for_twilio_start(self, ws: WebSocket):
         assert isinstance(self.output_device, TwilioOutputDevice)
+        start_time = time.time()
         while True:
+            current_time = time.time()
+            if current_time - start_time > 1:
+                logging.error(f"gave up waiting for call to start")
+                break
             message = await ws.receive_text()
             if not message:
                 continue

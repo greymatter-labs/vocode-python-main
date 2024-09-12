@@ -1,3 +1,4 @@
+import logging
 import time
 from typing import Any, Dict, List, Optional, Union
 from pydantic import BaseModel, Field
@@ -74,6 +75,7 @@ class Transcript(BaseModel):
     def maybe_publish_transcript_event_from_message(
         self, message: Message, conversation_id: str
     ):
+        logging.error("publishing action start event")
         if self.events_manager is not None:
             self.events_manager.publish_event(
                 TranscriptEvent(
@@ -155,6 +157,7 @@ class Transcript(BaseModel):
                 timestamp=timestamp,
             )
         )
+        logging.error("publishing action start event")
         if self.events_manager is not None:
             self.events_manager.publish_event(
                 ActionEvent(
