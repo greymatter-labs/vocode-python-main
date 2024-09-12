@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import json
 import logging
 import math
@@ -8,6 +9,7 @@ import queue
 import random
 import threading
 import time
+import traceback
 import typing
 from copy import deepcopy
 from enum import Enum
@@ -831,6 +833,9 @@ class StreamingConversation(Generic[OutputDeviceType]):
         events_manager: Optional[EventsManager] = None,
         logger: Optional[logging.Logger] = None,
     ):
+        logger.exception(f"hey!!!!!!+ conversation id is ${conversation_id}")
+        logger.info(inspect.stack())
+        logger.info('done')
 
         self.id = conversation_id or create_conversation_id()
         self.logger = wrap_logger(
