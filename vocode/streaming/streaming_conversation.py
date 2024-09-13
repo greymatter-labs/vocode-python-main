@@ -69,6 +69,12 @@ from vocode.streaming.utils import create_conversation_id, get_chunk_size_per_se
 from vocode.streaming.utils.conversation_logger_adapter import wrap_logger
 from vocode.streaming.utils.events_manager import EventsManager
 from vocode.streaming.utils.goodbye_model import GoodbyeModel
+from vocode.streaming.utils.setup_tracer import (
+    end_span,
+    setup_tracer,
+    span_event,
+    start_span_in_ctx,
+)
 from vocode.streaming.utils.state_manager import ConversationStateManager
 from vocode.streaming.utils.worker import (
     AsyncQueueWorker,
@@ -81,6 +87,8 @@ from vocode.streaming.utils.worker import (
 
 from telephony_app.models.call_type import CallType
 from telephony_app.utils.call_information_handler import update_call_transcripts
+
+tracer = setup_tracer()
 
 OutputDeviceType = TypeVar("OutputDeviceType", bound=BaseOutputDevice)
 
@@ -830,6 +838,7 @@ class StreamingConversation(Generic[OutputDeviceType]):
             logger or logging.getLogger(__name__),
             conversation_id=self.id,
         )
+        self.conversation_span = tracer.start_span(f"conversation::{self.id}")
         self.logger.debug(f"Conversation ID: {self.id}")
         # threadingevent
         self.stop_event = threading.Event()
@@ -986,6 +995,9 @@ class StreamingConversation(Generic[OutputDeviceType]):
         self.transcriptions_worker.block_inputs = False
 
     async def send_initial_message(self, initial_message: BaseMessage):
+        initial_message_span = start_span_in_ctx(
+            name="send_initial_message", parent_span=self.conversation_span
+        )
         # TODO: configure if initial message is interruptible
         initial_message_tracker = asyncio.Event()
         agent_response_event = (
@@ -998,6 +1010,7 @@ class StreamingConversation(Generic[OutputDeviceType]):
         self.agent_responses_worker.consume_nonblocking(agent_response_event)
         await initial_message_tracker.wait()
         self.transcriber.unmute()
+        end_span(initial_message_span)
 
     async def check_for_idle(self):
         """Terminates the conversation after 15 seconds if no activity is detected"""
@@ -1432,6 +1445,7 @@ class StreamingConversation(Generic[OutputDeviceType]):
 
     async def terminate(self):
         self.mark_terminated()
+        end_span(self.conversation_span)
         await self.broadcast_interrupt()
         if self.synthesis_results_worker.current_task:
             self.synthesis_results_worker.current_task.cancel()
