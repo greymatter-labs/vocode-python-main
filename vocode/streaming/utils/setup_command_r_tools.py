@@ -322,7 +322,13 @@ all_optional_tools = {
     ActionType.CHECK_BOULEVARD_RESCHEDULE_AVAILABILITY: {
         "name": "check_boulevard_reschedule_availability",
         "description": "Check the availability of appointments on Boulevard for a specific date and time.",
-        "parameter_definitions": {},
+        "parameter_definitions": {
+            "days_in_advance": {
+                "description": "The number of days in advance to check for availability",
+                "type": "int",
+                "required": True,
+            }
+        },
     },
     ActionType.RESCHEDULE_BOULEVARD_APPOINTMENT: {
         "name": "reschedule_boulevard_appointment",
@@ -361,5 +367,5 @@ def setup_command_r_tools(action_config: CommandAgentConfig, logger: logging.Log
         else:
             logger.error(f"Unknown action type: {action_type}")
 
-    logger.debug(f"Created {len(optional_tools)} optional tools")
+    logger.error(f"Created {len(optional_tools)} optional tools")
     return optional_tools + standard_tools.copy()

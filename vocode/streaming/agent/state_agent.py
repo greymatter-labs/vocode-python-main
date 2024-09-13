@@ -597,6 +597,7 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
 
     async def compose_action(self, state):
         action = state["action"]
+        self.block_inputs = True
         self.json_transcript.entries.append(
             StateAgentTranscriptActionInvoke(
                 state_id=state["id"],
