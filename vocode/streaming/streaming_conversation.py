@@ -300,9 +300,6 @@ class StreamingConversation(Generic[OutputDeviceType]):
                 )
                 return
 
-            # Mark the timestamp of the last action
-            self.conversation.mark_last_action_timestamp()
-
             # If the message is just "vad", handle it without resetting the buffer check
             if transcription.message.strip() == "vad":
                 self.vad_detected = True
@@ -340,6 +337,8 @@ class StreamingConversation(Generic[OutputDeviceType]):
             self.conversation.logger.debug(
                 f"Transcription message: {' '.join(word['word'] for word in json.loads(transcription.message)['words'])}"
             )
+            # Mark the timestamp of the last action
+            self.conversation.mark_last_action_timestamp()
 
             # Strip the transcription message and log the time silent
             transcription.message = transcription.message
