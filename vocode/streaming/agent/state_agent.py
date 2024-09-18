@@ -523,7 +523,7 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
         speak_message = lambda message: self.print_message(message)
         call_ai = lambda prompt, tool, stop=None: self.call_ai(prompt, tool, stop)
 
-        for memory_dep in state['memoryDependencies']:
+        for memory_dep in state.get('memoryDependencies', []):
             await handle_memory_dep(memory_dep=memory_dep, speak=speak_message, call_ai=call_ai)
 
         await self.print_start_message(state, start=start)
