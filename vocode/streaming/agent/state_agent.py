@@ -132,15 +132,20 @@ async def handle_memory_dep(
     memory_dep: MemoryDependency,
     speak: Callable[[dict], None],
     call_ai: Callable[[str, Dict[str, Any], Optional[str]], Awaitable[str]],
+    retry: Callable[[Optional[str]], Awaitable[Any]],
 ):
     memory = await call_ai(
         f"try to extract the {memory_dep['key']}. If it's not in the conversation, return NONE"
     )
     if memory is not "NONE":
-        return memory
+        return await retry(memory)
 
     speak(memory_dep["question"])
-    return await handle_memory_dep(memory_dep=memory_dep, speak=speak, call_ai=call_ai)
+
+    async def resume():
+        return await retry()
+
+    return resume
 
 
 async def handle_options(
@@ -501,7 +506,7 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
             guide = message["description"]
             await self.guided_response(guide)
 
-    async def handle_state(self, state_id_or_label: str):
+    async def handle_state(self, state_id_or_label: str, memories: dict = {}):
         start = state_id_or_label not in self.visited_states
         self.visited_states.add(state_id_or_label)
         state = get_state(state_id_or_label, self.state_machine)
@@ -523,8 +528,23 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
         speak_message = lambda message: self.print_message(message)
         call_ai = lambda prompt, tool, stop=None: self.call_ai(prompt, tool, stop)
 
-        for memory_dep in state.get('memoryDependencies', []):
-            await handle_memory_dep(memory_dep=memory_dep, speak=speak_message, call_ai=call_ai)
+        for memory_dep in state.get("memoryDependencies", []):
+            cached_memory = memories.get(memory_dep["key"])
+            if not cached_memory:
+
+                async def retry(memory: Optional[str]):
+                    if memory:
+                        memories[memory_dep["key"]] = memory
+                    return await self.handle_state(
+                        state_id_or_label=state_id_or_label, memories=memories
+                    )
+
+                return await handle_memory_dep(
+                    memory_dep=memory_dep,
+                    speak=speak_message,
+                    call_ai=call_ai,
+                    retry=retry,
+                )
 
         await self.print_start_message(state, start=start)
 
