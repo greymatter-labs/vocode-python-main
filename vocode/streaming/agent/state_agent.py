@@ -123,6 +123,26 @@ async def handle_question(
     return resume
 
 
+class MemoryDependency(BaseModel):
+    key: str
+    question: dict  # {type: 'verbatim', message: str} | {type: 'description', description: str}
+
+
+async def handle_memory_dep(
+    memory_dep: MemoryDependency,
+    speak: Callable[[dict], None],
+    call_ai: Callable[[str, Dict[str, Any], Optional[str]], Awaitable[str]],
+):
+    memory = await call_ai(
+        f"try to extract the {memory_dep['key']}. If it's not in the conversation, return NONE"
+    )
+    if memory is not "NONE":
+        return memory
+
+    speak(memory_dep["question"])
+    return await handle_memory_dep(memory_dep=memory_dep, speak=speak, call_ai=call_ai)
+
+
 async def handle_options(
     state: Any,
     go_to_state: Callable[[str], Awaitable[Any]],
@@ -500,6 +520,11 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
 
         self.state_history.append(state)
         # self.logger.info(f"Current State: {state}")
+        speak_message = lambda message: self.print_message(message)
+        call_ai = lambda prompt, tool, stop=None: self.call_ai(prompt, tool, stop)
+
+        for memory_dep in state['memoryDependencies']:
+            await handle_memory_dep(memory_dep=memory_dep, speak=speak_message, call_ai=call_ai)
 
         await self.print_start_message(state, start=start)
 
@@ -508,8 +533,6 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
 
         go_to_state = lambda s: self.handle_state(s)
         speak = lambda text: self.update_history("message.bot", text)
-        speak_message = lambda message: self.print_message(message)
-        call_ai = lambda prompt, tool, stop=None: self.call_ai(prompt, tool, stop)
 
         if state["type"] == "question":
             return await handle_question(
