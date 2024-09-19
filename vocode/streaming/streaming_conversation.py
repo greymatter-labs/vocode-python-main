@@ -679,9 +679,6 @@ class StreamingConversation(Generic[OutputDeviceType]):
                         )
                         agent_response_message.message.text = current_message
                     else:
-                        self.conversation.logger.info(
-                            f"[{self.conversation.agent.agent_config.call_type}:{self.conversation.agent.agent_config.current_call_id}] Agent: {agent_response_message.message.text}"
-                        )
                         agent_response_message.message.text = (
                             agent_response_message.message.text.strip()
                         )
@@ -696,6 +693,9 @@ class StreamingConversation(Generic[OutputDeviceType]):
                         (agent_response_message.message, synthesis_result),
                         is_interruptible=item.is_interruptible,
                         agent_response_tracker=item.agent_response_tracker,
+                    )
+                    self.conversation.logger.info(
+                        f"[{self.conversation.agent.agent_config.call_type}:{self.conversation.agent.agent_config.current_call_id}] Agent: {agent_response_message.message.text}"
                     )
                 else:
                     self.conversation.logger.debug(
@@ -1030,6 +1030,13 @@ class StreamingConversation(Generic[OutputDeviceType]):
     async def check_for_idle(self):
         """Terminates the conversation after 15 seconds if no activity is detected"""
         while self.is_active():
+            if (
+                time.time() - self.last_action_timestamp > 4
+                and time.time() - self.last_action_timestamp < 30
+            ):
+                self.transcriber.VOLUME_THRESHOLD = 5000
+            else:
+                self.transcriber.VOLUME_THRESHOLD = 700
             if time.time() - self.last_action_timestamp > 30:
                 self.logger.debug("Conversation idle for too long, terminating")
                 await self.terminate()
