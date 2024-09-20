@@ -18,9 +18,6 @@ import httpx
 import numpy
 import requests
 from openai import AsyncOpenAI, OpenAI
-from telephony_app.models.call_type import CallType
-from telephony_app.utils.call_information_handler import update_call_transcripts
-
 from vocode import getenv
 from vocode.streaming.action.worker import ActionsWorker
 from vocode.streaming.agent.base_agent import (
@@ -87,6 +84,9 @@ from vocode.streaming.utils.worker import (
     InterruptibleEventFactory,
     InterruptibleWorker,
 )
+
+from telephony_app.models.call_type import CallType
+from telephony_app.utils.call_information_handler import update_call_transcripts
 
 tracer = setup_tracer()
 
@@ -375,7 +375,9 @@ class StreamingConversation(Generic[OutputDeviceType]):
                         f"Error cancelling buffer check task: {e}"
                     )
             if self.initial_message is not None and transcription.is_final:
-                await self.conversation.send_initial_message(self.initial_message)
+                asyncio.create_task(
+                    self.conversation.send_initial_message(self.initial_message)
+                )
                 self.initial_message = None
                 return
             if not transcription.is_final:
