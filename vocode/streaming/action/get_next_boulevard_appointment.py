@@ -52,6 +52,7 @@ class GetNextBoulevardAppointment(
 
             if next_appointment:
                 appointment_info = {
+                    "appointment_id": next_appointment["id"],
                     "date_time": next_appointment["startAt"],
                     "aesthetician": next_appointment["appointmentServices"][0]["staff"]["displayName"],
                     "services": ", ".join(
