@@ -238,7 +238,7 @@ class StreamingConversation(Generic[OutputDeviceType]):
                         start_time = time.time()
                         async with httpx.AsyncClient() as client:
                             response = await client.post(
-                                "https://endpoint-classifier-svc-5416-ff647d5d-owkpfw5l.onporter.run",
+                                "https://endpoint-classifier-svc-5416-ff647d5d-owkpfw5l.onporter.run/inference",
                                 headers={
                                     "accept": "application/json",
                                     "Content-Type": "application/json",
@@ -246,7 +246,7 @@ class StreamingConversation(Generic[OutputDeviceType]):
                                 json=request_data,
                                 timeout=1.0,
                             )
-                        print(f"response {response}")
+                        self.conversation.logger.error(f"HIRESPONES {response}")
                         request_duration = time.time() - start_time
 
                         # Parse the response and calculate sleep time
