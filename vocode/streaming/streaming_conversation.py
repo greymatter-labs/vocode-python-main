@@ -247,7 +247,7 @@ class StreamingConversation(Generic[OutputDeviceType]):
                                 timeout=1.0,
                                 follow_redirects=True,
                             )
-                        self.conversation.logger.error(f"HIRESPONES2 {response} {request_data}")
+                        self.conversation.logger.error(f"HIRESPONES3 {response} {request_data}")
                         request_duration = time.time() - start_time
 
                         # Parse the response and calculate sleep time
