@@ -238,7 +238,7 @@ class StreamingConversation(Generic[OutputDeviceType]):
                         start_time = time.time()
                         async with httpx.AsyncClient() as client:
                             response = await client.post(
-                                "https://endpoint-classifier-svc-5416-ff647d5d-owkpfw5l.onporter.run/inference",
+                                "https://endpoint-classifier-svc-5416-ff647d5d-owkpfw5l.onporter.run/inference/",
                                 headers={
                                     "accept": "application/json",
                                     "Content-Type": "application/json",
