@@ -245,7 +245,7 @@ class StreamingConversation(Generic[OutputDeviceType]):
                                     "Content-Type": "application/json",
                                 },
                                 json=request_data,
-                                timeout=1.0,
+                                timeout=0.5,
                                 follow_redirects=True,
                             )
                         request_duration = time.time() - start_time
