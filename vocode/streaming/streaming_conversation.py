@@ -246,7 +246,7 @@ class StreamingConversation(Generic[OutputDeviceType]):
                                 json=request_data,
                                 timeout=1.0,
                             )
-                        self.conversation.logger.error(f"HIRESPONES {response}")
+                        self.conversation.logger.error(f"HIRESPONES2 {response} {request_data}")
                         request_duration = time.time() - start_time
 
                         # Parse the response and calculate sleep time
