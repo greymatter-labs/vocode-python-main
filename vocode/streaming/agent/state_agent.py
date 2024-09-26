@@ -526,7 +526,7 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
         self.state_history.append(state)
         # self.logger.info(f"Current State: {state}")
         speak_message = lambda message: self.print_message(message)
-        call_ai = lambda prompt, tool, stop=None: self.call_ai(prompt, tool, stop)
+        call_ai = lambda prompt, tool=None, stop=None: self.call_ai(prompt, tool, stop)
 
         for memory_dep in state.get("memory_dependencies", []):
             cached_memory = memories.get(memory_dep["key"])
