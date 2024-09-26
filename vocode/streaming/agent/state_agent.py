@@ -133,10 +133,13 @@ async def handle_memory_dep(
     speak: Callable[[dict], Awaitable[None]],
     call_ai: Callable[[str, Dict[str, Any], Optional[str]], Awaitable[str]],
     retry: Callable[[Optional[str]], Awaitable[Any]],
+    logger: logging.Logger,
 ):
+    logger.info(f"handling memory dep {memory_dep}")
     memory = await call_ai(
         f"try to extract the {memory_dep['key']}. If it's not in the conversation, return NONE"
     )
+    logger.info(f"memory {memory}")
     if memory is not "NONE":
         return await retry(memory)
 
@@ -528,8 +531,10 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
         speak_message = lambda message: self.print_message(message)
         call_ai = lambda prompt, tool=None, stop=None: self.call_ai(prompt, tool, stop)
 
+        self.logger.info(f"{state['id']} memory deps: {state.get('memory_dependencies')}")
         for memory_dep in state.get("memory_dependencies", []):
             cached_memory = memories.get(memory_dep["key"])
+            self.logger.info(f"cached memory is {cached_memory}")
             if not cached_memory:
 
                 async def retry(memory: Optional[str]):
@@ -544,6 +549,7 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
                     speak=speak_message,
                     call_ai=call_ai,
                     retry=retry,
+                    logger=self.logger
                 )
 
         await self.print_start_message(state, start=start)
