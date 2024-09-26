@@ -130,7 +130,7 @@ class MemoryDependency(BaseModel):
 
 async def handle_memory_dep(
     memory_dep: MemoryDependency,
-    speak: Callable[[dict], None],
+    speak: Callable[[dict], Awaitable[None]],
     call_ai: Callable[[str, Dict[str, Any], Optional[str]], Awaitable[str]],
     retry: Callable[[Optional[str]], Awaitable[Any]],
 ):
@@ -140,7 +140,7 @@ async def handle_memory_dep(
     if memory is not "NONE":
         return await retry(memory)
 
-    speak(memory_dep["question"])
+    await speak(memory_dep["question"])
 
     async def resume():
         return await retry()
