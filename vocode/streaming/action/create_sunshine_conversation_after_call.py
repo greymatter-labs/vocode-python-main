@@ -34,7 +34,7 @@ class CreateSunshineConversationAfterCallResponse(BaseModel):
     status: str = Field(None, description="The response received from the recipient")
 
 
-class CreateSunshineConversation(
+class CreateSunshineConversationAfterCall(
     BaseAction[
         CreateSunshineConversationAfterCallActionConfig,
         CreateSunshineConversationAfterCallParameters,
