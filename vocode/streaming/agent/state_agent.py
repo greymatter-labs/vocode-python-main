@@ -137,10 +137,10 @@ async def handle_memory_dep(
 ):
     logger.info(f"handling memory dep {memory_dep}")
     memory = await call_ai(
-        f"try to extract the {memory_dep['key']}. If it's not in the conversation, return NONE"
+        f"try to extract the {memory_dep['key']}. If it's not in the conversation, return NOT FOUND"
     )
     logger.info(f"memory {memory}")
-    if memory is not "NONE":
+    if memory is not "NOT FOUND":
         return await retry(memory)
 
     await speak(memory_dep["question"])
