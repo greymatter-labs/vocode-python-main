@@ -1185,7 +1185,7 @@ class StreamingConversation(Generic[OutputDeviceType]):
         time_started_speaking = time.time()
         buffer_cleared = False
         total_time_sent = 0
-
+        moved_back = False
         async for chunk_result in synthesis_result.chunk_generator:
 
             if stop_event.is_set() and self.agent.agent_config.allow_interruptions:
@@ -1203,15 +1203,13 @@ class StreamingConversation(Generic[OutputDeviceType]):
                     self.mark_last_action_timestamp()
 
                     if stop_event.is_set():
+                        self.agent.move_back_state()
+                        moved_back = True
                         return "", False
 
                 await self.output_device.consume_nonblocking(speech_data)
                 chunk_time = len(speech_data) / (chunk_size / seconds_per_chunk)
                 total_time_sent += chunk_time
-
-                if not buffer_cleared and total_time_sent > 3:
-                    buffer_cleared = True
-                    self.transcriptions_worker.buffer.clear()
 
                 speech_data = bytearray()
 
@@ -1222,6 +1220,8 @@ class StreamingConversation(Generic[OutputDeviceType]):
             total_time_sent += len(speech_data) / (chunk_size / seconds_per_chunk)
         else:
             self.logger.debug("Interrupted speech output on the last chunk")
+            if not moved_back:
+                self.agent.move_back_state()
             return "", False
 
         self.transcriptions_worker.synthesis_done = True
@@ -1255,6 +1255,7 @@ class StreamingConversation(Generic[OutputDeviceType]):
             self.transcriptions_worker.synthesis_done = True
             started_event.set()
             self.transcriber.VOLUME_THRESHOLD = 1000
+            self.agent.restore_resume_state()
 
         if (
             self.agent_responses_worker.input_queue.qsize() == 0

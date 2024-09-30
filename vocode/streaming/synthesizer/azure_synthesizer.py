@@ -431,8 +431,6 @@ class AzureSynthesizer(BaseSynthesizer[AzureSynthesizerConfig]):
             audio_data_stream: speechsdk.AudioDataStream, chunk_transform=lambda x: x
         ):
             while True:
-                self.logger.error(f"Stream status: {audio_data_stream.status}")
-
                 if audio_data_stream.can_read_data(chunk_size):
                     try:
                         audio_buffer = bytes(chunk_size)
