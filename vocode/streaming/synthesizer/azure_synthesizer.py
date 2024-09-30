@@ -414,7 +414,7 @@ class AzureSynthesizer(BaseSynthesizer[AzureSynthesizerConfig]):
 
         # offset = int(self.OFFSET_MS * (self.synthesizer_config.sampling_rate / 1000))
         offset = 0
-        self.logger.debug(f"Synthesizing message: {message}")
+        # self.logger.debug(f"Synthesizing message: {message}")
 
         # Azure will return no audio for certain strings like "-", "[-", and "!"
         # which causes the `chunk_generator` below to hang. Return an empty
@@ -446,9 +446,9 @@ class AzureSynthesizer(BaseSynthesizer[AzureSynthesizerConfig]):
                 else:
                     # Check if the stream is finished
                     if audio_data_stream.status == speechsdk.StreamStatus.AllData:
-                        self.logger.debug("Stream status is FINISHED")
+                        # self.logger.debug("Stream status is FINISHED")
                         break
-                    self.logger.debug("Waiting for more audio data")
+                    # self.logger.debug("Waiting for more audio data")
                     await asyncio.sleep(0.1)
 
         word_boundary_event_pool = WordBoundaryEventPool()

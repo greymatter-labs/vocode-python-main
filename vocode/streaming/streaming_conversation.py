@@ -332,9 +332,9 @@ class StreamingConversation(Generic[OutputDeviceType]):
                 return
             elif len(json.loads(transcription.message)["words"]) == 0:
                 # when we wait more, they were silent so we want to push out a filler audio
-                self.conversation.logger.info(
-                    "Ignoring transcription, zero words in words."
-                )
+                # self.conversation.logger.info(
+                #     "Ignoring transcription, zero words in words."
+                # )
                 return
 
             self.conversation.logger.debug(
@@ -1197,7 +1197,7 @@ class StreamingConversation(Generic[OutputDeviceType]):
                 self.transcriptions_worker.block_inputs = True
                 self.transcriptions_worker.time_silent = 0.0
                 self.transcriptions_worker.triggered_affirmative = False
-                self.logger.debug(f"Sending chunk, len {len(speech_data)}")
+                # self.logger.debug(f"Sending chunk, len {len(speech_data)}")
 
                 if self.agent.agent_config.allow_interruptions:
                     self.mark_last_action_timestamp()
