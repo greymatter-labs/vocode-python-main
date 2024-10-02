@@ -393,6 +393,7 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
         self.current_state = None
         self.resume_task = None
         self.resume = lambda _: self.handle_state(self.state_machine["startingStateId"])
+        self.memories = {}
         self.can_send = False
         self.conversation_id = None
         self.twilio_sid = None
@@ -548,7 +549,7 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
             guide = message["description"]
             await self.guided_response(guide)
 
-    async def handle_state(self, state_id_or_label: str, memories: dict = {}):
+    async def handle_state(self, state_id_or_label: str):
         start = state_id_or_label not in self.visited_states
         self.visited_states.add(state_id_or_label)
         state = get_state(state_id_or_label, self.state_machine)
@@ -574,15 +575,15 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
             f"{state['id']} memory deps: {state.get('memory_dependencies')}"
         )
         for memory_dep in state.get("memory_dependencies", []):
-            cached_memory = memories.get(memory_dep["key"])
+            cached_memory = self.memories.get(memory_dep["key"])
             self.logger.info(f"cached memory is {cached_memory}")
             if not cached_memory:
 
                 async def retry(memory: Optional[str]):
                     if memory:
-                        memories[memory_dep["key"]] = memory
+                        self.memories[memory_dep["key"]] = memory
                     return await self.handle_state(
-                        state_id_or_label=state_id_or_label, memories=memories
+                        state_id_or_label=state_id_or_label
                     )
 
                 return await handle_memory_dep(
