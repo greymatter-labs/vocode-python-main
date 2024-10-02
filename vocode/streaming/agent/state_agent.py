@@ -400,6 +400,7 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
         self.block_inputs = False
         self.stop = False
         self.visited_states = {self.state_machine["startingStateId"]}
+        self.spoken_states = set()
         self.state_history = []
         self.chat_history = [("message.bot", self.agent_config.initial_message)]
         self.base_url = getenv("AI_API_HUGE_BASE")
@@ -540,14 +541,20 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
             if state["start_message"]["type"] != "verbatim":
                 start = True  # no need to skip the print if its relative since it wont be repetitive
         if start and "start_message" in state:
-            await self.print_message(state["start_message"])
+            await self.print_message(state["start_message"], state["id"])
 
-    async def print_message(self, message):
-        if message["type"] == "verbatim":
-            self.update_history("message.bot", message["message"])
+    async def print_message(self, message, current_state_id):
+        if current_state_id in self.spoken_states and message["type"] == "verbatim":
+            original_message = message["message"]
+            constructed_guide = f"You had previously asked the user: '{original_message}'. You did not get a clear answer. Respond appropriately to the user to answer their question(s) (if any) and get the answer you need."
+            await self.guided_response(constructed_guide)
         else:
-            guide = message["description"]
-            await self.guided_response(guide)
+            if message["type"] == "verbatim":
+                self.spoken_states.add(current_state_id)
+                self.update_history("message.bot", message["message"])
+            else:
+                guide = message["description"]
+                await self.guided_response(guide)
 
     async def handle_state(self, state_id_or_label: str):
         start = state_id_or_label not in self.visited_states
@@ -568,7 +575,7 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
 
         self.state_history.append(state)
         # self.logger.info(f"Current State: {state}")
-        speak_message = lambda message: self.print_message(message)
+        speak_message = lambda message: self.print_message(message, state["id"])
         call_ai = lambda prompt, tool=None, stop=None: self.call_ai(prompt, tool, stop)
 
         self.logger.info(
@@ -582,9 +589,7 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
                 async def retry(memory: Optional[str]):
                     if memory:
                         self.memories[memory_dep["key"]] = memory
-                    return await self.handle_state(
-                        state_id_or_label=state_id_or_label
-                    )
+                    return await self.handle_state(state_id_or_label=state_id_or_label)
 
                 return await handle_memory_dep(
                     memory_dep=memory_dep,
