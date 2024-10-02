@@ -392,7 +392,7 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
         self.state_machine = self.agent_config.user_json_prompt["converted"]
         self.current_state = None
         self.resume_task = None
-        self.resume = lambda _: self.handle_state(self.state_machine["startingStateId"])
+        self.resume = lambda _: self.handle_state(self.state_machine["startingStateId"], {})
         self.can_send = False
         self.conversation_id = None
         self.twilio_sid = None
@@ -414,7 +414,7 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
             + self.state_machine["states"]["start"]["instructions"]
         )
         self.label_to_state_id = self.state_machine["labelToStateId"]
-        logger.info("CREATED NEW STATE AGENT!++++++++++")
+        logger.info(f"OCT2! call is ")
 
     def update_state_from_transcript(self, transcript: StateAgentTranscript):
         self.json_transcript = transcript
@@ -550,6 +550,7 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
             await self.guided_response(guide)
 
     async def handle_state(self, state_id_or_label: str, memories: dict = {}):
+        self.logger.info(f"HANDLESTATE memories {memories}")
         start = state_id_or_label not in self.visited_states
         self.visited_states.add(state_id_or_label)
         state = get_state(state_id_or_label, self.state_machine)
