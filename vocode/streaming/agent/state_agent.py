@@ -414,6 +414,7 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
             + self.state_machine["states"]["start"]["instructions"]
         )
         self.label_to_state_id = self.state_machine["labelToStateId"]
+        logger.info("CREATED NEW STATE AGENT!++++++++++")
 
     def update_state_from_transcript(self, transcript: StateAgentTranscript):
         self.json_transcript = transcript
