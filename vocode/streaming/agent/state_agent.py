@@ -1067,6 +1067,7 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
             else:
                 resume_state = "start"
             
+            self.logger.info(f"in restore resume state, will resume at {resume_state}")
             def resume(human_input: str):
                 self.logger.info(f"resuming at {resume_state}. Human input was {human_input}, let's see if it shows up in the transcript without manually adding")
                 self.handle_state(resume_state)
