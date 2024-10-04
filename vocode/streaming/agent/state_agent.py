@@ -576,6 +576,7 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
             )
             return
         self.json_transcript.entries.append(
+            # use the ID as label if label not available, like if the agent was last updated before labels existed
             StateAgentTranscriptHandleState(state_id=state["id"], generated_label=state.get("generated_label", state["id"]))
         )
 
