@@ -1142,6 +1142,7 @@ class StreamingConversation(Generic[OutputDeviceType]):
         #         self.agent.set_stop()  # TODO: we want to instead have two types of stopping, moving back and staying still
 
         # this above is done by just calling generate completion
+        self.agent.block_inputs = False
         num_interrupts = 0
         while True:
             try:
