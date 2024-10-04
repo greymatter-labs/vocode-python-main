@@ -178,7 +178,7 @@ async def handle_memory_dep(
 
     await speak(memory_dep["question"])
 
-    async def resume():
+    async def resume(human_input: str):
         return await retry()
 
     return resume
@@ -533,7 +533,10 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
             except asyncio.CancelledError:
                 self.logger.info(f"Old resume task cancelled")
         self.resume_task = asyncio.create_task(self.resume(human_input))
-        await self.resume_task
+        resume_output = await self.resume_task
+        if self.resume_task.cancelled():
+            resume_output = self.resume
+        self.resume = resume_output
         return "", True
 
     async def print_start_message(self, state, start: bool):
@@ -592,7 +595,7 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
             self.logger.info(f"cached memory is {cached_memory}")
             if not cached_memory:
 
-                async def retry(memory: Optional[str]):
+                async def retry(memory: Optional[str] = None):
                     if memory:
                         self.memories[memory_dep["key"]] = memory
                     return await self.handle_state(state_id_or_label=state_id_or_label)

@@ -1255,7 +1255,7 @@ class StreamingConversation(Generic[OutputDeviceType]):
             self.transcriptions_worker.synthesis_done = True
             started_event.set()
             self.transcriber.VOLUME_THRESHOLD = 1000
-            self.agent.restore_resume_state()
+            # self.agent.restore_resume_state()
 
         if (
             self.agent_responses_worker.input_queue.qsize() == 0
