@@ -180,7 +180,8 @@ async def handle_memory_dep(
     logger.error(f"ASKING THE MEMORY QUESTION: {memory_dep['question']}")
     await speak(memory_dep["question"])
 
-    async def resume():
+    async def resume(human_input: str):
+        logger.info(f"resuming from memory dep. Human input is {human_input}, let's see if it shows up in the transcript")
         logger.info(f"entering resume from the state that had memory dep {memory_dep['key']}")
         return await retry()
 
