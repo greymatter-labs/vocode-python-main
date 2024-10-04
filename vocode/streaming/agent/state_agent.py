@@ -174,11 +174,15 @@ async def handle_memory_dep(
     memory = output_dict[memory_dep["key"]]
     logger.info(f"memory directly from AI: {memory}")
     if memory != "MISSING":
+        logger.error(f"UPDATING MEM CACHE: {memory_dep['question']}")
         return await retry(memory)
 
+    logger.error(f"ASKING THE MEMORY QUESTION: {memory_dep['question']}")
     await speak(memory_dep["question"])
 
-    async def resume():
+    async def resume(human_input: str):
+        logger.info(f"resuming from memory dep. Human input is {human_input}, let's see if it shows up in the transcript")
+        logger.info(f"entering resume from the state that had memory dep {memory_dep['key']}")
         return await retry()
 
     return resume
@@ -437,10 +441,12 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
                     self.logger.info(f"Updated state: {state_id}")
                     # Set resume immediately after updating the state
                     if state["type"] == "question":
+                        self.logger.info(f"FOR QUESTION: setting self.resume to go to {get_default_next_state(state)}")
                         self.resume = lambda _: self.handle_state(
                             get_default_next_state(state)
                         )
                     else:
+                        self.logger.info(f"setting self.resume to go to {state['id']}")
                         self.resume = lambda _: self.handle_state(state["id"])
             elif isinstance(entry, StateAgentTranscriptMessage):
                 role = entry.role
@@ -529,11 +535,19 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
             self.resume_task.cancel()
             # self.move_back_state()
             try:
+                self.logger.info("STARTING self.resume_task in generate_completion")
                 await self.resume_task
+                self.logger.info("DONE self.resume_task in generate_completion")
             except asyncio.CancelledError:
                 self.logger.info(f"Old resume task cancelled")
+        self.logger.info("CREATING NEW self.resume_task in generate_completion")
         self.resume_task = asyncio.create_task(self.resume(human_input))
-        await self.resume_task
+        # self.resume = await self.resume(human_input)
+        resume_output = await self.resume_task
+        if self.resume_task.cancelled():
+            resume_output = self.resume
+        self.resume = resume_output
+        self.logger.info("DONE WITH NEW self.resume_task in generate_completion")
         return "", True
 
     async def print_start_message(self, state, start: bool):
@@ -565,6 +579,9 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
     async def handle_state(self, state_id_or_label: str):
         start = state_id_or_label not in self.visited_states
         state = get_state(state_id_or_label, self.state_machine)
+        self.logger.info(f"HANDLESTATE id:{state['id']} (this was added after resume logging)")
+        if state["id"] == "directly transfer to a representative::action":
+            raise Exception()
         self.current_state = state
 
         if not state:
@@ -588,12 +605,13 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
         )
         for memory_dep in state.get("memory_dependencies", []):
             cached_memory = self.memories.get(memory_dep["key"])
-            self.logger.info(f"cached memory is {cached_memory}")
+            self.logger.info(f"cached memory for {memory_dep['key']} is {cached_memory}")
             if not cached_memory:
 
-                async def retry(memory: Optional[str]):
+                async def retry(memory: Optional[str] = None):
                     if memory:
                         self.memories[memory_dep["key"]] = memory
+                    self.logger.info(f"about to call handle state from retry() on {state_id_or_label}")
                     return await self.handle_state(state_id_or_label=state_id_or_label)
 
                 return await handle_memory_dep(
@@ -1028,23 +1046,34 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
 
         # Set the resume state
         if self.state_history:
+            self.logger.info(f"in move_back_state: setting self.resume to {self.state_history[-1]['id']}")
             self.resume = lambda _: self.handle_state(self.state_history[-1]["id"])
         else:
+            self.logger.info(f"in move_back_state: setting self.resume to START")
             self.resume = lambda _: self.handle_state(
                 self.state_machine["startingStateId"]
             )
 
     # this might not be needed.
     def restore_resume_state(self):
+        self.logger.info("RESTORE RESUME STATE")
+        resume_state = None
         if self.state_history:
+            self.logger.info("RESTORE RESUME STATE actually doing something")
             current_state = self.state_history[-1]
             if "edge" in current_state:
-                self.resume = lambda _: self.handle_state(current_state["edge"])
+                resume_state = current_state["edge"]
             elif "edges" in current_state:
                 for state in current_state["edges"]:
                     if "isDefault" in state and state["isDefault"]:
-                        self.resume = lambda _: self.handle_state(state["destStateId"])
+                        resume_state = state["destStateId"]
                         return
-                self.resume = lambda _: self.handle_state(current_state[id])
+                resume_state = current_state[id]
             else:
-                self.resume = lambda _: self.handle_state("start")
+                resume_state = "start"
+            
+            self.logger.info(f"in restore resume state, will resume at {resume_state}")
+            def resume(human_input: str):
+                self.logger.info(f"resuming at {resume_state}. Human input was {human_input}, let's see if it shows up in the transcript without manually adding")
+                self.handle_state(resume_state)
+            self.resume = resume

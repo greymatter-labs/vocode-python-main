@@ -391,9 +391,9 @@ class StreamingConversation(Generic[OutputDeviceType]):
             # Broadcast an interrupt and set the buffer status to DISCARD
             await self.conversation.broadcast_interrupt()
             if stashed_buffer != self.buffer:
-                self.conversation.logger.info(
-                    f"Buffer changed on interrupt, putting stashed buffer back"
-                )
+                # self.conversation.logger.info(
+                #     f"Buffer changed on interrupt, putting stashed buffer back"
+                # )
                 self.buffer = stashed_buffer
             self.ready_to_send = BufferStatus.DISCARD
             # Start a new buffer check task to recalculate the timing
@@ -1138,7 +1138,7 @@ class StreamingConversation(Generic[OutputDeviceType]):
 
         Returns true if any events were interrupted - which is used as a flag for the agent (is_interrupt)
         """
-        self.logger.debug("Broadcasting interrupt")
+        # self.logger.debug("Broadcasting interrupt")
         self.stop_event.set()
         if isinstance(self.agent, CommandAgent):
             self.agent.stop = not self.agent.stop
@@ -1293,7 +1293,7 @@ class StreamingConversation(Generic[OutputDeviceType]):
             self.transcriptions_worker.synthesis_done = True
             started_event.set()
             self.transcriber.VOLUME_THRESHOLD = 1000
-            self.agent.restore_resume_state()
+            # self.agent.restore_resume_state()
 
         if (
             self.agent_responses_worker.input_queue.qsize() == 0
