@@ -5,7 +5,7 @@ from typing import List, Optional, Union
 
 from pydantic import BaseModel, Field, root_validator
 
-from vocode.streaming.agent.state_agent import MemoryDependency
+from vocode.streaming.models.memory_dependency import MemoryDependency
 
 
 class StateAgentTranscriptRole(str, Enum):
