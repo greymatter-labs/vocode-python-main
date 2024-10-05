@@ -1004,15 +1004,15 @@ class StreamingConversation(Generic[OutputDeviceType]):
         )
         # TODO: configure if initial message is interruptible
         initial_message_tracker = asyncio.Event()
-        agent_response_event = (
-            self.interruptible_event_factory.create_interruptible_agent_response_event(
-                AgentResponseMessage(message=initial_message),
-                is_interruptible=False,
-                agent_response_tracker=initial_message_tracker,
+        # If it is outbound, update the history with the initial message
+        if self.agent.get_agent_config().call_type == CallType.OUTBOUND:
+            self.agent.update_history(
+                "human", self.transcriptions_worker.buffer.to_message()
             )
-        )
-        self.agent_responses_worker.consume_nonblocking(agent_response_event)
+            self.agent.update_history("message.bot", initial_message.text)
 
+        elif self.agent.get_agent_config().call_type == CallType.INBOUND:
+            self.agent.update_history("message.bot", initial_message.text)
         # Start a timer to track when 2 seconds have passed
         start_time = time.time()
         self.transcriber.VOLUME_THRESHOLD = 4000  # make it so high vad wont interrupt it, only a real transcription will

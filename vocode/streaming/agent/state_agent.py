@@ -423,7 +423,7 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
         self.visited_states = {self.state_machine["startingStateId"]}
         self.spoken_states = set()
         self.state_history = []
-        self.chat_history = [("message.bot", self.agent_config.initial_message)]
+        self.chat_history = []
         self.base_url = getenv("AI_API_HUGE_BASE")
         self.model = self.agent_config.model_name
         self.client = AsyncOpenAI(
@@ -744,7 +744,7 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
 
         message = await self.call_ai(prompt, None)
         message = message.strip()
-        self.logger.info(f"Guided response: {message}")
+        self.logger.debug(f"Guided response: {message}")
         self.update_history("message.bot", message)
         return message
 
@@ -757,7 +757,7 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
             )
         )
         self.state_history.append(state)
-        self.logger.info(f"Attempting to call: {action}")
+        self.logger.debug(f"Attempting to call: {action}")
         action_name = action["name"]
         action_description = action["description"]
         self.logger.debug(f"Action description: {action_description}")
@@ -848,7 +848,7 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
         else:
             params = finalized_params
 
-        self.logger.info(f"Final params for action {action_name}: {params}")
+        self.logger.debug(f"Final params for action {action_name}: {params}")
 
         try:
             action = self.action_factory.create_action(action_config)
