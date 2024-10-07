@@ -339,6 +339,7 @@ async def handle_options(
         next_state_id = response_to_edge[condition][
             "destStateId"
         ]  # this gets set as start if user is confused and the default next is start
+        logger.info("NEXT STATE ID IS {next_state_id}")
         # the issue is that start has no start message
         if response_to_edge[condition].get("speak"):
             tool = {"response": "insert your response to the user"}
@@ -578,6 +579,7 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
             self.block_inputs = True
 
     async def handle_state(self, state_id_or_label: str):
+        self.logger.info(f"HANDLINGSTATE {state_id_or_label}")
         start = state_id_or_label not in self.visited_states
         self.visited_states.add(state_id_or_label)
         state = get_state(state_id_or_label, self.state_machine)
