@@ -678,6 +678,7 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
                 get_chat_history=lambda: self.chat_history,
                 logger=self.logger,
                 state_history=self.state_history,
+                append_json_transcript=lambda m: self.state_history.append(m)
             )
             if clarification_state:
                 self.state_history.append(clarification_state)
