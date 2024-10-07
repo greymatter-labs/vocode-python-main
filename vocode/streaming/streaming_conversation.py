@@ -1009,10 +1009,11 @@ class StreamingConversation(Generic[OutputDeviceType]):
             self.agent.update_history(
                 "human", self.transcriptions_worker.buffer.to_message()
             )
-            self.agent.update_history("message.bot", initial_message.text)
-
-        elif self.agent.get_agent_config().call_type == CallType.INBOUND:
-            self.agent.update_history("message.bot", initial_message.text)
+        self.agent.update_history(
+            "message.bot",
+            initial_message.text,
+            agent_response_tracker=initial_message_tracker,
+        )
         # Start a timer to track when 2 seconds have passed
         start_time = time.time()
         self.transcriber.VOLUME_THRESHOLD = 4000  # make it so high vad wont interrupt it, only a real transcription will

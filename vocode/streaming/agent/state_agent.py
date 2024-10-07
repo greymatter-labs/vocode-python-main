@@ -503,7 +503,12 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
             f"Resume function updated to state: {self.resume.__name__ if hasattr(self.resume, '__name__') else 'lambda'}"
         )
 
-    def update_history(self, role, message):
+    def update_history(
+        self,
+        role,
+        message,
+        agent_response_tracker: Optional[asyncio.Event] = None,
+    ):
         if role == "human":
             # Remove the last human message if it exists
             while self.chat_history and self.chat_history[-1][0] == "human":
@@ -517,7 +522,8 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
 
         if role == "message.bot" and len(message.strip()) > 0:
             self.produce_interruptible_agent_response_event_nonblocking(
-                AgentResponseMessage(message=BaseMessage(text=message))
+                AgentResponseMessage(message=BaseMessage(text=message)),
+                agent_response_tracker=agent_response_tracker,
             )
 
     def get_json_transcript(self):
