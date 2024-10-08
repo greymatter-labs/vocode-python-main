@@ -424,6 +424,7 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
         self.twilio_sid = None
         self.block_inputs = False
         self.stop = False
+        self.current_block_name = None
         self.visited_states = {self.state_machine["startingStateId"]}
         self.spoken_states = set()
         self.state_history = []
@@ -536,8 +537,6 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
                 return message
         return "How can I assist you today?"
 
-        # Start of Selection
-
     async def generate_completion(
         self,
         affirmative_phrase: Optional[str],
@@ -552,14 +551,9 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
         )
 
         transfer_block_name = self.state_machine.get("transfer_block_name")
-        is_transfer_in_history = (
-            transfer_block_name in [state["id"] for state in self.state_history]
-            if transfer_block_name
-            else False
-        )
 
         try:
-            if transfer_block_name and not is_transfer_in_history:
+            if transfer_block_name and self.current_block_name != transfer_block_name:
                 # Start resume_task and should_transfer task concurrently
                 self.resume_task = asyncio.create_task(self.resume(human_input))
                 transfer_task = asyncio.create_task(self.should_transfer())
@@ -704,6 +698,10 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
                 )
             )
             return
+
+        if state["start_of_block"] != None:
+            self.current_block_name = state["start_of_block"]
+
         self.json_transcript.entries.append(
             # use the ID as label if label not available, like if the agent was last updated before labels existed
             StateAgentTranscriptHandleState(
