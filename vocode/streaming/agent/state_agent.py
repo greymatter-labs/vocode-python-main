@@ -744,13 +744,22 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
                     memory_id=memory_dep["key"] + "_memory",
                     memory_reason=reason,
                 )
-                return await handle_memory_dep(
-                    memory_dep=memory_dep,
-                    speak=speak_message,
-                    call_ai=call_ai,
-                    retry=retry,
-                    logger=self.logger,
-                )
+                try:
+                    return await handle_memory_dep(
+                        memory_dep=memory_dep,
+                        speak=speak_message,
+                        call_ai=call_ai,
+                        retry=retry,
+                        logger=self.logger,
+                    )
+                except Exception as e:
+                    self.json_transcript.entries.append(
+                        StateAgentTranscriptInvariantViolation(
+                            message=f"error handling memory {memory_dep['key']}: {e}",
+                            original_state=state,
+                        )
+                    )
+                    return await retry()
 
         await self.print_start_message(state, start=start)
 
