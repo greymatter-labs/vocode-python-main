@@ -753,9 +753,11 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
             if not cached_memory:
 
                 async def retry(memory: Optional[str] = None):
+                    new_retry_count = retry_count + 1
                     if memory:
+                        new_retry_count = 0
                         self.memories[memory_dep["key"]] = memory
-                    return await self.handle_state(state_id_or_label=state_id_or_label, retry_count=retry_count+1)
+                    return await self.handle_state(state_id_or_label=state_id_or_label, retry_count=new_retry_count)
 
                 speak_message = lambda message, reason: self.print_message(
                     message,
