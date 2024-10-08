@@ -555,9 +555,8 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
             self.resume_task
             and not self.resume_task.cancelled()
             and not self.resume_task.done()
-        ):  # if something in progress, we want to move back when cancelling	            if transfer_block_name and self.current_block_name != transfer_block_name:
+        ):
             self.resume_task.cancel()  # Start resume_task and should_transfer task concurrently
-            # self.move_back_state()	                self.resume_task = asyncio.create_task(self.resume(human_input))
             try:
                 await self.resume_task
             except asyncio.CancelledError:  # Wait for the first task to complete
