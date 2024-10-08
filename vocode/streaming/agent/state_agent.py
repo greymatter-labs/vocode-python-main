@@ -681,7 +681,7 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
             f"Based on the following conversation, determine if the user has specifically requested to transfer or speak to a human representative:\n\n"
             f"Bot's last message: '{last_bot_message}'\n"
             f"User's response: '{last_user_message}'\n\n"
-            f"Your response must be a single word. Respond with either 'transfer' if the user requested to transfer or speak to a human, or 'continue' if they didnt'."
+            f"Your response must be a single word. Respond with either 'transfer' if the user requested to transfer or speak to a human, or 'continue' if they didn't."
         )
 
         response = await self.call_ai(prompt)
