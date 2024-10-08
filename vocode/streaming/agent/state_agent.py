@@ -689,6 +689,7 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
         return response.strip().lower() == "transfer"
 
     async def handle_state(self, state_id_or_label: str):
+        self.logger.info(f"MEMORIES {self.memories}")
         start = state_id_or_label not in self.visited_states
         self.visited_states.add(state_id_or_label)
         state = get_state(state_id_or_label, self.state_machine)
