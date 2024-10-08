@@ -587,8 +587,8 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
                         )
                     if transfer_block_name:
                         self.resume = lambda _: self.handle_state(transfer_block_name)
-                        # Handle the transfer state immediately
-                        await self.handle_state(transfer_block_name)
+                        self.resume_task = asyncio.create_task(self.resume(human_input))
+                        await self.resume_task
                     else:
                         self.logger.error(
                             "transfer_block_name not found in state_machine"
