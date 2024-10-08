@@ -668,6 +668,10 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
                 state_history=self.state_history,
             )
 
+        def append_json_transcript(m: StateAgentTranscriptDebugEntry):
+            self.state_history.append(m)
+            self.logger.info(f"appended {m} to transcript")
+
         if state["type"] == "options":
             out, clarification_state = await handle_options(
                 state=state,
@@ -678,7 +682,7 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
                 get_chat_history=lambda: self.chat_history,
                 logger=self.logger,
                 state_history=self.state_history,
-                append_json_transcript=lambda m: self.state_history.append(m)
+                append_json_transcript=append_json_transcript
             )
             if clarification_state:
                 self.state_history.append(clarification_state)
