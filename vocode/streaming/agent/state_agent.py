@@ -174,7 +174,9 @@ async def handle_memory_dep(
 
     if "MISSING" not in memory:
         return await retry(memory)
+    logger.info(f"BEFORE SPLITTING {memory}")
     memory_reason = memory.split(":")[1].strip() if ":" in memory else ""
+    logger.info("BEFORE SPLITTING")
 
     await speak(memory_dep["question"], memory_reason)
 
@@ -694,6 +696,7 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
         return response.strip().lower() == "transfer"
 
     async def handle_state(self, state_id_or_label: str, retry_count: int = 0):
+        self.logger.info(f"handle state {state_id_or_label} retry count {retry_count}")
         start = state_id_or_label not in self.visited_states
         self.visited_states.add(state_id_or_label)
         state = get_state(state_id_or_label, self.state_machine)
@@ -725,7 +728,7 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
         if retry_count > 20:
             self.json_transcript.entries.append(
                 StateAgentTranscriptInvariantViolation(
-                    message=f"retried state {state['id']} too many times",
+                    message=f"retried state {state['id']} too many times ({retry_count})",
                     original_state=state,
                 )
             )
