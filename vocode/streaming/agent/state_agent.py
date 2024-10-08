@@ -722,7 +722,7 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
 
         self.state_history.append(state)
 
-        if retry_count > 1:
+        if retry_count > 20:
             self.json_transcript.entries.append(
                 StateAgentTranscriptInvariantViolation(
                     message=f"retried state {state['id']} too many times",
