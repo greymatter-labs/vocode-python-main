@@ -115,6 +115,8 @@ class StateAgentTranscript(JsonTranscript):
                         parsed_entries.append(StateAgentTranscriptActionError(**entry))
                     elif entry["type"] == StateAgentDebugMessageType.HANDLE_STATE:
                         parsed_entries.append(StateAgentTranscriptHandleState(**entry))
+                    elif entry["type"] == StateAgentDebugMessageType.BRANCH_DECISION:
+                        parsed_entries.append(StateAgentTranscriptBranchDecision(**entry))
                     elif (
                         entry["type"] == StateAgentDebugMessageType.INVARIANT_VIOLATION
                     ):
