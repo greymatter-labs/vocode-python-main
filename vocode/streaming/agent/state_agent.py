@@ -698,9 +698,9 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
                 )
             )
             return
-
-        if state["start_of_block"] != None:
-            self.current_block_name = state["start_of_block"]
+        start_of_block = state.get("start_of_block")
+        if start_of_block:
+            self.current_block_name = start_of_block
 
         self.json_transcript.entries.append(
             # use the ID as label if label not available, like if the agent was last updated before labels existed
