@@ -157,25 +157,21 @@ async def handle_memory_dep(
     logger: logging.Logger,
 ):
     logger.info(f"handling memory dep {memory_dep}")
-    try:
-        tool = {
-            memory_dep[
-                "key"
-            ]: "the value provided by the human, or MISSING along with the reason if it's not available"
-        }
-        output = await call_ai(
-            f"Based solely on the provided chat history between a human and a bot, extract the following information:\n{memory_dep['key']}\n\nInformation Description:\n{memory_dep['description'] or 'No further description provided.'}\n\nIf it's not provided by the human in the conversation, set the value to 'MISSING: <reason>'.",
-            tool,
-        )
-        logger.error(f"memory dep output: {output}")
-        output_dict = parse_llm_dict(output)
-        logger.error(f"mem output_dict: {output_dict}")
-        memory = output_dict[memory_dep["key"]]
-        logger.error(f"memory directly from AI: {memory}")
-    except Exception as e:
-        logger.error(f"Error in handle_memory_dep: {e}")
-        logger.exception("Full error trace:")
-        # return await retry()
+    tool = {
+        memory_dep[
+            "key"
+        ]: "the value provided by the human, or MISSING along with the reason if it's not available"
+    }
+    output = await call_ai(
+        f"Based solely on the provided chat history between a human and a bot, extract the following information:\n{memory_dep['key']}\n\nInformation Description:\n{memory_dep['description'] or 'No further description provided.'}\n\nIf it's not provided by the human in the conversation, set the value to 'MISSING: <reason>'.",
+        tool,
+    )
+    logger.error(f"memory dep output: {output}")
+    output_dict = parse_llm_dict(output)
+    logger.info(f"mem output_dict: {output_dict}")
+    memory = output_dict[memory_dep["key"]]
+    logger.info(f"memory directly from AI: {memory}")
+
     if "MISSING" not in memory:
         return await retry(memory)
     memory_reason = memory.split(":")[1].strip() if ":" in memory else ""
