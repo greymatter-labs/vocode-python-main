@@ -732,7 +732,7 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
             await self.print_message(
                 message={
                     "type": "verbatim",
-                    "message": "Sorry, something went wrong on my end",
+                    "message": "Sorry, something went seriously wrong on my end. You can hang up, I'll have to call you back",
                 },
                 current_state_id=state["id"] + "_give_up",
             )
