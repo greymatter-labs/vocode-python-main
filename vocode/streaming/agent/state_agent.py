@@ -648,6 +648,8 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
         if current_state_id in self.spoken_states and message["type"] == "verbatim":
             original_message = message["message"]
             constructed_guide = f"You previously communicated to the user: '{original_message}'. If this was a question, the user's response might have been unclear. Address their query (if any) and tactfully seek the information you need. If it was a statement, rephrase it using different words while maintaining its core meaning, tone and approximate length."
+            if memory_reason and memory_reason != "":
+                constructed_guide += f"\n\nNote from bot about the user's previous response: {memory_reason}"
             await self.guided_response(constructed_guide)
         else:
             if message["type"] == "verbatim":
@@ -657,8 +659,7 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
                 guide = message["description"]
                 if memory_reason and memory_reason != "":
                     guide += f"\n\nNote from bot about the user's previous response: {memory_reason}"
-                else:
-                    await self.guided_response(guide)
+                await self.guided_response(guide)
 
     async def should_transfer(self):
         last_user_message = None
@@ -677,10 +678,10 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
             return False
 
         prompt = (
-            f"Based on the following conversation, determine if the user wants to transfer or speak to a human:\n\n"
+            f"Based on the following conversation, determine if the user has specifically requested to transfer or speak to a human representative:\n\n"
             f"Bot's last message: '{last_bot_message}'\n"
             f"User's response: '{last_user_message}'\n\n"
-            f"Your response must be a single word. Respond with either 'transfer' if the user wants to transfer or speak to a human, or 'continue' if they don't."
+            f"Your response must be a single word. Respond with either 'transfer' if the user requested to transfer or speak to a human, or 'continue' if they didnt'."
         )
 
         response = await self.call_ai(prompt)
