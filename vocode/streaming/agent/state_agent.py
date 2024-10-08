@@ -551,73 +551,76 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
         )
 
         transfer_block_name = self.state_machine.get("transfer_block_name")
+        if (
+            self.resume_task
+            and not self.resume_task.cancelled()
+            and not self.resume_task.done()
+        ):  # if something in progress, we want to move back when cancelling	            if transfer_block_name and self.current_block_name != transfer_block_name:
+            self.resume_task.cancel()  # Start resume_task and should_transfer task concurrently
+            # self.move_back_state()	                self.resume_task = asyncio.create_task(self.resume(human_input))
+            try:
+                await self.resume_task
+            except asyncio.CancelledError:  # Wait for the first task to complete
+                self.logger.info(f"Old resume task cancelled")
+        if transfer_block_name and self.current_block_name != transfer_block_name:
+            # Start resume_task and should_transfer task concurrently
 
-        try:
-            if transfer_block_name and self.current_block_name != transfer_block_name:
-                # Start resume_task and should_transfer task concurrently
-                self.resume_task = asyncio.create_task(self.resume(human_input))
-                transfer_task = asyncio.create_task(self.should_transfer())
+            self.resume_task = asyncio.create_task(self.resume(human_input))
+            transfer_task = asyncio.create_task(self.should_transfer())
 
-                # Wait for the first task to complete
-                done, pending = await asyncio.wait(
-                    {self.resume_task, transfer_task},
-                    return_when=asyncio.FIRST_COMPLETED,
-                )
+            # Wait for the first task to complete
+            done, pending = await asyncio.wait(
+                {self.resume_task, transfer_task},
+                return_when=asyncio.FIRST_COMPLETED,
+            )
 
-                if transfer_task in done:
-                    transfer_result = transfer_task.result()
-                    if transfer_result:
-                        self.logger.info("Transfer condition met")
-                        # Transfer task completed first, cancel resume_task
-                        self.resume_task.cancel()
-                        try:
-                            await self.resume_task
-                        except asyncio.CancelledError:
-                            self.logger.info(
-                                "Resume task cancelled because transfer task completed first"
-                            )
-                        if transfer_block_name:
-                            self.resume = lambda _: self.handle_state(
-                                transfer_block_name
-                            )
-                            # Handle the transfer state immediately
-                            await self.handle_state(transfer_block_name)
-                        else:
-                            self.logger.error(
-                                "transfer_block_name not found in state_machine"
-                            )
-                        return "", True
-
-                elif self.resume_task in done:
-                    # Resume task completed first, cancel transfer_task
-                    transfer_task.cancel()
+            if transfer_task in done:
+                transfer_result = transfer_task.result()
+                if transfer_result:
+                    self.logger.info("Transfer condition met")
+                    # Transfer task completed first, cancel resume_task
+                    self.resume_task.cancel()
                     try:
-                        await transfer_task
+                        await self.resume_task
                     except asyncio.CancelledError:
                         self.logger.info(
-                            "Transfer task cancelled because resume task completed first"
+                            "Resume task cancelled because transfer task completed first"
                         )
-
-                    resume_output = self.resume_task.result()
-                    self.resume = resume_output
+                    if transfer_block_name:
+                        self.resume = lambda _: self.handle_state(transfer_block_name)
+                        # Handle the transfer state immediately
+                        await self.handle_state(transfer_block_name)
+                    else:
+                        self.logger.error(
+                            "transfer_block_name not found in state_machine"
+                        )
                     return "", True
 
-                # Fallback in case neither task completed as expected
-                self.logger.error(
-                    "Neither resume_task nor transfer_task completed successfully."
-                )
-                return "", True
-            else:
-                # Proceed normally without transfer
-                self.resume_task = asyncio.create_task(self.resume(human_input))
-                resume_output = await self.resume_task
+            elif self.resume_task in done:
+                # Resume task completed first, cancel transfer_task
+                transfer_task.cancel()
+                try:
+                    await transfer_task
+                except asyncio.CancelledError:
+                    self.logger.info(
+                        "Transfer task cancelled because resume task completed first"
+                    )
+
+                resume_output = self.resume_task.result()
                 self.resume = resume_output
                 return "", True
-        except Exception as e:
-            self.logger.error(f"Error in generate_completion: {e}")
+
+            # Fallback in case neither task completed as expected
+            self.logger.error(
+                "Neither resume_task nor transfer_task completed successfully."
+            )
             return "", True
-        finally:
-            self.block_inputs = False
+        else:
+            # Proceed normally without transfer
+            self.resume_task = asyncio.create_task(self.resume(human_input))
+            resume_output = await self.resume_task
+            self.resume = resume_output
+            return "", True
 
     async def print_start_message(self, state, start: bool):
         if "start_message" in state:
