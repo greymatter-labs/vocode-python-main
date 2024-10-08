@@ -725,7 +725,7 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
         if retry_count > 1:
             self.json_transcript.entries.append(
                 StateAgentTranscriptInvariantViolation(
-                    message=f"retried state={state['id']} memory={memory_dep['key']} too many times!",
+                    message=f"retried state {state['id']} too many times",
                     original_state=state,
                 )
             )
