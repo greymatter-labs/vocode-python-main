@@ -174,9 +174,7 @@ async def handle_memory_dep(
 
     if "MISSING" not in memory:
         return await retry(memory)
-    logger.info(f"BEFORE SPLITTING {memory}")
     memory_reason = memory.split(":")[1].strip() if ":" in memory else ""
-    logger.info("BEFORE SPLITTING")
 
     await speak(memory_dep["question"], memory_reason)
 
