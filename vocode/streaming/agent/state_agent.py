@@ -729,12 +729,15 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
                     original_state=state,
                 )
             )
-            await self.print_message({
-                "type": "verbatim",
-                "message": "Sorry, something went wrong on my end" 
-            })
+            await self.print_message(
+                message={
+                    "type": "verbatim",
+                    "message": "Sorry, something went wrong on my end",
+                },
+                current_state_id=state["id"] + "_give_up",
+            )
             return
-        
+
         speak_message = lambda message: self.print_message(message, state["id"])
         call_ai = lambda prompt, tool=None, stop=None: self.call_ai(prompt, tool, stop)
 
