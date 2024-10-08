@@ -669,7 +669,7 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
             )
 
         def append_json_transcript(m: StateAgentTranscriptDebugEntry):
-            self.json_transcript.append(m)
+            self.json_transcript.entries.append(m)
 
         if state["type"] == "options":
             out, clarification_state = await handle_options(
