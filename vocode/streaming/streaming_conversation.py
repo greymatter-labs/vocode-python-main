@@ -192,6 +192,7 @@ class StreamingConversation(Generic[OutputDeviceType]):
             self.chosen_filler_phrase = None
             self.initial_message = None
             self.vad_detected = False
+            self.first_message_lock = False
 
         async def _buffer_check(self, initial_buffer: str):
             try:
@@ -280,15 +281,11 @@ class StreamingConversation(Generic[OutputDeviceType]):
                 self.conversation.logger.error(f"Error in _buffer_check: {e}")
 
         async def process(self, transcription: Transcription):
-            # Ignore the transcription if we are currently in-flight (i.e., the agent is speaking)
-            # log the current transcript
-            # if (
-            #     self.initial_message
-            #     and self.conversation.agent.get_agent_config().call_type
-            #     == CallType.INBOUND
-            # ):
-            #     self.conversation.logger.info(f"Waiting for initial message to be sent")
-            #     return
+            if self.first_message_lock:
+                self.conversation.logger.debug(
+                    "Ignoring transcription on initial message"
+                )
+                return
             if (
                 self.conversation.agent.block_inputs
             ):  # the two block inputs are different
@@ -379,13 +376,21 @@ class StreamingConversation(Generic[OutputDeviceType]):
                     self.conversation.logger.error(
                         f"Error cancelling buffer check task: {e}"
                     )
-            if self.initial_message is not None and transcription.is_final:
+            # if its not final, the rest of this function is skipped.
+            if not transcription.is_final:
+                return
+            if self.initial_message is not None:
+                # Signal to start responding with first message.
+                # Block further transcriptions
+                # Let the first message function handle updating the first message and release lock.
+                # This assumes that send_initial_message is uncancellable during the first 2 seconds of audio.
+                # If there is any senario where first message is cancellable,
+                # we will end up with invalid state and block all transcriptions.
+
+                self.first_message_lock = True  # Lock first
                 asyncio.create_task(
                     self.conversation.send_initial_message(self.initial_message)
-                )
-                self.initial_message = None
-                return
-            if not transcription.is_final:
+                )  # Create task second
                 return
             stashed_buffer = deepcopy(self.buffer)
             # Broadcast an interrupt and set the buffer status to DISCARD
@@ -1022,12 +1027,19 @@ class StreamingConversation(Generic[OutputDeviceType]):
             while not initial_message_tracker.is_set():
                 await asyncio.sleep(0.1)  # Check every 0.1 seconds
                 if time.time() - start_time >= 2:
+                    # 1. update initial message to none
+                    # 2. release lock on transcriptions worker
+                    self.transcriptions_worker.initial_message = None
+                    self.transcriptions_worker.first_message_lock = False
                     self.transcriber.unmute()
                     self.transcriptions_worker.block_inputs = False
                     self.agent.agent_config.allow_interruptions = True
                     break
         if not initial_message_tracker.is_set():
             await initial_message_tracker.wait()
+        # The initial message can be sent in under 2 seconds so update again
+        self.transcriptions_worker.initial_message = None
+        self.transcriptions_worker.first_message_lock = False
         self.transcriber.VOLUME_THRESHOLD = 700  # turn it back down
         self.agent.agent_config.allow_interruptions = previous_allow_interruptions
         end_span(initial_message_span)
