@@ -1026,6 +1026,7 @@ class StreamingConversation(Generic[OutputDeviceType]):
         if self.agent.get_agent_config().call_type == CallType.OUTBOUND:
             while not initial_message_tracker.is_set():
                 await asyncio.sleep(0.1)  # Check every 0.1 seconds
+                # self.logger.debug(f"Time elapsed: {time.time() - start_time}")
                 if time.time() - start_time >= 2:
                     # 1. update initial message to none
                     # 2. release lock on transcriptions worker
@@ -1034,9 +1035,19 @@ class StreamingConversation(Generic[OutputDeviceType]):
                     self.transcriber.unmute()
                     self.transcriptions_worker.block_inputs = False
                     self.agent.agent_config.allow_interruptions = True
+                    # span_event(
+                    #     span=initial_message_span,
+                    #     event_name="release-lock",
+                    #     event_data={"time": time.time() - start_time},
+                    # )
                     break
         if not initial_message_tracker.is_set():
             await initial_message_tracker.wait()
+        # span_event(
+        #     span=initial_message_span,
+        #     event_name="message_sent",
+        #     event_data={"time": time.time() - start_time},
+        # )
         # The initial message can be sent in under 2 seconds so update again
         self.transcriptions_worker.initial_message = None
         self.transcriptions_worker.first_message_lock = False
@@ -1269,10 +1280,16 @@ class StreamingConversation(Generic[OutputDeviceType]):
         self.logger.info(f"Total speech time: {total_time_sent} seconds")
 
         self.mark_last_action_timestamp()
-        sleep_interval = 2  # Mark last action every 2 seconds
+        # This will be changed when the partial synthesis is added. 
+        # Doesn't really matter for now but 2 seconds it too long. 
+        # Added stop event check otherwise it will block other synthesis result tasks
+        # even though we meant to cancel this one.
+        sleep_interval = 0.1  # Mark last action every 0.1 seconds
         remaining_sleep = total_time_sent
         while remaining_sleep > 0:
             await asyncio.sleep(min(sleep_interval, remaining_sleep))
+            if stop_event.is_set():
+                return "", False
             self.mark_last_action_timestamp()
             remaining_sleep -= sleep_interval
         # This ensures we do volume thresholding and mark last action periodically
