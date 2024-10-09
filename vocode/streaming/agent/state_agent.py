@@ -428,7 +428,7 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
         self.visited_states = {self.state_machine["startingStateId"]}
         self.spoken_states = set()
         self.state_history = []
-        self.chat_history = [("message.bot", self.agent_config.initial_message)]
+        self.chat_history = []
         self.base_url = getenv("AI_API_HUGE_BASE")
         self.model = self.agent_config.model_name
         self.client = AsyncOpenAI(
@@ -508,7 +508,12 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
             f"Resume function updated to state: {self.resume.__name__ if hasattr(self.resume, '__name__') else 'lambda'}"
         )
 
-    def update_history(self, role, message):
+    def update_history(
+        self,
+        role,
+        message,
+        agent_response_tracker: Optional[asyncio.Event] = None,
+    ):
         if role == "human":
             # Remove the last human message if it exists
             while self.chat_history and self.chat_history[-1][0] == "human":
@@ -522,7 +527,8 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
 
         if role == "message.bot" and len(message.strip()) > 0:
             self.produce_interruptible_agent_response_event_nonblocking(
-                AgentResponseMessage(message=BaseMessage(text=message))
+                AgentResponseMessage(message=BaseMessage(text=message)),
+                agent_response_tracker=agent_response_tracker,
             )
 
     def get_json_transcript(self):
@@ -873,7 +879,7 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
 
         message = await self.call_ai(prompt, None)
         message = message.strip()
-        self.logger.info(f"Guided response: {message}")
+        self.logger.debug(f"Guided response: {message}")
         self.update_history("message.bot", message)
         return message
 
@@ -886,7 +892,7 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
             )
         )
         self.state_history.append(state)
-        self.logger.info(f"Attempting to call: {action}")
+        self.logger.debug(f"Attempting to call: {action}")
         action_name = action["name"]
         action_description = action["description"]
         self.logger.debug(f"Action description: {action_description}")
@@ -977,7 +983,7 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
         else:
             params = finalized_params
 
-        self.logger.info(f"Final params for action {action_name}: {params}")
+        self.logger.debug(f"Final params for action {action_name}: {params}")
 
         try:
             action = self.action_factory.create_action(action_config)
