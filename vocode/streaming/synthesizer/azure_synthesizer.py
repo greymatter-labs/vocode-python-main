@@ -52,7 +52,7 @@ class WordBoundaryEventPool:
                 "text": event.text,
                 "text_offset": event.text_offset,
                 "audio_offset": (event.audio_offset + 5000) / (10000 * 1000),
-                "boudary_type": event.boundary_type,
+                "boundary_type": event.boundary_type,
             }
         )
 
@@ -329,10 +329,6 @@ class AzureSynthesizer(BaseSynthesizer[AzureSynthesizerConfig]):
             prosody.text = message_text_encoded.strip()
             ElementTree.SubElement(prosody, "break", time="100ms")  # fixes the clicking
 
-        self.logger.debug(
-            f"""Created SSML: {ElementTree.tostring(ssml_root, encoding='unicode').replace("ns0:", "").replace(":ns0", "").replace("ns0", "")}"""
-        )
-
         out = (
             ElementTree.tostring(ssml_root, encoding="unicode")
             .replace("ns0:", "")
@@ -357,13 +353,19 @@ class AzureSynthesizer(BaseSynthesizer[AzureSynthesizerConfig]):
         seconds: float,
         word_boundary_event_pool: WordBoundaryEventPool,
     ) -> str:
+
         events = word_boundary_event_pool.get_events_sorted()
-        # for event in events:
-        #     if event["audio_offset"] > seconds:
-        #         ssml_fragment = ssml[: event["text_offset"]]
-        #         # TODO: this is a little hacky, but it works for now
-        #         return ssml_fragment.split(">")[-1]
+        for event in events:
+            if event["audio_offset"] > seconds:
+                ssml_fragment = ssml[: event["text_offset"]]
+                return ssml_fragment.split(">")[-1]
         return message
+
+    def get_word_boundaries(
+        self,
+        word_boundary_event_pool: WordBoundaryEventPool,
+    ) -> list:
+        return word_boundary_event_pool.get_events_sorted()
 
     async def create_speech(
         self,
@@ -456,6 +458,8 @@ class AzureSynthesizer(BaseSynthesizer[AzureSynthesizerConfig]):
             lambda event: self.word_boundary_cb(event, word_boundary_event_pool)
         )
 
+        # self.logger.debug(f"Synthesizing message: {message}")
+
         # Split the message into parts and handle DTMF tones separately
         dtmf_pattern = re.compile(r"DTMF_(\w)")
         parts = dtmf_pattern.split(modified_message)
@@ -466,6 +470,11 @@ class AzureSynthesizer(BaseSynthesizer[AzureSynthesizerConfig]):
                 async with session.get(dtmf_url) as response:
                     audio_data = await response.read()
                     yield SynthesisResult.ChunkResult(audio_data, True)
+
+        # Create the SSML for the entire message
+        full_ssml = await self.create_ssml(
+            modified_message, bot_sentiment=bot_sentiment
+        )
 
         async def combined_generator():
             for index, part in enumerate(parts):
@@ -489,6 +498,7 @@ class AzureSynthesizer(BaseSynthesizer[AzureSynthesizerConfig]):
         return SynthesisResult(
             combined_generator(),
             lambda seconds: self.get_message_up_to(
-                message.text, "", seconds, word_boundary_event_pool
+                message.text, full_ssml, seconds, word_boundary_event_pool
             ),
+            lambda: self.get_word_boundaries(word_boundary_event_pool),
         )
