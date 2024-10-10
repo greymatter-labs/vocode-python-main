@@ -765,7 +765,7 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
                     )
                     return await retry()
 
-        state_start_message = state["start_message"]
+        state_start_message = state.get("start_message")
         if state_start_message != None:
             await self.print_message(message=state_start_message, message_id=state["id"])
 
