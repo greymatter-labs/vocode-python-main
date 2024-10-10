@@ -636,6 +636,7 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
         message_id: str,
         prev_message_note: Optional[str] = None
     ):
+        self.logger.info(f"print message: message_id is {message_id} spoken message ids is {self.spoken_message_ids}")
         if message["type"] == "verbatim" and message_id not in self.spoken_message_ids:
             self.spoken_message_ids.add(message_id)
             self.update_history("message.bot", message["message"])
