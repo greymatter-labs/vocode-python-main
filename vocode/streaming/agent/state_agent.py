@@ -724,7 +724,6 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
             )
             return
 
-        # speak_message = lambda message: self.print_message(message, state["id"] + "_main_message")
         call_ai = lambda prompt, tool=None, stop=None: self.call_ai(prompt, tool, stop)
 
         self.logger.info(
