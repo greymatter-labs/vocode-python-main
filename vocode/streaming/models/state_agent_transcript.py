@@ -53,6 +53,11 @@ class StateAgentTranscriptDebugEntry(StateAgentTranscriptEntry):
     role: StateAgentTranscriptRole = StateAgentTranscriptRole.DEBUG
     type: StateAgentDebugMessageType
 
+class StateAgentActionFinishEntry(StateAgentTranscriptEntry):
+    role: StateAgentTranscriptRole = StateAgentTranscriptRole.ACTION_FINISH
+    action_name: str
+    runtime_inputs: dict
+
 
 class StateAgentTranscriptActionInvoke(StateAgentTranscriptDebugEntry):
     type: StateAgentDebugMessageType = StateAgentDebugMessageType.ACTION_INOKE
