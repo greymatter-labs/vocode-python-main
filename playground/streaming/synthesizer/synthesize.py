@@ -92,7 +92,7 @@ if __name__ == "__main__":
                     output_device=speaker_output,
                     message=BaseMessage(text=input("Enter speech to synthesize: ")),
                 )
-                print("Message sent: ", message_sent)
+                # print("Message sent: ", message_sent)
         except KeyboardInterrupt:
             print("Interrupted, exiting")
         await synthesizer.tear_down()
