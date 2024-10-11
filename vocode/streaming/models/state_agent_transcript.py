@@ -113,7 +113,9 @@ class StateAgentTranscript(JsonTranscript):
         if "entries" in values:
             parsed_entries = []
             for entry in values["entries"]:
-                if "type" in entry:
+                if entry["role"] == StateAgentTranscriptRole.ACTION_FINISH:
+                    parsed_entries.append(StateAgentActionFinishEntry(**entry))
+                elif "type" in entry:
                     if entry["type"] == StateAgentDebugMessageType.ACTION_INOKE:
                         parsed_entries.append(StateAgentTranscriptActionInvoke(**entry))
                     elif entry["type"] == StateAgentDebugMessageType.ACTION_ERROR:
