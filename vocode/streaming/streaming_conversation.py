@@ -275,7 +275,7 @@ class StreamingConversation(Generic[OutputDeviceType]):
                 self.conversation.allow_idle_message = True
                 self.conversation.allow_unmute = False
 
-                self.conversation.logger.info("Transcription event put in output queue")
+                # self.conversation.logger.info("Transcription event put in output queue")
                 # release the action, if there is one
                 self.conversation.agent.can_send = True
                 self.buffer_check_task = None
@@ -311,9 +311,9 @@ class StreamingConversation(Generic[OutputDeviceType]):
                 self.conversation.transcriber.VOLUME_THRESHOLD = 700
                 if self.buffer_check_task:
                     try:
-                        self.conversation.logger.info("Cancelling buffer check task")
+                        # self.conversation.logger.info("Cancelling buffer check task")
                         cancelled = self.buffer_check_task.cancel()
-                        self.conversation.logger.info(f"BufferCancel? {cancelled}")
+                        # self.conversation.logger.info(f"BufferCancel? {cancelled}")
                         self.buffer_check_task = None
                     except Exception as e:
                         self.conversation.logger.error(
@@ -348,7 +348,7 @@ class StreamingConversation(Generic[OutputDeviceType]):
 
             # Strip the transcription message and log the time silent
             transcription.message = transcription.message
-            self.conversation.logger.info(f"Time silent: {self.time_silent}s")
+            # self.conversation.logger.info(f"Time silent: {self.time_silent}s")
 
             # If the transcription message is empty, handle it accordingly
             if len(transcription.message) == 0:
@@ -371,9 +371,9 @@ class StreamingConversation(Generic[OutputDeviceType]):
             # If a buffer check task exists, cancel it and start a new one
             if self.buffer_check_task:
                 try:
-                    self.conversation.logger.info("Cancelling buffer check task")
+                    # self.conversation.logger.info("Cancelling buffer check task")
                     cancelled = self.buffer_check_task.cancel()
-                    self.conversation.logger.info(f"BufferCancel? {cancelled}")
+                    # self.conversation.logger.info(f"BufferCancel? {cancelled}")
                     self.buffer_check_task = None
                 except Exception as e:
                     self.conversation.logger.error(
@@ -399,9 +399,9 @@ class StreamingConversation(Generic[OutputDeviceType]):
             # Broadcast an interrupt and set the buffer status to DISCARD
             await self.conversation.broadcast_interrupt()
             if stashed_buffer != self.buffer:
-                self.conversation.logger.info(
-                    f"Buffer changed on interrupt, putting stashed buffer back"
-                )
+                # self.conversation.logger.info(
+                #     f"Buffer changed on interrupt, putting stashed buffer back"
+                # )
                 self.buffer = stashed_buffer
             self.ready_to_send = BufferStatus.DISCARD
             # Start a new buffer check task to recalculate the timing

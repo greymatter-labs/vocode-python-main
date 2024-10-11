@@ -167,7 +167,6 @@ async def handle_memory_dep(
         f"Based solely on the provided chat history between a human and a bot, extract the following information:\n{memory_dep['key']}\n\nInformation Description:\n{memory_dep['description'] or 'No further description provided.'}\n\nIf the question wasn't asked by the bot yet, or it wasn't clearly provided by the human in the conversation, set the value to 'MISSING: <reason>'.",
         tool,
     )
-    logger.error(f"memory dep output: {output}")
     output_dict = parse_llm_dict(output)
     logger.info(f"mem output_dict: {output_dict}")
     memory = str(output_dict[memory_dep["key"]])
@@ -681,7 +680,7 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
         return response.strip().lower() == "transfer"
 
     async def handle_state(self, state_id_or_label: str, retry_count: int = 0):
-        self.logger.info(f"handle state {state_id_or_label} retry count {retry_count}")
+        self.logger.info(f"--------HANDLE STATE {state_id_or_label} retry count {retry_count}")
         self.visited_states.add(state_id_or_label)
         state = get_state(state_id_or_label, self.state_machine)
         self.current_state = state
@@ -1075,7 +1074,7 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
                         break
         else:
             prompt = f"Given the chat history, follow the instructions.\nChat history:\n{pretty_chat_history}\n\n\nInstructions:\n{prompt}\nYour response must always be dictionary in the following format: {str(tool)}. Return just the dictionary without any additional commentary."
-            self.logger.debug(f"prompt is: {prompt}")
+            # self.logger.debug(f"prompt is: {prompt}")
 
             stream = await self.client.chat.completions.create(
                 model=self.model,
