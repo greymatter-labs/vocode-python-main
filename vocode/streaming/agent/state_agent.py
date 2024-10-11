@@ -535,6 +535,7 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
             self.produce_interruptible_agent_response_event_nonblocking(
                 AgentResponseMessage(message=BaseMessage(text=message)),
                 agent_response_tracker=agent_response_tracker,
+                json_transcript_entry=self.json_transcript.entries[-1],
             )
 
     def get_json_transcript(self):
