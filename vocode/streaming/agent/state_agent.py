@@ -164,7 +164,7 @@ async def handle_memory_dep(
         ]: "the value provided by the human, or MISSING along with the reason if it's not available"
     }
     output = await call_ai(
-        f"Based solely on the provided chat history between a human and a bot, extract the following information:\n{memory_dep['key']}\n\nInformation Description:\n{memory_dep['description'] or 'No further description provided.'}\n\nIf the question wasn't asked by the bot yet, or it wasn't clearly provided by the human in the conversation, set the value to 'MISSING: <reason>'.",
+        f"Based solely on the provided chat history between a human and a bot, extract the following information:\n{memory_dep['key']}\n\nInformation Description:\n{memory_dep['description'] or 'No further description provided.'}\n\nIf the information wasn't clearly provided by the human in the conversation, set the value to 'MISSING: <reason>'.",
         tool,
     )
     output_dict = parse_llm_dict(output)
