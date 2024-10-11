@@ -502,5 +502,5 @@ class AzureSynthesizer(BaseSynthesizer[AzureSynthesizerConfig]):
             lambda seconds: self.get_message_up_to(
                 message.text, full_ssml, seconds, word_boundary_event_pool
             ),
-            lambda _: self.get_word_boundaries(word_boundary_event_pool),
+            lambda: self.get_word_boundaries(word_boundary_event_pool),
         )
