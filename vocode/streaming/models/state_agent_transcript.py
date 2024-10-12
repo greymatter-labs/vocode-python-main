@@ -53,7 +53,7 @@ class StateAgentTranscriptDebugEntry(StateAgentTranscriptEntry):
     role: StateAgentTranscriptRole = StateAgentTranscriptRole.DEBUG
     type: StateAgentDebugMessageType
 
-class StateAgentActionFinishEntry(StateAgentTranscriptEntry):
+class StateAgentTranscriptActionFinish(StateAgentTranscriptEntry):
     role: StateAgentTranscriptRole = StateAgentTranscriptRole.ACTION_FINISH
     action_name: str
     runtime_inputs: dict
@@ -114,7 +114,7 @@ class StateAgentTranscript(JsonTranscript):
             parsed_entries = []
             for entry in values["entries"]:
                 if entry["role"] == StateAgentTranscriptRole.ACTION_FINISH:
-                    parsed_entries.append(StateAgentActionFinishEntry(**entry))
+                    parsed_entries.append(StateAgentTranscriptActionFinish(**entry))
                 elif "type" in entry:
                     if entry["type"] == StateAgentDebugMessageType.ACTION_INOKE:
                         parsed_entries.append(StateAgentTranscriptActionInvoke(**entry))
