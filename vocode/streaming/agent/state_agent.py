@@ -514,7 +514,6 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
             while self.chat_history and self.chat_history[-1][0] == "human":
                 self.chat_history.pop()
                 self.json_transcript.entries.pop()
-
         self.chat_history.append((role, message))
         if role == "action-finish":
             self.json_transcript.entries.append(
@@ -525,17 +524,17 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
                     runtime_inputs=runtime_inputs,
                 )
             )
-        else:
-            self.json_transcript.entries.append(
-                StateAgentTranscriptMessage(role=role, message=message)
-            )
 
         if role == "message.bot" and len(message.strip()) > 0 and speak:
 
+            state_agent_transcript_message = StateAgentTranscriptMessage(
+                role=role, message=message, message_sent=""
+            )
+            self.json_transcript.entries.append(state_agent_transcript_message)
             self.produce_interruptible_agent_response_event_nonblocking(
                 AgentResponseMessage(message=BaseMessage(text=message)),
                 agent_response_tracker=agent_response_tracker,
-                json_transcript_entry=self.json_transcript.entries[-1],
+                json_transcript_entry=state_agent_transcript_message,
             )
 
     def get_json_transcript(self):
