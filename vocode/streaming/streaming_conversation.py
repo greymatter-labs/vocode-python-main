@@ -1290,7 +1290,7 @@ class StreamingConversation(Generic[OutputDeviceType]):
                         )
                         self.log_agent_response(BaseMessage(text=message_sent))
                         if json_transcript_entry:
-                            json_transcript_entry.message = message_sent
+                            json_transcript_entry.message_sent = message_sent
                         return message_sent, True
 
                 await self.output_device.consume_nonblocking(speech_data)
@@ -1313,7 +1313,7 @@ class StreamingConversation(Generic[OutputDeviceType]):
             )
             self.log_agent_response(BaseMessage(text=message_sent))
             if json_transcript_entry:
-                json_transcript_entry.message = message_sent
+                json_transcript_entry.message_sent = message_sent
             return message_sent, True
         self.transcriptions_worker.synthesis_done = True
         if self.transcriptions_worker.buffer_check_task:
@@ -1322,7 +1322,7 @@ class StreamingConversation(Generic[OutputDeviceType]):
             )
             self.log_agent_response(BaseMessage(text=message_sent))
             if json_transcript_entry:
-                json_transcript_entry.message = message_sent
+                json_transcript_entry.message_sent = message_sent
             return message_sent, True
 
         self.transcriptions_worker.block_inputs = True
@@ -1356,7 +1356,7 @@ class StreamingConversation(Generic[OutputDeviceType]):
                 )
                 self.log_agent_response(BaseMessage(text=message_sent))
                 if json_transcript_entry:
-                    json_transcript_entry.message = message_sent
+                    json_transcript_entry.message_sent = message_sent
                 return message_sent, True
             next_event_time = event["audio_offset"]
             sleep_duration = max(0, next_event_time - elapsed_time)
@@ -1391,7 +1391,7 @@ class StreamingConversation(Generic[OutputDeviceType]):
         self.transcriptions_worker.ready_to_send = BufferStatus.DISCARD
         self.log_agent_response(BaseMessage(text=message_sent))
         if json_transcript_entry:
-            json_transcript_entry.message = message_sent
+            json_transcript_entry.message_sent = message_sent
         return message_sent, cut_off
 
     def mark_terminated(self):
