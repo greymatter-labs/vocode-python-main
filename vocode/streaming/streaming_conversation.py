@@ -268,14 +268,15 @@ class StreamingConversation(Generic[OutputDeviceType]):
                             )
                             await asyncio.sleep(sleep_time)
                     except Exception as e:
-                        self.conversation.logger.error(f"Error making request: {e}")
+                        # self.conversation.logger.error(f"Error making request: {e}")
+                        pass
 
                     # Place the event in the output queue for further processing
                 self.output_queue.put_nowait(event)
                 self.conversation.allow_idle_message = True
                 self.conversation.allow_unmute = False
 
-                self.conversation.logger.info("Transcription event put in output queue")
+                # self.conversation.logger.info("Transcription event put in output queue")
                 # release the action, if there is one
                 self.conversation.agent.can_send = True
                 self.buffer_check_task = None
@@ -311,9 +312,9 @@ class StreamingConversation(Generic[OutputDeviceType]):
                 self.conversation.transcriber.VOLUME_THRESHOLD = 700
                 if self.buffer_check_task:
                     try:
-                        self.conversation.logger.info("Cancelling buffer check task")
+                        # self.conversation.logger.info("Cancelling buffer check task")
                         cancelled = self.buffer_check_task.cancel()
-                        self.conversation.logger.info(f"BufferCancel? {cancelled}")
+                        # self.conversation.logger.info(f"BufferCancel? {cancelled}")
                         self.buffer_check_task = None
                     except Exception as e:
                         self.conversation.logger.error(
@@ -337,9 +338,9 @@ class StreamingConversation(Generic[OutputDeviceType]):
                 # )
                 return
 
-            self.conversation.logger.debug(
-                f"Transcription message: {' '.join(word['word'] for word in json.loads(transcription.message)['words'])}"
-            )
+            # self.conversation.logger.debug(
+            #     f"Transcription message: {' '.join(word['word'] for word in json.loads(transcription.message)['words'])}"
+            # )
             # Mark the timestamp of the last action
             self.conversation.mark_last_action_timestamp()
 
@@ -348,7 +349,7 @@ class StreamingConversation(Generic[OutputDeviceType]):
 
             # Strip the transcription message and log the time silent
             transcription.message = transcription.message
-            self.conversation.logger.info(f"Time silent: {self.time_silent}s")
+            # self.conversation.logger.info(f"Time silent: {self.time_silent}s")
 
             # If the transcription message is empty, handle it accordingly
             if len(transcription.message) == 0:
@@ -371,9 +372,9 @@ class StreamingConversation(Generic[OutputDeviceType]):
             # If a buffer check task exists, cancel it and start a new one
             if self.buffer_check_task:
                 try:
-                    self.conversation.logger.info("Cancelling buffer check task")
+                    # self.conversation.logger.info("Cancelling buffer check task")
                     cancelled = self.buffer_check_task.cancel()
-                    self.conversation.logger.info(f"BufferCancel? {cancelled}")
+                    # self.conversation.logger.info(f"BufferCancel? {cancelled}")
                     self.buffer_check_task = None
                 except Exception as e:
                     self.conversation.logger.error(
@@ -399,9 +400,9 @@ class StreamingConversation(Generic[OutputDeviceType]):
             # Broadcast an interrupt and set the buffer status to DISCARD
             await self.conversation.broadcast_interrupt()
             if stashed_buffer != self.buffer:
-                self.conversation.logger.info(
-                    f"Buffer changed on interrupt, putting stashed buffer back"
-                )
+                # self.conversation.logger.info(
+                #     f"Buffer changed on interrupt, putting stashed buffer back"
+                # )
                 self.buffer = stashed_buffer
             self.ready_to_send = BufferStatus.DISCARD
             # Start a new buffer check task to recalculate the timing
@@ -647,7 +648,7 @@ class StreamingConversation(Generic[OutputDeviceType]):
                     return
 
                 if isinstance(agent_response, AgentResponseGenerationComplete):
-                    self.conversation.logger.debug("Agent response generation complete")
+                    # self.conversation.logger.debug("Agent response generation complete")
                     self.conversation.allow_unmute = True
                     return
                 agent_response_message = typing.cast(
@@ -811,7 +812,7 @@ class StreamingConversation(Generic[OutputDeviceType]):
                 # Signal that the agent response has been processed.
                 item.agent_response_tracker.set()
                 # Log the message that was successfully sent.
-                self.conversation.logger.debug(f"Message sent: {message_sent}")
+                # self.conversation.logger.debug(f"Message sent: {message_sent}")
 
                 # Check if the conversation should end after the agent says goodbye.
                 if self.conversation.agent.agent_config.end_conversation_on_goodbye:
@@ -1166,7 +1167,7 @@ class StreamingConversation(Generic[OutputDeviceType]):
 
         Returns true if any events were interrupted - which is used as a flag for the agent (is_interrupt)
         """
-        self.logger.debug("Broadcasting interrupt")
+        # self.logger.debug("Broadcasting interrupt")
         self.stop_event.set()
         if isinstance(self.agent, CommandAgent):
             self.agent.stop = not self.agent.stop
@@ -1264,7 +1265,7 @@ class StreamingConversation(Generic[OutputDeviceType]):
                 speech_data = bytearray()
 
         if not stop_event.is_set():
-            self.logger.debug(f"Sending final chunk, len {len(speech_data)}")
+            # self.logger.debug(f"Sending final chunk, len {len(speech_data)}")
             await self.output_device.consume_nonblocking(speech_data)
             self.transcriptions_worker.time_silent = 0.0
             total_time_sent += len(speech_data) / (chunk_size / seconds_per_chunk)
@@ -1279,13 +1280,14 @@ class StreamingConversation(Generic[OutputDeviceType]):
         if self.transcriptions_worker.buffer_check_task:
             return "", False
         else:
-            self.logger.debug("No buffer check task found, proceeding.")
+            # self.logger.debug("No buffer check task found, proceeding.")
+            pass
 
         self.transcriptions_worker.block_inputs = True
         self.transcriptions_worker.time_silent = 0.0
         self.transcriptions_worker.triggered_affirmative = False
 
-        self.logger.info(f"Total speech time: {total_time_sent} seconds")
+        # self.logger.info(f"Total speech time: {total_time_sent} seconds")
 
         self.mark_last_action_timestamp()
         # This will be changed when the partial synthesis is added.
@@ -1324,11 +1326,11 @@ class StreamingConversation(Generic[OutputDeviceType]):
             # self.agent.restore_resume_state()
 
         if message_sent:
-            self.logger.info(f"Responding to {held_buffer}")
+            # self.logger.info(f"Responding to {held_buffer}")
             if self.allow_unmute:
                 self.transcriptions_worker.block_inputs = False
                 if self.transcriber.get_transcriber_config().mute_during_speech:
-                    self.logger.debug("Unmuting transcriber")
+                    # self.logger.debug("Unmuting transcriber")
                     self.transcriber.unmute()
         self.transcriptions_worker.ready_to_send = BufferStatus.DISCARD
 

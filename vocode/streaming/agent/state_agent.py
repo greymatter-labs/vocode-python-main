@@ -165,10 +165,9 @@ async def handle_memory_dep(
         ]: "the value provided by the human, or MISSING along with the reason if it's not available"
     }
     output = await call_ai(
-        f"Based solely on the provided chat history between a human and a bot, extract the following information:\n{memory_dep['key']}\n\nInformation Description:\n{memory_dep['description'] or 'No further description provided.'}\n\nIf the question wasn't asked by the bot yet, or it wasn't clearly provided by the human in the conversation, set the value to 'MISSING: <reason>'.",
+        f"Based solely on the provided chat history between a human and a bot, extract the following information:\n{memory_dep['key']}\n\nInformation Description:\n{memory_dep['description'] or 'No further description provided.'}\n\nIf the information wasn't clearly provided by the human in the conversation, set the value to 'MISSING: <reason>'.",
         tool,
     )
-    logger.error(f"memory dep output: {output}")
     output_dict = parse_llm_dict(output)
     logger.info(f"mem output_dict: {output_dict}")
     memory = str(output_dict[memory_dep["key"]])
@@ -428,7 +427,7 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
         self.stop = False
         self.current_block_name = None
         self.visited_states = {self.state_machine["startingStateId"]}
-        self.spoken_states = set()
+        self.spoken_message_ids: set[str] = set()
         self.state_history = []
         self.chat_history = []
         self.base_url = getenv("AI_API_HUGE_BASE")
@@ -638,45 +637,28 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
             self.resume = resume_output
             return "", True
 
-    async def print_start_message(self, state, start: bool):
-        if "start_message" in state:
-            if state["start_message"]["type"] != "verbatim":
-                start = True  # no need to skip the print if its relative since it wont be repetitive
-        if start and "start_message" in state:
-            await self.print_message(
-                state["start_message"], state["id"], is_start=True
-            )  # doesn't print the start message if it's a repeat
-
     async def print_message(
         self,
         message,
-        current_state_id,
-        is_start=False,
-        memory_id=None,
-        memory_reason=None,
+        message_id: str,
+        prev_message_note: Optional[str] = None
     ):
+        self.logger.info(f"print message: message_id is {message_id} spoken message ids is {self.spoken_message_ids}")
+        if message["type"] == "verbatim" and message_id not in self.spoken_message_ids:
+            self.spoken_message_ids.add(message_id)
+            self.update_history("message.bot", message["message"])
+            return
 
-        if is_start:
-            current_state_id = (
-                current_state_id + "_start"
-            )  # so that we separately keep track of the start message
-        if memory_id:
-            current_state_id = current_state_id + "_" + memory_id
-        if current_state_id in self.spoken_states and message["type"] == "verbatim":
-            original_message = message["message"]
-            constructed_guide = f"You previously communicated to the user: '{original_message}'. If this was a question, the user's response might have been unclear. Address their query (if any) and tactfully seek the information you need. If it was a statement, rephrase it using different words while maintaining its core meaning, tone and approximate length."
-            if memory_reason and memory_reason != "":
-                constructed_guide += f"\n\nNote from bot about the user's previous response: {memory_reason}"
-            await self.guided_response(constructed_guide)
-        else:
-            if message["type"] == "verbatim":
-                self.spoken_states.add(current_state_id)
-                self.update_history("message.bot", message["message"])
-            else:
-                guide = message["description"]
-                if memory_reason and memory_reason != "":
-                    guide += f"\n\nNote from bot about the user's previous response: {memory_reason}"
-                await self.guided_response(guide)
+        guide = (
+            f"You previously communicated to the user: '{prev_message_note}'. If this was a question, the user's response might have been unclear. Address their query (if any) and tactfully seek the information you need. If it was a statement, rephrase it using different words while maintaining its core meaning, tone and approximate length."
+            if message["type"] == "verbatim"
+            else message["description"]
+        )
+        if prev_message_note != None:
+            guide + f"You previously communicated to the user: '{prev_message_note}'. If this was a question, the user's response might have been unclear. Address their query (if any) and tactfully seek the information you need. If it was a statement, rephrase it using different words while maintaining its core meaning, tone and approximate length."
+        
+        await self.guided_response(guide)
+
 
     async def should_transfer(self):
         last_user_message = None
@@ -706,8 +688,7 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
         return response.strip().lower() == "transfer"
 
     async def handle_state(self, state_id_or_label: str, retry_count: int = 0):
-        self.logger.info(f"handle state {state_id_or_label} retry count {retry_count}")
-        start = state_id_or_label not in self.visited_states
+        self.logger.info(f"--------HANDLE STATE {state_id_or_label} retry count {retry_count}")
         self.visited_states.add(state_id_or_label)
         state = get_state(state_id_or_label, self.state_machine)
         self.current_state = state
@@ -747,11 +728,10 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
                     "type": "verbatim",
                     "message": "Sorry, something went seriously wrong on my end. You can hang up, I'll have to call you back",
                 },
-                current_state_id=state["id"] + "_give_up",
+                message_id=state["id"] + "_give_up",
             )
             return
 
-        speak_message = lambda message: self.print_message(message, state["id"])
         call_ai = lambda prompt, tool=None, stop=None: self.call_ai(prompt, tool, stop)
 
         self.logger.info(
@@ -771,11 +751,10 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
                         state_id_or_label=state_id_or_label, retry_count=new_retry_count
                     )
 
-                speak_message = lambda message, reason: self.print_message(
-                    message,
-                    state["id"],
-                    memory_id=memory_dep["key"] + "_memory",
-                    memory_reason=reason,
+                speak_message = lambda message, prev_message_not: self.print_message(
+                    message=message,
+                    message_id=state["id"] + f"_memory_{memory_dep['key']}",
+                    prev_message_note=prev_message_not,
                 )
                 try:
                     return await handle_memory_dep(
@@ -794,19 +773,20 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
                     )
                     return await retry()
 
-        await self.print_start_message(state, start=start)
+        state_start_message = state.get("start_message")
+        if state_start_message != None:
+            await self.print_message(message=state_start_message, message_id=state["id"])
 
         if state["type"] == "basic":
             return await self.handle_state(state["edge"])
 
         go_to_state = lambda s: self.handle_state(s)
-        speak = lambda text: self.update_history("message.bot", text)
 
         if state["type"] == "question":
             return await handle_question(
                 state=state,
                 go_to_state=go_to_state,
-                speak_message=speak_message,
+                speak_message=lambda message: self.print_message(message, state["id"] + "_question"),
                 logger=self.logger,
                 state_history=self.state_history,
             )
@@ -818,7 +798,7 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
             out, clarification_state = await handle_options(
                 state=state,
                 go_to_state=go_to_state,
-                speak=speak,
+                speak=lambda message: self.print_message(message, state["id"] + "_options"),
                 call_ai=call_ai,
                 state_machine=self.state_machine,
                 get_chat_history=lambda: self.chat_history,
@@ -1114,7 +1094,7 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
                         break
         else:
             prompt = f"Given the chat history, follow the instructions.\nChat history:\n{pretty_chat_history}\n\n\nInstructions:\n{prompt}\nYour response must always be dictionary in the following format: {str(tool)}. Return just the dictionary without any additional commentary."
-            self.logger.debug(f"prompt is: {prompt}")
+            # self.logger.debug(f"prompt is: {prompt}")
 
             stream = await self.client.chat.completions.create(
                 model=self.model,
