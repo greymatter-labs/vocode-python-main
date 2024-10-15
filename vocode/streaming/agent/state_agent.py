@@ -158,7 +158,7 @@ async def handle_question(
 async def handle_memory_dep(
     memory_dep: MemoryDependency,
     speak: Callable[[dict], Awaitable[None]],
-    call_ai: Callable[[str, Dict[str, Any], Optional[str]], Awaitable[str]],
+    call_ai: Callable[[str, Dict[str, Any], Optional[str], Optional[str]], Awaitable[str]],
     retry: Callable[[Optional[MemoryValue]], Awaitable[Any]],
     logger: logging.Logger,
 ):
@@ -171,6 +171,8 @@ async def handle_memory_dep(
     output = await call_ai(
         f"Based solely on the provided chat history between a human and a bot, extract the following information:\n{memory_dep['key']}\n\nInformation Description:\n{memory_dep['description'] or 'No further description provided.'}\n\nIf the question wasn't asked by the bot yet, or it wasn't clearly provided by the human in the conversation, set the value to 'MISSING: <reason>'.",
         tool,
+        None,
+        memory_dep['ai_model_name']
     )
     logger.error(f"memory dep output: {output}")
     output_dict = parse_llm_dict(output)
@@ -759,7 +761,7 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
             return
 
         speak_message = lambda message: self.print_message(message, state["id"])
-        call_ai = lambda prompt, tool=None, stop=None: self.call_ai(prompt, tool, stop)
+        call_ai = lambda prompt, tool=None, stop=None, model=None: self.call_ai(prompt, tool, stop, model)
 
         self.logger.info(
             f"{state['id']} memory deps: {state.get('memory_dependencies')}"
@@ -1088,7 +1090,7 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
             runtime_inputs=runtime_inputs
         )
 
-    async def call_ai(self, prompt, tool=None, stop=None):
+    async def call_ai(self, prompt, tool=None, stop=None, model: Optional[str] = None):
         stop_tokens = stop if stop is not None else []
         # stop_tokens.append("}")
         response_text = ""
@@ -1104,7 +1106,7 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
             prompt = f"{self.overall_instructions}\n\n Given the chat history, follow the instructions.\nChat history:\n{pretty_chat_history}\n\n\nInstructions:\n{prompt}\n\nReturn a single response."
             # self.logger.debug(f"prompt is: {prompt}")
             stream = await self.client.chat.completions.create(
-                model=self.model,
+                model=model or self.model,
                 messages=[
                     {
                         "role": "user",
