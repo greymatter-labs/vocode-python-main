@@ -589,7 +589,8 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
                     break
             if latest_bot_message and message.startswith(latest_bot_message):
                 # Remove the substring from the active message if it starts with the latest bot message
-                message = message[len(latest_bot_message) :]
+                if len(message[len(latest_bot_message) :]) > 0:
+                    message = message[len(latest_bot_message) :]
             self.produce_interruptible_agent_response_event_nonblocking(
                 AgentResponseMessage(message=BaseMessage(text=message)),
                 agent_response_tracker=agent_response_tracker,
