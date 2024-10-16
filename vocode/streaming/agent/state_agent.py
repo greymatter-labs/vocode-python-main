@@ -245,7 +245,7 @@ async def handle_options(
     next_state_history = state_history + [state]
 
     for i, (role, msg) in enumerate(reversed(get_chat_history())):
-        if last_user_message_index is None and role == "user" and msg:
+        if last_user_message_index is None and role == "human" and msg:
             last_user_message_index = len(get_chat_history()) - i - 1
             last_user_message = msg
             break
@@ -516,7 +516,7 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
                 role = entry.role
                 message = entry.message
                 if role in [
-                    "user",
+                    "human",
                     "message.bot",
                     "action-finish",
                 ]:
@@ -558,9 +558,9 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
         action_name: Optional[str] = None,
         runtime_inputs: Optional[dict] = None,
     ):
-        if role == "user":
+        if role == "human":
             # Remove the last human message if it exists
-            while self.chat_history and self.chat_history[-1][0] == "user":
+            while self.chat_history and self.chat_history[-1][0] == "human":
                 self.chat_history.pop()
                 self.json_transcript.entries.pop()
 
@@ -615,7 +615,7 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
         is_interrupt: bool = False,
         stream_output: bool = True,
     ):
-        self.update_history("user", human_input)
+        self.update_history("human", human_input)
         self.logger.info(
             f"[{self.agent_config.call_type}:{self.agent_config.current_call_id}] Lead:{human_input}"
         )
@@ -741,7 +741,7 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
 
         # Get the last user message and bot message
         for role, msg in reversed(self.chat_history):
-            if role == "user" and not last_user_message:
+            if role == "human" and not last_user_message:
                 last_user_message = msg
             elif role == "message.bot" and not last_bot_message:
                 last_bot_message = msg
@@ -912,7 +912,7 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
 
         # Find the last user message and the last bot message before it
         for role, msg in reversed(self.chat_history):
-            if role == "user" and msg and not last_user_message:
+            if role == "human" and msg and not last_user_message:
                 last_user_message = msg
             elif (
                 role == "message.bot"
@@ -1295,11 +1295,11 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
 
         self.chat_history = merged_messages
         # if the last message is a user message and there are consecutive user messages before it that are contained in the last user message, remove the consecutive before ones
-        if self.chat_history[-1][0] == "user":
+        if self.chat_history[-1][0] == "human":
             # go backwards
             for i in range(len(self.chat_history) - 2, -1, -1):
                 if (
-                    self.chat_history[i][0] == "user"
+                    self.chat_history[i][0] == "human"
                     and self.chat_history[i][1].text in self.chat_history[-1][1].text
                 ):
                     self.chat_history = self.chat_history[: i + 1]

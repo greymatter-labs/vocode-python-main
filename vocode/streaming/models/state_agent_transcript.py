@@ -9,7 +9,7 @@ from vocode.streaming.models.memory_dependency import MemoryDependency
 
 class StateAgentTranscriptRole(str, Enum):
     BOT = "message.bot"
-    HUMAN = "user"
+    HUMAN = "human"
     ACTION_FINISH = "action-finish"
     DEBUG = "debug"
 
