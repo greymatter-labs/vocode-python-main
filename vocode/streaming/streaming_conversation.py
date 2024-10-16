@@ -11,84 +11,70 @@ import time
 import typing
 from copy import deepcopy
 from enum import Enum
-from typing import Any, Awaitable, Callable, Generic, Optional, Tuple, TypeVar, cast
+from typing import (Any, Awaitable, Callable, Generic, Optional, Tuple,
+                    TypeVar, cast)
 
 import aiohttp
 import httpx
 import numpy
 import requests
 from openai import AsyncOpenAI, OpenAI
+from telephony_app.models.call_type import CallType
+from telephony_app.utils.call_information_handler import \
+    update_call_transcripts
+
 from vocode import getenv
 from vocode.streaming.action.worker import ActionsWorker
-from vocode.streaming.agent.base_agent import (
-    AgentInput,
-    AgentResponse,
-    AgentResponseFillerAudio,
-    AgentResponseGenerationComplete,
-    AgentResponseMessage,
-    AgentResponseStop,
-    AgentResponseType,
-    BaseAgent,
-    TranscriptionAgentInput,
-)
+from vocode.streaming.agent.base_agent import (AgentInput, AgentResponse,
+                                               AgentResponseFillerAudio,
+                                               AgentResponseGenerationComplete,
+                                               AgentResponseMessage,
+                                               AgentResponseStop,
+                                               AgentResponseType, BaseAgent,
+                                               TranscriptionAgentInput)
 from vocode.streaming.agent.bot_sentiment_analyser import BotSentimentAnalyser
 from vocode.streaming.agent.command_agent import CommandAgent
 from vocode.streaming.agent.state_agent import StateAgent
 from vocode.streaming.agent.utils import (
-    collate_response_async,
-    format_openai_chat_messages_from_transcript,
-    openai_get_tokens,
-    translate_message,
-    vector_db_result_to_openai_chat_message,
-)
-from vocode.streaming.constants import (
-    ALLOWED_IDLE_TIME,
-    INCOMPLETE_SCALING_FACTOR,
-    MAX_SILENCE_DURATION,
-    PER_CHUNK_ALLOWANCE_SECONDS,
-    TEXT_TO_SPEECH_CHUNK_SIZE_SECONDS,
-)
+    collate_response_async, format_openai_chat_messages_from_transcript,
+    openai_get_tokens, translate_message,
+    vector_db_result_to_openai_chat_message)
+from vocode.streaming.constants import (ALLOWED_IDLE_TIME,
+                                        INCOMPLETE_SCALING_FACTOR,
+                                        MAX_SILENCE_DURATION,
+                                        PER_CHUNK_ALLOWANCE_SECONDS,
+                                        TEXT_TO_SPEECH_CHUNK_SIZE_SECONDS)
 from vocode.streaming.models.actions import ActionInput
 from vocode.streaming.models.agent import CommandAgentConfig, FillerAudioConfig
 from vocode.streaming.models.events import Sender
 from vocode.streaming.models.message import BaseMessage
-from vocode.streaming.models.state_agent_transcript import StateAgentTranscriptEntry
+from vocode.streaming.models.state_agent_transcript import \
+    StateAgentTranscriptEntry
 from vocode.streaming.models.synthesizer import SentimentConfig
-from vocode.streaming.models.transcriber import EndpointingConfig, TranscriberConfig
-from vocode.streaming.models.transcript import (
-    Message,
-    Transcript,
-    TranscriptCompleteEvent,
-)
+from vocode.streaming.models.transcriber import (EndpointingConfig,
+                                                 TranscriberConfig)
+from vocode.streaming.models.transcript import (Message, Transcript,
+                                                TranscriptCompleteEvent)
 from vocode.streaming.output_device.base_output_device import BaseOutputDevice
-from vocode.streaming.synthesizer.base_synthesizer import (
-    BaseSynthesizer,
-    FillerAudio,
-    SynthesisResult,
-)
-from vocode.streaming.transcriber.base_transcriber import BaseTranscriber, Transcription
-from vocode.streaming.utils import create_conversation_id, get_chunk_size_per_second
+from vocode.streaming.synthesizer.base_synthesizer import (BaseSynthesizer,
+                                                           FillerAudio,
+                                                           SynthesisResult)
+from vocode.streaming.transcriber.base_transcriber import (BaseTranscriber,
+                                                           Transcription)
+from vocode.streaming.utils import (create_conversation_id,
+                                    get_chunk_size_per_second)
 from vocode.streaming.utils.conversation_logger_adapter import wrap_logger
 from vocode.streaming.utils.events_manager import EventsManager
 from vocode.streaming.utils.goodbye_model import GoodbyeModel
-from vocode.streaming.utils.setup_tracer import (
-    end_span,
-    setup_tracer,
-    span_event,
-    start_span_in_ctx,
-)
+from vocode.streaming.utils.setup_tracer import (end_span, setup_tracer,
+                                                 span_event, start_span_in_ctx)
 from vocode.streaming.utils.state_manager import ConversationStateManager
-from vocode.streaming.utils.worker import (
-    AsyncQueueWorker,
-    InterruptibleAgentResponseEvent,
-    InterruptibleAgentResponseWorker,
-    InterruptibleEvent,
-    InterruptibleEventFactory,
-    InterruptibleWorker,
-)
-
-from telephony_app.models.call_type import CallType
-from telephony_app.utils.call_information_handler import update_call_transcripts
+from vocode.streaming.utils.worker import (AsyncQueueWorker,
+                                           InterruptibleAgentResponseEvent,
+                                           InterruptibleAgentResponseWorker,
+                                           InterruptibleEvent,
+                                           InterruptibleEventFactory,
+                                           InterruptibleWorker)
 
 tracer = setup_tracer()
 
@@ -1352,8 +1338,6 @@ class StreamingConversation(Generic[OutputDeviceType]):
         self.logger.info(f"Total speech time: {total_time_sent} seconds")
 
         self.mark_last_action_timestamp()
-        # This will be changed when the partial synthesis is added.
-        # Doesn't really matter for now but 2 seconds it too long.
         # Added stop event check otherwise it will block other synthesis result tasks
         # even though we meant to cancel this one.
         word_boundaries = synthesis_result.get_word_boundaries()
@@ -1384,9 +1368,9 @@ class StreamingConversation(Generic[OutputDeviceType]):
                 await asyncio.sleep(sleep_duration)
             self.mark_last_action_timestamp()
             elapsed_time = time.time() - speech_start
-            self.logger.debug(
-                f"Message sent: {synthesis_result.get_message_up_to(time.time() - speech_start)}"
-            )
+            # self.logger.debug(
+            #     f"Message sent: {synthesis_result.get_message_up_to(time.time() - speech_start)}"
+            # )
 
         # if we get here, we have spoken every message
         message_sent = message
