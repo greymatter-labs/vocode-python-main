@@ -7,7 +7,6 @@ from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple, TypedD
 
 from openai import AsyncOpenAI
 from pydantic import BaseModel, Field
-
 from vocode import getenv
 from vocode.streaming.action.phone_call_action import (
     TwilioPhoneCallAction,
@@ -51,57 +50,65 @@ class BranchDecision(Enum):
     SWITCH = 2
     CONTINUE = 3
 
+
 class MemoryValue(TypedDict):
     is_ephemeral: bool
     value: str
 
 
 def parse_llm_dict(s):
+    import ast
+    import re
+
     if isinstance(s, dict):
         return s
-    # Extract everything between and including the first and last curly braces
+
+    # Extract everything between and including the first '{' and the last '}'
     if "{" in s and "}" in s:
         s = s[s.find("{") : s.rfind("}") + 1]
-    s = s.replace("\n{", "{")
-    s = s.replace("{\n", "{")
-    s = s.replace("\n}", "}")
-    s = s.replace("}\n", "}")
-    s = (
-        s.replace('"', "'")
-        .replace("\n", "<newline>")
-        .replace("  ", " ")
-        .replace("','", "', '")
-    )
+
+    # Attempt to parse the string using ast.literal_eval
+    try:
+        result = ast.literal_eval(s)
+        if isinstance(result, dict):
+            return result
+    except (SyntaxError, ValueError):
+        pass
+
+    # Fallback to manual parsing
     result = {}
-    input_string = s.strip("{}")
-    pairs = input_string.split("', '")
+    # Remove outer braces and any leading/trailing whitespace
+    s_clean = s.strip("{}").strip()
 
-    for pair in pairs:
-        if ":" in pair:
-            key, value = pair.split(":", 1)
-            key = key.strip().strip("'")
-            value = value.strip().strip("'")
+    # Split the string into key-value pairs using regex
+    # This handles cases where values may contain commas or colons within quotes
+    pattern = re.compile(
+        r"""
+        (\w+)\s*:\s*      # Key
+        (                 # Value
+            '(?:\\'|[^'])*'   # Single-quoted string
+            |"(?:\\"|[^"])*"  # Double-quoted string
+            |[^,'"]+          # Unquoted value
+        )
+        (?=,|$)           # Lookahead for comma or end of string
+    """,
+        re.VERBOSE,
+    )
+    matches = pattern.findall(s_clean)
 
-            if value.isdigit():
-                value = int(value)
-            elif value.lower() == "true":
-                value = True
-            elif value.lower() == "false":
-                value = False
-            result[key] = value
+    for key, value in matches:
+        key = key.strip().strip("'\"")
+        value = value.strip().strip("'\"")
 
-    # If the result is empty, try parsing as a single key-value pair
-    if not result:
-        match = re.match(r"\s*{\s*'?(\w+)'?\s*:\s*'?([^']+)'?\s*}\s*", s)
-        if match:
-            key, value = match.groups()
-            if value.isdigit():
-                value = int(value)
-            elif value.lower() == "true":
-                value = True
-            elif value.lower() == "false":
-                value = False
-            result[key] = value
+        # Convert value to appropriate type if possible
+        if value.isdigit():
+            value = int(value)
+        elif value.lower() == "true":
+            value = True
+        elif value.lower() == "false":
+            value = False
+
+        result[key] = value
 
     return result
 
@@ -164,28 +171,54 @@ async def handle_memory_dep(
 ):
     logger.info(f"handling memory dep {memory_dep}")
     tool = {
-        memory_dep[
-            "key"
-        ]: "the value provided by the human, or MISSING along with the reason if it's not available"
+        "input": "the user's last message",
+        "meaning": "the meaning of the user's last message",
+        "output": "a new message to the user, either thanking them for providing the information or asking for it",
+        memory_dep["key"]: "the extracted value or MISSING",
     }
+    message_to_say = memory_dep["question"].get("description") or memory_dep[
+        "question"
+    ].get("output", "")
+    logger.error(f"message_to_say |  {message_to_say}")
     output = await call_ai(
-        f"Based solely on the provided chat history between a human and a bot, extract the following information:\n{memory_dep['key']}\n\nInformation Description:\n{memory_dep['description'] or 'No further description provided.'}\n\nIf the question wasn't asked by the bot yet, or it wasn't clearly provided by the human in the conversation, set the value to 'MISSING: <reason>'.",
+        f"""You are trying to get this one piece of information: '{memory_dep['key']}'
+
+    What it means: '{memory_dep['description'] or 'No extra details given.'}'
+
+    What to do:
+    Based on the user's previous responses, extract '{memory_dep['key']}' according to its description:
+       - If the information is provided (either explicitly or implicitly), extract it.
+       - If the information is not provided, is unclear, or you cannot find it, write 'MISSING'.
+
+    Then, generate a new output:
+       - If the information was extracted, thank the user and confirm the information.
+       - If the information is 'MISSING', respond to their last message and then ask for the missing information.
+           - 'output' instructions for if the information is 'MISSING': '{message_to_say}'
+
+    Your response must always be a dictionary containing the keys 'input', 'meaning', '{memory_dep['key']}', and 'output'.""",
         tool,
     )
     logger.error(f"memory dep output: {output}")
     output_dict = parse_llm_dict(output)
     logger.info(f"mem output_dict: {output_dict}")
     memory_value = str(output_dict[memory_dep["key"]])
+    message = str(output_dict["output"])
     logger.info(f"memory directly from AI: {memory_value}")
+    logger.info(f"message to user: {message}")
 
-    if "MISSING" not in memory_value:
-        return await retry({
-            "is_ephemeral": memory_dep["is_ephemeral"],
-            "value": memory_value
-        })
-    memory_reason = memory_value.split(":")[1].strip() if ":" in memory_value else ""
+    if memory_value != "MISSING":
+        # await speak(message)
+        # return await retry(
+        #     {"is_ephemeral": memory_dep["is_ephemeral"], "value": memory_value}
+        # )
+        return await retry(
+            {
+                "is_ephemeral": memory_dep.get("is_ephemeral", False),
+                "value": memory_value,
+            }
+        )
 
-    await speak(memory_dep["question"], memory_reason)
+    await speak({"type": "verbatim", "message": message, "improvise": False})
 
     async def resume(human_input: str):
         return await retry()
@@ -212,7 +245,7 @@ async def handle_options(
     next_state_history = state_history + [state]
 
     for i, (role, msg) in enumerate(reversed(get_chat_history())):
-        if last_user_message_index is None and role == "human" and msg:
+        if last_user_message_index is None and role == "user" and msg:
             last_user_message_index = len(get_chat_history()) - i - 1
             last_user_message = msg
             break
@@ -391,6 +424,7 @@ async def handle_options(
             return resume, clarification_state
         return await go_to_state(next_state_id), None
     except Exception as e:
+        logger.exception("Full error trace:")
         append_json_transcript(
             StateAgentTranscriptInvariantViolation(
                 message="error evaluating ai response",
@@ -404,7 +438,6 @@ async def handle_options(
             )
         )
         logger.error(f"Agent chose no condition: {e}. Response was {response}")
-        logger.exception("Full error trace:")
         return await go_to_state(default_next_state), None
 
 
@@ -483,7 +516,7 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
                 role = entry.role
                 message = entry.message
                 if role in [
-                    "human",
+                    "user",
                     "message.bot",
                     "action-finish",
                 ]:
@@ -518,11 +551,16 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
         )
 
     def update_history(
-        self, role, message, agent_response_tracker: Optional[asyncio.Event] = None, action_name: Optional[str] = None, runtime_inputs: Optional[dict] = None
+        self,
+        role,
+        message,
+        agent_response_tracker: Optional[asyncio.Event] = None,
+        action_name: Optional[str] = None,
+        runtime_inputs: Optional[dict] = None,
     ):
-        if role == "human":
+        if role == "user":
             # Remove the last human message if it exists
-            while self.chat_history and self.chat_history[-1][0] == "human":
+            while self.chat_history and self.chat_history[-1][0] == "user":
                 self.chat_history.pop()
                 self.json_transcript.entries.pop()
 
@@ -530,7 +568,10 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
         if role == "action-finish":
             self.json_transcript.entries.append(
                 StateAgentTranscriptActionFinish(
-                    role=role, message=message, action_name=action_name, runtime_inputs=runtime_inputs
+                    role=role,
+                    message=message,
+                    action_name=action_name,
+                    runtime_inputs=runtime_inputs,
                 )
             )
         else:
@@ -539,6 +580,16 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
             )
 
         if role == "message.bot" and len(message.strip()) > 0:
+            # Check if the latest bot message contents are in the active message
+            latest_bot_message = None
+            # Since we've just added the current message, exclude it from the search
+            for past_role, past_message in reversed(self.chat_history[:-1]):
+                if past_role == "message.bot" and len(past_message.strip()) > 0:
+                    latest_bot_message = past_message
+                    break
+            if latest_bot_message and message.startswith(latest_bot_message):
+                # Remove the substring from the active message if it starts with the latest bot message
+                message = message[len(latest_bot_message) :]
             self.produce_interruptible_agent_response_event_nonblocking(
                 AgentResponseMessage(message=BaseMessage(text=message)),
                 agent_response_tracker=agent_response_tracker,
@@ -564,7 +615,7 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
         is_interrupt: bool = False,
         stream_output: bool = True,
     ):
-        self.update_history("human", human_input)
+        self.update_history("user", human_input)
         self.logger.info(
             f"[{self.agent_config.call_type}:{self.agent_config.current_call_id}] Lead:{human_input}"
         )
@@ -660,7 +711,6 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
         current_state_id,
         is_start=False,
         memory_id=None,
-        memory_reason=None,
     ):
 
         if is_start:
@@ -669,11 +719,13 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
             )  # so that we separately keep track of the start message
         if memory_id:
             current_state_id = current_state_id + "_" + memory_id
-        if current_state_id in self.spoken_states and message["type"] == "verbatim":
+        if (
+            current_state_id in self.spoken_states
+            and message["type"] == "verbatim"
+            and message.get("improvise", True)
+        ):
             original_message = message["message"]
-            constructed_guide = f"You previously communicated to the user: '{original_message}'. If this was a question, the user's response might have been unclear. Address their query (if any) and tactfully seek the information you need. If it was a statement, rephrase it using different words while maintaining its core meaning, tone and approximate length."
-            if memory_reason and memory_reason != "":
-                constructed_guide += f"\n\nNote from bot about the user's previous response: {memory_reason}"
+            constructed_guide = f"You previously communicated to the user: '{original_message}'. Rephrase your previous message. You must maintain its core meaning, tone and approximate length."
             await self.guided_response(constructed_guide)
         else:
             if message["type"] == "verbatim":
@@ -681,8 +733,6 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
                 self.update_history("message.bot", message["message"])
             else:
                 guide = message["description"]
-                if memory_reason and memory_reason != "":
-                    guide += f"\n\nNote from bot about the user's previous response: {memory_reason}"
                 await self.guided_response(guide)
 
     async def should_transfer(self):
@@ -691,7 +741,7 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
 
         # Get the last user message and bot message
         for role, msg in reversed(self.chat_history):
-            if role == "human" and not last_user_message:
+            if role == "user" and not last_user_message:
                 last_user_message = msg
             elif role == "message.bot" and not last_bot_message:
                 last_bot_message = msg
@@ -778,11 +828,10 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
                         state_id_or_label=state_id_or_label, retry_count=new_retry_count
                     )
 
-                speak_message = lambda message, reason: self.print_message(
+                speak_message = lambda message: self.print_message(
                     message,
                     state["id"],
                     memory_id=memory_dep["key"] + "_memory",
-                    memory_reason=reason,
                 )
                 try:
                     return await handle_memory_dep(
@@ -793,6 +842,9 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
                         logger=self.logger,
                     )
                 except Exception as e:
+                    logging.error(f"Error handling memory")
+                    # log trace
+                    logging.exception(f"Error handling memory")
                     self.json_transcript.entries.append(
                         StateAgentTranscriptInvariantViolation(
                             message=f"error handling memory {memory_dep['key']}: {e}",
@@ -843,6 +895,7 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
             try:
                 return await self.compose_action(state)
             except Exception as e:
+                logging.error(f"Error in compose_action {e}")
                 # invariant violation, not action error, because compose_action is supposed to do it's own error handling
                 self.json_transcript.entries.append(
                     StateAgentTranscriptInvariantViolation(
@@ -859,7 +912,7 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
 
         # Find the last user message and the last bot message before it
         for role, msg in reversed(self.chat_history):
-            if role == "human" and msg and not last_user_message:
+            if role == "user" and msg and not last_user_message:
                 last_user_message = msg
             elif (
                 role == "message.bot"
@@ -914,7 +967,9 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
         action_description = action["description"]
         self.logger.debug(f"Action description: {action_description}")
 
-        async def saveActionResultAndMoveOn(action_result: str, runtime_inputs: Optional[dict] = None):
+        async def saveActionResultAndMoveOn(
+            action_result: str, runtime_inputs: Optional[dict] = None
+        ):
             self.block_inputs = False
             self.update_history(
                 role="action-finish",
@@ -1010,6 +1065,7 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
         try:
             action = self.action_factory.create_action(action_config)
         except Exception as e:
+            logging.error(f"Error in create_action {e}")
             self.json_transcript.entries.append(
                 StateAgentTranscriptActionError(
                     action_name=action_name or "action has no name",
@@ -1041,6 +1097,7 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
                     user_message_tracker=None,
                 )
             except Exception as e:
+                logging.error(f"Error in create_action_input {e}")
                 self.json_transcript.entries.append(
                     StateAgentTranscriptActionError(
                         action_name=action_name or "an action has no name",
@@ -1085,7 +1142,7 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
 
         return await saveActionResultAndMoveOn(
             action_result=f"Action Completed: '{action_name}' completed with the following result:\ninput:'{input}'\noutput:\n{output}",
-            runtime_inputs=runtime_inputs
+            runtime_inputs=runtime_inputs,
         )
 
     async def call_ai(self, prompt, tool=None, stop=None):
@@ -1094,7 +1151,7 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
         response_text = ""
         pretty_chat_history = "\n".join(
             [
-                f"{'Bot' if role == 'message.bot' else 'Human'}: {message.text if isinstance(message, BaseMessage) else message}"
+                f"{'Bot' if role == 'message.bot' else 'User'}: {message.text if isinstance(message, BaseMessage) else message}"
                 for role, message in self.chat_history
                 if (isinstance(message, BaseMessage) and len(message.text) > 0)
                 or (not isinstance(message, BaseMessage) and len(str(message)) > 0)
@@ -1122,7 +1179,16 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
                     if any(token in text_chunk for token in stop_tokens):
                         break
         else:
-            prompt = f"Given the chat history, follow the instructions.\nChat history:\n{pretty_chat_history}\n\n\nInstructions:\n{prompt}\nYour response must always be dictionary in the following format: {str(tool)}. Return just the dictionary without any additional commentary."
+            # Start of Selection
+            prompt = (
+                f"{self.overall_instructions}\n\n"
+                f"Given the following conversation between the user and assistant:\n\n"
+                f"{pretty_chat_history}\n\n"
+                "Please follow the instructions below and generate the required response.\n\n"
+                f"Instructions:\n{prompt}\n\n"
+                f"Your response must always be a dictionary in the following format: {str(tool)}.\n"
+                "Return only the dictionary, without any additional commentary."
+            )
             self.logger.debug(f"prompt is: {prompt}")
 
             stream = await self.client.chat.completions.create(
@@ -1229,11 +1295,11 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
 
         self.chat_history = merged_messages
         # if the last message is a user message and there are consecutive user messages before it that are contained in the last user message, remove the consecutive before ones
-        if self.chat_history[-1][0] == "human":
+        if self.chat_history[-1][0] == "user":
             # go backwards
             for i in range(len(self.chat_history) - 2, -1, -1):
                 if (
-                    self.chat_history[i][0] == "human"
+                    self.chat_history[i][0] == "user"
                     and self.chat_history[i][1].text in self.chat_history[-1][1].text
                 ):
                     self.chat_history = self.chat_history[: i + 1]
