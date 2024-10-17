@@ -1,3 +1,4 @@
+import ast
 import asyncio
 import json
 import logging
@@ -57,9 +58,6 @@ class MemoryValue(TypedDict):
 
 
 def parse_llm_dict(s):
-    import ast
-    import re
-
     if isinstance(s, dict):
         return s
 
@@ -178,7 +176,7 @@ async def handle_memory_dep(
     }
     message_to_say = memory_dep["question"].get("description") or memory_dep[
         "question"
-    ].get("output", "")
+    ].get("message", "")
     logger.error(f"message_to_say |  {message_to_say}")
     output = await call_ai(
         f"""You are trying to get this one piece of information: '{memory_dep['key']}'
@@ -589,8 +587,7 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
                     break
             if latest_bot_message and message.startswith(latest_bot_message):
                 # Remove the substring from the active message if it starts with the latest bot message
-                if len(message[len(latest_bot_message) :]) > 0:
-                    message = message[len(latest_bot_message) :]
+                message = message[len(latest_bot_message) :]
             self.produce_interruptible_agent_response_event_nonblocking(
                 AgentResponseMessage(message=BaseMessage(text=message)),
                 agent_response_tracker=agent_response_tracker,
