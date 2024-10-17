@@ -131,8 +131,8 @@ async def handle_memory_dep(
 ):
     logger.info(f"handling memory dep {memory_dep}")
     tool = {
-        "input": "the user's last message",
-        "meaning": "the meaning of the user's last message",
+        # "input": "the user's last message",
+        # "meaning": "the meaning of the user's last message",
         memory_dep["key"]: "the extracted value or MISSING",
         "output": "a new message to the user, either thanking them for providing the information or asking for it",
     }
@@ -155,7 +155,7 @@ async def handle_memory_dep(
        - If the information is 'MISSING', respond to their last message and then ask for the missing information.
            - 'output' instructions for if the information is 'MISSING': '{message_to_say}'
 
-    Your response must always be a json containing the keys 'input', 'meaning', '{memory_dep['key']}', and 'output'.""",
+    Your response must always be a json containing the keys '{memory_dep['key']}', and 'output'.""",
         tool,
         stream_output=True,
     )
@@ -1090,16 +1090,62 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
     async def call_ai(self, prompt, tool=None, stop=None, stream_output=True):
         stop_tokens = stop if stop is not None else []
         response_text = ""
-        pretty_chat_history = "\n".join(
-            [
-                f"{'Bot' if role == 'message.bot' else 'User'}: {message.text if isinstance(message, BaseMessage) else message}"
-                for role, message in self.chat_history
-                if (isinstance(message, BaseMessage) and len(message.text) > 0)
-                or (not isinstance(message, BaseMessage) and len(str(message)) > 0)
-            ]
+
+        # Extract the last sequence of bot, user, bot messages
+        last_bot_messages_before = []
+        last_user_message = ""
+        last_bot_messages_after = []
+        user_found = False
+        for role, message in reversed(self.chat_history):
+            if role == "message.bot" and not user_found:
+                last_bot_messages_after.insert(
+                    0, message.text if isinstance(message, BaseMessage) else message
+                )
+            elif role == "human":
+                if not user_found:
+                    user_found = True
+                    last_user_message = (
+                        message.text if isinstance(message, BaseMessage) else message
+                    )
+                else:
+                    break
+            elif role == "message.bot" and user_found:
+                last_bot_messages_before.insert(
+                    0, message.text if isinstance(message, BaseMessage) else message
+                )
+
+        # Concatenate the messages
+        bot_before = (
+            " ".join(last_bot_messages_before).strip()
+            if len(last_bot_messages_before) > 0
+            else ""
         )
+        last_user_message = (
+            last_user_message.strip() if len(last_user_message) > 0 else ""
+        )
+        bot_after = (
+            " ".join(last_bot_messages_after).strip()
+            if len(last_bot_messages_after) > 0
+            else ""
+        )
+
+        # Construct the context string
+        context_parts = []
+        if bot_before:
+            context_parts.append(f"Bot: {bot_before}")
+        if last_user_message:
+            context_parts.append(f"User: {last_user_message}")
+        if bot_after:
+            context_parts.append(
+                f"Bot: {bot_after}\n[Continue the conversation from here]"
+            )
+
+        context = (
+            "Latest messages:\n" + "\n".join(context_parts) if context_parts else ""
+        )
+
         if not tool or tool == {}:
-            prompt = f"{self.overall_instructions}\n\n Given the chat history, follow the instructions.\nChat history:\n{pretty_chat_history}\n\n\nInstructions:\n{prompt}\n\nReturn a single response."
+            prompt = f"{self.overall_instructions}\n\nGiven the recent conversation:\n{context}\n\nFollow these instructions:\n{prompt}\n\nReturn a single response."
             stream = await self.client.chat.completions.create(
                 model=self.model,
                 messages=[
@@ -1122,8 +1168,7 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
             tool_json_str = json.dumps(tool)
             prompt = (
                 f"{self.overall_instructions}\n\n"
-                f"Given the following conversation between the user and assistant:\n\n"
-                f"{pretty_chat_history}\n\n"
+                f"Given the recent conversation:\n{context}\n\n"
                 "Please follow the instructions below and generate the required response.\n\n"
                 f"Instructions:\n{prompt}\n\n"
                 f"Your response must always be a json in the following format: {tool_json_str}.\n"
