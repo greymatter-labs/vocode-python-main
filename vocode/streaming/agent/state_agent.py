@@ -61,11 +61,9 @@ def parse_llm_json(s):
     if isinstance(s, dict):
         return s
 
-    # Extract everything between and including the first '{' and the last '}'
     if "{" in s and "}" in s:
         s = s[s.find("{") : s.rfind("}") + 1]
 
-    # Attempt to parse the JSON string
     try:
         result = json.loads(s)
         if isinstance(result, dict):
@@ -73,7 +71,6 @@ def parse_llm_json(s):
     except json.JSONDecodeError:
         pass
 
-    # Return empty dict if parsing fails
     return {}
 
 
@@ -116,7 +113,6 @@ async def handle_question(
     logger: logging.Logger,
     state_history: List[Any],
 ):
-
     await speak_message(state["question"])
 
     async def resume(human_input):
@@ -129,7 +125,7 @@ async def handle_question(
 async def handle_memory_dep(
     memory_dep: MemoryDependency,
     speak: Callable[[dict], Awaitable[None]],
-    call_ai: Callable[[str, Dict[str, Any], Optional[str]], Awaitable[str]],
+    call_ai: Callable[[str, Dict[str, Any], Optional[str], bool], Awaitable[str]],
     retry: Callable[[Optional[MemoryValue]], Awaitable[Any]],
     logger: logging.Logger,
 ):
@@ -161,6 +157,7 @@ async def handle_memory_dep(
 
     Your response must always be a json containing the keys 'input', 'meaning', '{memory_dep['key']}', and 'output'.""",
         tool,
+        stream_output=True,
     )
     logger.error(f"memory dep output: {output}")
     output_dict = parse_llm_json(output)
@@ -171,10 +168,6 @@ async def handle_memory_dep(
     logger.info(f"message to user: {message}")
 
     if memory_value != "MISSING":
-        # await speak(message)
-        # return await retry(
-        #     {"is_ephemeral": memory_dep["is_ephemeral"], "value": memory_value}
-        # )
         return await retry(
             {
                 "is_ephemeral": memory_dep.get("is_ephemeral", False),
@@ -194,7 +187,7 @@ async def handle_options(
     state: Any,
     go_to_state: Callable[[str], Awaitable[Any]],
     speak: Callable[[str], None],
-    call_ai: Callable[[str, Dict[str, Any], Optional[str]], Awaitable[str]],
+    call_ai: Callable[[str, Dict[str, Any], Optional[str], bool], Awaitable[str]],
     state_machine: Any,
     get_chat_history: Callable[[], List[Tuple[str, str]]],
     logger: logging.Logger,
@@ -274,14 +267,12 @@ async def handle_options(
                 "aiDescription": f"user no longer needs help with '{state['id'].split('::')[0]}'",
             }
         )
-        if (
-            len(edges) == 1
-        ):  # this gets added if there is only one condition so we can gracefully handle moving forward
+        if len(edges) == 1:
             edges.append(
                 {
                     "destStateId": default_next_state,
                     "aiLabel": "continue",
-                    "aiDescription": f"user provided an answer to the question",  # TODO: it seems to repeat the state on this
+                    "aiDescription": f"user provided an answer to the question",
                 }
             )
         else:
@@ -332,11 +323,7 @@ async def handle_options(
             f"{ai_options_str}\n\n"
             "Always return a number from the above list. Return the number of the condition that best applies."
         )
-    # logger.info(f"AI prompt constructed: {prompt}")
-    response = await call_ai(
-        prompt,
-        tool,
-    )
+    response = await call_ai(prompt, tool, stream_output=True)
 
     logger.info(f"Chose condition: {response}")
     try:
@@ -345,9 +332,7 @@ async def handle_options(
         if condition is None:
             raise ValueError("No condition was provided in the response.")
         condition = int(condition)
-        next_state_id = response_to_edge[condition][
-            "destStateId"
-        ]  # this gets set as start if user is confused and the default next is start
+        next_state_id = response_to_edge[condition]["destStateId"]
         append_json_transcript(
             StateAgentTranscriptBranchDecision(
                 message=f"branching to {next_state_id}",
@@ -358,7 +343,6 @@ async def handle_options(
                 original_state=state,
             )
         )
-        # the issue is that start has no start message
         if response_to_edge[condition].get("speak"):
             tool = {"response": "insert your response to the user"}
             prompt = (
@@ -369,15 +353,12 @@ async def handle_options(
                 "- If the user asked a question, provide a concise answer and then ask for a clear answer if you are waiting for one.\n"
                 "- Ensure not to suggest any actions or offer alternatives.\n"
             )
-            # todo, if current state is an options state which it is shouldnt we repeat it instead of moving forward
-            output = await call_ai(prompt, tool)
+            output = await call_ai(prompt, tool, stream_output=True)
             output = output[output.find("{") : output.find("}") + 1]
             parsed_output = parse_llm_json(output)
             to_speak = parsed_output["response"]
             speak(to_speak)
-            clarification_state = state_history[
-                -1
-            ].copy()  # we want to copy the last question state
+            clarification_state = state_history[-1].copy()
 
             async def resume(human_input):
                 logger.info(
@@ -469,7 +450,6 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
                     self.logger.info(
                         f"Updated state: {state.get('generated_label', state_id)}"
                     )
-                    # Set resume immediately after updating the state
                     if state["type"] == "question":
                         self.resume = lambda _: self.handle_state(
                             get_default_next_state(state)
@@ -501,7 +481,6 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
             else:
                 self.logger.warning(f"Unknown entry type: {type(entry)}")
 
-        # If no states were processed, set resume to the starting state
         if not self.state_history:
             self.resume = lambda _: self.handle_state(
                 self.state_machine["startingStateId"]
@@ -521,9 +500,9 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
         agent_response_tracker: Optional[asyncio.Event] = None,
         action_name: Optional[str] = None,
         runtime_inputs: Optional[dict] = None,
+        speak: bool = True,
     ):
         if role == "human":
-            # Remove the last human message if it exists
             while self.chat_history and self.chat_history[-1][0] == "human":
                 self.chat_history.pop()
                 self.json_transcript.entries.pop()
@@ -544,7 +523,6 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
             )
 
         if role == "message.bot" and len(message.strip()) > 0:
-            # Concatenate the last n bot messages
             bot_messages = []
             for past_role, past_message in reversed(self.chat_history[:-1]):
                 if past_role == "message.bot" and len(past_message.strip()) > 0:
@@ -558,12 +536,10 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
             if concatenated_bot_message_space and message.startswith(
                 concatenated_bot_message_space
             ):
-                # Remove the concatenated substring from the active message if it starts with it
                 message = message[len(concatenated_bot_message_space) :].strip()
             elif concatenated_bot_message_newline and message.startswith(
                 concatenated_bot_message_newline
             ):
-                # Remove the concatenated substring from the active message if it starts with it (newline separated)
                 message = message[len(concatenated_bot_message_newline) :].strip()
 
             if not message:
@@ -571,10 +547,11 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
                     concatenated_bot_message_space or concatenated_bot_message_newline
                 )
 
-            self.produce_interruptible_agent_response_event_nonblocking(
-                AgentResponseMessage(message=BaseMessage(text=message)),
-                agent_response_tracker=agent_response_tracker,
-            )
+            if speak:
+                self.produce_interruptible_agent_response_event_nonblocking(
+                    AgentResponseMessage(message=BaseMessage(text=message)),
+                    agent_response_tracker=agent_response_tracker,
+                )
 
     def get_json_transcript(self):
         return self.json_transcript
@@ -607,18 +584,15 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
             and not self.resume_task.cancelled()
             and not self.resume_task.done()
         ):
-            self.resume_task.cancel()  # Start resume_task and should_transfer task concurrently
+            self.resume_task.cancel()
             try:
                 await self.resume_task
-            except asyncio.CancelledError:  # Wait for the first task to complete
+            except asyncio.CancelledError:
                 self.logger.info(f"Old resume task cancelled")
         if transfer_block_name and self.current_block_name != transfer_block_name:
-            # Start resume_task and should_transfer task concurrently
-
             self.resume_task = asyncio.create_task(self.resume(human_input))
             transfer_task = asyncio.create_task(self.should_transfer())
 
-            # Wait for the first task to complete
             done, pending = await asyncio.wait(
                 {self.resume_task, transfer_task},
                 return_when=asyncio.FIRST_COMPLETED,
@@ -628,7 +602,6 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
                 transfer_result = transfer_task.result()
                 if transfer_result:
                     self.logger.info("Transfer condition met")
-                    # Transfer task completed first, cancel resume_task
                     self.resume_task.cancel()
                     try:
                         await self.resume_task
@@ -646,13 +619,11 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
                         )
                     return "", True
                 else:
-                    # wait for the resume task to complete
                     resume_output = await self.resume_task
                     self.resume = resume_output
                     return "", True
 
             elif self.resume_task in done:
-                # Resume task completed first, cancel transfer_task
                 transfer_task.cancel()
                 try:
                     await transfer_task
@@ -665,13 +636,11 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
                 self.resume = resume_output
                 return "", True
 
-            # Fallback in case neither task completed as expected
             self.logger.error(
                 "Neither resume_task nor transfer_task completed successfully."
             )
             return "", True
         else:
-            # Proceed normally without transfer
             self.resume_task = asyncio.create_task(self.resume(human_input))
             resume_output = await self.resume_task
             self.resume = resume_output
@@ -680,11 +649,9 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
     async def print_start_message(self, state, start: bool):
         if "start_message" in state:
             if state["start_message"]["type"] != "verbatim":
-                start = True  # no need to skip the print if its relative since it wont be repetitive
+                start = True
         if start and "start_message" in state:
-            await self.print_message(
-                state["start_message"], state["id"], is_start=True
-            )  # doesn't print the start message if it's a repeat
+            await self.print_message(state["start_message"], state["id"], is_start=True)
 
     async def print_message(
         self,
@@ -692,12 +659,10 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
         current_state_id,
         is_start=False,
         memory_id=None,
+        speak=True,
     ):
-
         if is_start:
-            current_state_id = (
-                current_state_id + "_start"
-            )  # so that we separately keep track of the start message
+            current_state_id = current_state_id + "_start"
         if memory_id:
             current_state_id = current_state_id + "_" + memory_id
         if (
@@ -711,7 +676,7 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
         else:
             if message["type"] == "verbatim":
                 self.spoken_states.add(current_state_id)
-                self.update_history("message.bot", message["message"])
+                self.update_history("message.bot", message["message"], speak=speak)
             else:
                 guide = message["description"]
                 await self.guided_response(guide)
@@ -720,7 +685,6 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
         last_user_message = None
         last_bot_message = None
 
-        # Get the last user message and bot message
         for role, msg in reversed(self.chat_history):
             if role == "human" and not last_user_message:
                 last_user_message = msg
@@ -739,7 +703,7 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
             f"Your response must be a single word. Respond with either 'transfer' if the user requested to transfer or speak to a human, or 'continue' if they didn't."
         )
 
-        response = await self.call_ai(prompt)
+        response = await self.call_ai(prompt, stream_output=True)
 
         return response.strip().lower() == "transfer"
 
@@ -762,7 +726,6 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
             self.current_block_name = start_of_block
 
         self.json_transcript.entries.append(
-            # use the ID as label if label not available, like if the agent was last updated before labels existed
             StateAgentTranscriptHandleState(
                 state_id=state["id"],
                 generated_label=state.get("generated_label", state["id"]),
@@ -790,7 +753,9 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
             return
 
         speak_message = lambda message: self.print_message(message, state["id"])
-        call_ai = lambda prompt, tool=None, stop=None: self.call_ai(prompt, tool, stop)
+        call_ai = lambda prompt, tool=None, stop=None, stream_output=True: self.call_ai(
+            prompt, tool, stop, stream_output
+        )
 
         self.logger.info(
             f"{state['id']} memory deps: {state.get('memory_dependencies')}"
@@ -813,6 +778,7 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
                     message,
                     state["id"],
                     memory_id=memory_dep["key"] + "_memory",
+                    speak=False,  # regulate on if we have streaming on
                 )
                 try:
                     return await handle_memory_dep(
@@ -824,7 +790,6 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
                     )
                 except Exception as e:
                     logging.error(f"Error handling memory")
-                    # log trace
                     logging.exception(f"Error handling memory")
                     self.json_transcript.entries.append(
                         StateAgentTranscriptInvariantViolation(
@@ -877,7 +842,6 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
                 return await self.compose_action(state)
             except Exception as e:
                 logging.error(f"Error in compose_action {e}")
-                # invariant violation, not action error, because compose_action is supposed to do it's own error handling
                 self.json_transcript.entries.append(
                     StateAgentTranscriptInvariantViolation(
                         message=f"uncaught exception in compose_action: {e}",
@@ -891,7 +855,6 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
         action_result_after_user = None
         bot_message_after_user = None
 
-        # Find the last user message and the last bot message before it
         for role, msg in reversed(self.chat_history):
             if role == "human" and msg and not last_user_message:
                 last_user_message = msg
@@ -904,7 +867,6 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
                 last_bot_message_before_user = msg
                 break
 
-        # Find action result and bot message after user message
         if last_user_message:
             user_found = False
             for role, msg in self.chat_history:
@@ -928,7 +890,7 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
             prompt += f"Bot's is thinking: '{bot_message_after_user}'\n"
         prompt += "\nNow, respond as the BOT directly."
 
-        message = await self.call_ai(prompt, None)
+        message = await self.call_ai(prompt, stream_output=True)
         message = message.strip()
         self.logger.info(f"Guided response: {message}")
         self.update_history("message.bot", message)
@@ -1003,6 +965,7 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
                 response = await self.call_ai(
                     prompt=f"Based on the current conversation and the instructions provided, return a valid json with values inserted for these parameters:\n{param_descriptions_str}",
                     tool=dict_to_fill,
+                    stream_output=True,
                 )
                 self.logger.info(f"Raw AI response: {response}")
                 response = response[response.find("{") : response.rfind("}") + 1]
@@ -1018,7 +981,6 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
 
                 finalized_params.update(ai_filled_params)
         if action_name.lower() == "zapier":
-            # is the action description
             if action_description:
                 params = {
                     "zapier_name": action_description,
@@ -1032,7 +994,6 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
                     action_result=f"action {action_name} failed to run due missing action description"
                 )
         elif action_name.lower() == "run_python":
-            # remove the code from the params
             code = finalized_params.pop("code")
             params = {
                 "code": code,
@@ -1126,9 +1087,8 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
             runtime_inputs=runtime_inputs,
         )
 
-    async def call_ai(self, prompt, tool=None, stop=None):
+    async def call_ai(self, prompt, tool=None, stop=None, stream_output=True):
         stop_tokens = stop if stop is not None else []
-        # stop_tokens.append("}")
         response_text = ""
         pretty_chat_history = "\n".join(
             [
@@ -1140,7 +1100,6 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
         )
         if not tool or tool == {}:
             prompt = f"{self.overall_instructions}\n\n Given the chat history, follow the instructions.\nChat history:\n{pretty_chat_history}\n\n\nInstructions:\n{prompt}\n\nReturn a single response."
-            # self.logger.debug(f"prompt is: {prompt}")
             stream = await self.client.chat.completions.create(
                 model=self.model,
                 messages=[
@@ -1160,9 +1119,7 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
                     if any(token in text_chunk for token in stop_tokens):
                         break
         else:
-            # get json string of tool
             tool_json_str = json.dumps(tool)
-            # Start of Selection
             prompt = (
                 f"{self.overall_instructions}\n\n"
                 f"Given the following conversation between the user and assistant:\n\n"
@@ -1184,12 +1141,42 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
                 temperature=0.1,
                 max_tokens=4000,
             )
+            buffer = ""
+            output_started = False
+            json_key = '"output": '
+            punctuation = [".", "!", "?", ",", ";", ":"]
+            send_final_message = False
             async for chunk in stream:
                 text_chunk = chunk.choices[0].delta.content
                 if text_chunk:
                     response_text += text_chunk
+                    buffer += text_chunk
+                    if not output_started:
+                        idx = buffer.find(json_key)
+                        if idx != -1:
+                            output_started = True
+                            value_start = idx + len(json_key)
+                            buffer = buffer[value_start:]
+                    elif stream_output:
+                        while any(p in buffer for p in punctuation):
+                            split_index = max(
+                                buffer.rfind(p) for p in punctuation if p in buffer
+                            )
+                            content = buffer[: split_index + 1]
+                            buffer = buffer[split_index + 1 :]
+                            if content.strip():
+                                self.produce_interruptible_agent_response_event_nonblocking(
+                                    AgentResponseMessage(
+                                        message=BaseMessage(text=content.strip())
+                                    )
+                                )
+                                send_final_message = True
                     if any(token in text_chunk for token in stop_tokens):
                         break
+            if buffer.strip() and send_final_message:
+                self.produce_interruptible_agent_response_event_nonblocking(
+                    AgentResponseMessage(message=BaseMessage(text=buffer.strip()))
+                )
         return response_text
 
     def get_functions(self):
@@ -1206,11 +1193,9 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
         return functions
 
     def move_back_state(self):
-        # Remove the current state
         if self.state_history:
             self.state_history.pop()
 
-        # Find the last question state
         while self.state_history:
             previous_state = self.state_history[-1]
             if previous_state["type"] == "question":
@@ -1218,7 +1203,6 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
             else:
                 self.state_history.pop()
 
-        # Merge consecutive messages of the same role
         merged_messages = []
         for role, message in self.chat_history:
             current_message = (
@@ -1239,15 +1223,10 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
                 else:
                     merged_messages.append((role, current_message))
 
-        # Log the merged messages for debugging
         self.logger.info(f"Merged messages: {merged_messages}")
         self.chat_history = merged_messages
-        # self.chat_history = list(reversed(merged_messages))
-        # Remove everything after the second to latest bot message and replace the second to latest with the removed latest
         bot_messages = [
-            i
-            for i, (role, _) in enumerate(merged_messages)
-            if role == "bot"  # try with bot message
+            i for i, (role, _) in enumerate(merged_messages) if role == "bot"
         ]
         if len(bot_messages) >= 2:
             second_last_user_index = bot_messages[-2]
@@ -1277,9 +1256,7 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
                     merged_messages.append((role, current_message))
 
         self.chat_history = merged_messages
-        # if the last message is a user message and there are consecutive user messages before it that are contained in the last user message, remove the consecutive before ones
         if self.chat_history[-1][0] == "human":
-            # go backwards
             for i in range(len(self.chat_history) - 2, -1, -1):
                 if (
                     self.chat_history[i][0] == "human"
@@ -1290,7 +1267,6 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
                 else:
                     break
 
-        # Set the resume state
         if self.state_history:
             self.resume = lambda _: self.handle_state(self.state_history[-1]["id"])
         else:
@@ -1298,7 +1274,6 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
                 self.state_machine["startingStateId"]
             )
 
-    # this might not be needed.
     def restore_resume_state(self):
         if self.state_history:
             current_state = self.state_history[-1]
