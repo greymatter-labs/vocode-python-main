@@ -66,36 +66,12 @@ class StateAgentTranscriptActionFinish(StateAgentTranscriptEntry):
 
     @staticmethod
     def scrub_secrets(runtime_inputs: dict) -> dict:
-        secret_patterns = [
-            r"(?i)pass(word)?",  # Matches password, pass
-            r"(?i)secret",
-            r"(?i)(api[_-]?key|app[_-]?key)",  # Matches api_key, apikey, app_key, appkey
-            r"(?i)token",
-            r"(?i)(auth|access|refresh)[_-]?token",  # Matches auth_token, access_token, refresh_token
-            r"(?i)private[_-]?key",
-            r"(?i)session[_-]?id",
-            r"(?i)(oauth|auth)[_-]?(token|key)",  # Matches oauth_token, auth_key, etc.
-            r"(?i)jwt",  # JSON Web Token
-            r"(?i)(encryption|cipher)[_-]?key",
-            r"(?i)client[_-]?(id|secret)",  # Matches client_id, client_secret
-            r"(?i)(db|database)[_-]?(pass|password|secret)",  # Matches db_pass, database_password, etc.
-            r"(?i)(aws|amazon)[_-]?(secret|key|token)",  # Matches aws_secret, amazon_key, etc.
-            r"(?i)(github|gitlab|bitbucket)[_-]?(token|key|secret)",  # For version control platforms
-            r"(?i)(stripe|paypal|braintree)[_-]?(key|token|secret)",  # For payment gateways
-            r"(?i)(ssh|sftp)[_-]?(key|password)",
-            r"(?i)certificate[_-]?(key|password)",
-            r"(?i)(encryption|cipher)[_-]?(key|password)",
-            r"(?i)(auth|authentication)[_-]?(key|token|secret|password)",
-            r"(?i)(access|secret)[_-]?(key|token)",
-            r"(?i)([a-z0-9_-]+\.)?credential",  # Matches any word ending with .credential or just credential
-        ]
-
         def scrub_dict(d):
             scrubbed = {}
             for k, v in d.items():
                 if isinstance(v, dict):
                     scrubbed[k] = scrub_dict(v)
-                elif any(re.search(pattern, k) for pattern in secret_patterns):
+                elif 'secret' in k.lower():
                     scrubbed[k] = "*****"
                 else:
                     scrubbed[k] = v
