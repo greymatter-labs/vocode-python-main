@@ -272,6 +272,7 @@ class StreamingConversation(Generic[OutputDeviceType]):
 
                     # Place the event in the output queue for further processing
                 self.output_queue.put_nowait(event)
+                self.conversation.mark_last_action_timestamp()
                 self.conversation.allow_idle_message = True
                 self.conversation.allow_unmute = False
 

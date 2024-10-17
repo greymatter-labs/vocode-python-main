@@ -522,36 +522,12 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
                 StateAgentTranscriptMessage(role=role, message=message)
             )
 
-        if role == "message.bot" and len(message.strip()) > 0:
-            bot_messages = []
-            for past_role, past_message in reversed(self.chat_history[:-1]):
-                if past_role == "message.bot" and len(past_message.strip()) > 0:
-                    bot_messages.insert(0, past_message.strip())
-                else:
-                    break
+        if role == "message.bot" and len(message.strip()) > 0 and speak:
 
-            concatenated_bot_message_space = " ".join(bot_messages)
-            concatenated_bot_message_newline = "\n".join(bot_messages)
-
-            if concatenated_bot_message_space and message.startswith(
-                concatenated_bot_message_space
-            ):
-                message = message[len(concatenated_bot_message_space) :].strip()
-            elif concatenated_bot_message_newline and message.startswith(
-                concatenated_bot_message_newline
-            ):
-                message = message[len(concatenated_bot_message_newline) :].strip()
-
-            if not message:
-                message = (
-                    concatenated_bot_message_space or concatenated_bot_message_newline
-                )
-
-            if speak:
-                self.produce_interruptible_agent_response_event_nonblocking(
-                    AgentResponseMessage(message=BaseMessage(text=message)),
-                    agent_response_tracker=agent_response_tracker,
-                )
+            self.produce_interruptible_agent_response_event_nonblocking(
+                AgentResponseMessage(message=BaseMessage(text=message)),
+                agent_response_tracker=agent_response_tracker,
+            )
 
     def get_json_transcript(self):
         return self.json_transcript
