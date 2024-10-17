@@ -133,8 +133,8 @@ async def handle_memory_dep(
     tool = {
         "input": "the user's last message",
         "meaning": "the meaning of the user's last message",
-        "output": "a new message to the user, either thanking them for providing the information or asking for it",
         memory_dep["key"]: "the extracted value or MISSING",
+        "output": "a new message to the user, either thanking them for providing the information or asking for it",
     }
     message_to_say = memory_dep["question"].get("description") or memory_dep[
         "question"
@@ -1158,7 +1158,7 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
                             value_start = idx + len(json_key)
                             buffer = buffer[value_start:]
                     elif (
-                        stream_output and "MISSING" in buffer
+                        stream_output and "MISSING" in response_text
                     ):  # only want to say the output if its missing
                         while any(p in buffer for p in punctuation):
                             split_index = max(
