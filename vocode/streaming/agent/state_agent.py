@@ -1157,7 +1157,9 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
                             output_started = True
                             value_start = idx + len(json_key)
                             buffer = buffer[value_start:]
-                    elif stream_output:
+                    elif (
+                        stream_output and "MISSING" in buffer
+                    ):  # only want to say the output if its missing
                         while any(p in buffer for p in punctuation):
                             split_index = max(
                                 buffer.rfind(p) for p in punctuation if p in buffer
