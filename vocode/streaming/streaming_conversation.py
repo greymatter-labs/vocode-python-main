@@ -288,6 +288,7 @@ class StreamingConversation(Generic[OutputDeviceType]):
                 self.conversation.logger.debug(
                     "Ignoring transcription on initial message"
                 )
+                self.conversation.mark_last_action_timestamp()
                 return
             if (
                 self.conversation.agent.block_inputs
@@ -310,6 +311,9 @@ class StreamingConversation(Generic[OutputDeviceType]):
                 self.conversation.logger.debug(
                     "Ignoring transcription since we are SPEAKING..."
                 )
+                self.conversation.mark_last_action_timestamp()
+                # clear the buffer
+                self.buffer.clear()
                 return
             # If the message is just "vad", handle it without resetting the buffer check
             if transcription.message.strip() == "vad":
@@ -666,6 +670,7 @@ class StreamingConversation(Generic[OutputDeviceType]):
                 agent_response_message = typing.cast(
                     AgentResponseMessage, agent_response
                 )
+                self.conversation.mark_last_action_timestamp()
 
                 if self.conversation.filler_audio_worker is not None:
                     if (
@@ -1184,6 +1189,7 @@ class StreamingConversation(Generic[OutputDeviceType]):
         """
         self.logger.debug("Broadcasting interrupt")
         self.stop_event.set()
+        self.mark_last_action_timestamp()
         if isinstance(self.agent, CommandAgent):
             self.agent.stop = not self.agent.stop
         num_interrupts = 0
