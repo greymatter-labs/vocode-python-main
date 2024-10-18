@@ -1271,8 +1271,9 @@ class StreamingConversation(Generic[OutputDeviceType]):
         held_buffer = self.transcriptions_worker.buffer.to_message()
         time_started_speaking = time.time()
         buffer_cleared = False
-        total_time_sent = 0
+        total_speech_duration = 0
         moved_back = False
+        speech_start_time = time.time()
         async for chunk_result in synthesis_result.chunk_generator:
 
             if stop_event.is_set() and self.agent.agent_config.allow_interruptions:
@@ -1296,7 +1297,7 @@ class StreamingConversation(Generic[OutputDeviceType]):
 
                 await self.output_device.consume_nonblocking(speech_data)
                 chunk_time = len(speech_data) / (chunk_size / seconds_per_chunk)
-                total_time_sent += chunk_time
+                total_speech_duration += chunk_time
 
                 speech_data = bytearray()
 
@@ -1304,7 +1305,7 @@ class StreamingConversation(Generic[OutputDeviceType]):
             self.logger.debug(f"Sending final chunk, len {len(speech_data)}")
             await self.output_device.consume_nonblocking(speech_data)
             self.transcriptions_worker.time_silent = 0.0
-            total_time_sent += len(speech_data) / (chunk_size / seconds_per_chunk)
+            total_speech_duration += len(speech_data) / (chunk_size / seconds_per_chunk)
         else:
             self.logger.debug("Interrupted speech output on the last chunk")
             if not moved_back:
@@ -1322,24 +1323,30 @@ class StreamingConversation(Generic[OutputDeviceType]):
         self.transcriptions_worker.time_silent = 0.0
         self.transcriptions_worker.triggered_affirmative = False
 
-        self.logger.info(f"Total speech time: {total_time_sent} seconds")
+        self.logger.info(f"Total speech time: {total_speech_duration} seconds")
 
         self.mark_last_action_timestamp()
-        # This will be changed when the partial synthesis is added.
-        # Doesn't really matter for now but 2 seconds it too long.
         # Added stop event check otherwise it will block other synthesis result tasks
         # even though we meant to cancel this one.
-        sleep_interval = 0.1  # Mark last action every 0.1 seconds
-        remaining_sleep = total_time_sent
-        while remaining_sleep > 0:
-            await asyncio.sleep(min(sleep_interval, remaining_sleep))
+        default_sleep_duration = 0.1  # Mark last action every 0.1 seconds
+        spoken_speech_duration = time.time() - speech_start_time
+        message_sent = ""
+        while spoken_speech_duration < total_speech_duration:
+            sleep_duration = min(
+                default_sleep_duration,
+                total_speech_duration - spoken_speech_duration + 0.01,
+            )
+            await asyncio.sleep(next_sleep_duration)
+            spoken_speech_duration += sleep_duration
+            message_sent = synthesis_result.get_message_up_to(spoken_speech_duration)
             if stop_event.is_set():
                 self.agent.move_back_state()
-                return "", False
+                self.logger.info(f"mesage actually spoken: {message_sent}")
+                return message_sent, False
             self.mark_last_action_timestamp()
-            remaining_sleep -= sleep_interval
         # This ensures we do volume thresholding and mark last action periodically
-        message_sent = synthesis_result.get_message_up_to(total_time_sent)
+        message_sent = synthesis_result.get_message_up_to(total_speech_duration)
+        self.logger.info(f"mesage actually spoken: {message_sent}")
         replacer = "\n"
         if not stop_event.is_set():
             self.logger.info(
