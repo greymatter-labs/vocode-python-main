@@ -797,6 +797,7 @@ class StreamingConversation(Generic[OutputDeviceType]):
                     self.conversation.started_event,
                     TEXT_TO_SPEECH_CHUNK_SIZE_SECONDS,
                     transcript_message=transcript_message,
+                    on_message_sent=message.on_message_sent
                 )
                 # Create an asynchronous task for the coroutine and store it as the current task.
                 self.current_task = asyncio.create_task(send_speech_coroutine)
@@ -839,8 +840,6 @@ class StreamingConversation(Generic[OutputDeviceType]):
                 item.agent_response_tracker.set()
                 # Log the message that was successfully sent.
                 self.conversation.logger.debug(f"Message sent: {message_sent}")
-                if message.on_message_sent:
-                    message.on_message_sent(message_sent)
 
                 # Check if the conversation should end after the agent says goodbye.
                 if self.conversation.agent.agent_config.end_conversation_on_goodbye:
@@ -1255,6 +1254,7 @@ class StreamingConversation(Generic[OutputDeviceType]):
         started_event: threading.Event,
         seconds_per_chunk: int,
         transcript_message: Optional[Message] = None,
+        on_message_sent: Optional[Callable[[str], None]] = None
     ):
         if not (synthesis_result and message):
             return "", False
@@ -1342,6 +1342,10 @@ class StreamingConversation(Generic[OutputDeviceType]):
             remaining_sleep -= sleep_interval
         # This ensures we do volume thresholding and mark last action periodically
         message_sent = synthesis_result.get_message_up_to(total_time_sent)
+
+        if on_message_sent:
+            on_message_sent(message_sent)
+
         replacer = "\n"
         if not stop_event.is_set():
             self.logger.info(
