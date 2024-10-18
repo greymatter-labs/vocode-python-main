@@ -683,7 +683,9 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
 
     async def handle_state(self, state_id_or_label: str, retry_count: int = 0):
         self.logger.info(f"handle state {state_id_or_label} retry count {retry_count}")
-        start = state_id_or_label not in self.visited_states
+        start = (
+            state_id_or_label != "start"
+        )  # todo for arthur: unclear naming this regulates whether to say the starting message which is now the ending message. we dont want to say it again if we are still on the start state.
         self.visited_states.add(state_id_or_label)
         state = get_state(state_id_or_label, self.state_machine)
         self.current_state = state
