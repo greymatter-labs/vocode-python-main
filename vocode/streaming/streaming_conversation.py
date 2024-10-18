@@ -289,14 +289,14 @@ class StreamingConversation(Generic[OutputDeviceType]):
                     "Ignoring transcription on initial message"
                 )
                 return
-            # if (
-            #     self.conversation.agent.block_inputs
-            # ):  # the two block inputs are different
-            #     self.conversation.logger.debug(
-            #         "Ignoring transcription since we are awaiting a tool call."
-            #     )
-            #     self.conversation.mark_last_action_timestamp()
-            #     return
+            if (
+                self.conversation.agent.block_inputs
+            ):  # the two block inputs are different
+                self.conversation.logger.debug(
+                    "Ignoring transcription since we are awaiting a tool call."
+                )
+                self.conversation.mark_last_action_timestamp()
+                return
             # if self.block_inputs and not self.agent.agent_config.allow_interruptions:
             #     self.conversation.logger.debug(
             #         "Ignoring transcription since we are in-flight..."
