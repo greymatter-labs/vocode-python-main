@@ -1,10 +1,13 @@
 import asyncio
+import io
+import math
 import os
+import wave
 from typing import (
     Any,
     AsyncGenerator,
-    Generator,
     Callable,
+    Generator,
     Generic,
     List,
     Optional,
@@ -12,9 +15,7 @@ from typing import (
     TypeVar,
     Union,
 )
-import math
-import io
-import wave
+
 import aiohttp
 import nltk
 
@@ -26,14 +27,11 @@ from opentelemetry.trace import Span
 
 from vocode.streaming.agent.bot_sentiment_analyser import BotSentiment
 from vocode.streaming.models.agent import FillerAudioConfig
+from vocode.streaming.models.audio_encoding import AudioEncoding
 from vocode.streaming.models.message import BaseMessage
+from vocode.streaming.models.synthesizer import SynthesizerConfig
 from vocode.streaming.synthesizer.miniaudio_worker import MiniaudioWorker
 from vocode.streaming.utils import convert_wav, get_chunk_size_per_second
-from vocode.streaming.models.audio_encoding import AudioEncoding
-from vocode.streaming.models.synthesizer import (
-    SynthesizerConfig,
-)
-
 
 FILLER_PHRASES = [
     BaseMessage(text="Hmm?"),
@@ -92,9 +90,11 @@ class SynthesisResult:
         self,
         chunk_generator: AsyncGenerator[ChunkResult, None],
         get_message_up_to: Callable[[float], str],
+        get_word_boundaries: Callable[[None], list],
     ):
         self.chunk_generator = chunk_generator
         self.get_message_up_to = get_message_up_to
+        self.get_word_boundaries = get_word_boundaries
 
 
 class FillerAudio:
