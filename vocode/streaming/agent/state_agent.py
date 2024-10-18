@@ -637,7 +637,7 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
                 start = True
         if start and "start_message" in state:
             await self.print_message(state["start_message"], state["id"], is_start=True)
-            self.mark_start = True
+            # self.mark_start = True
 
     async def print_message(
         self,
