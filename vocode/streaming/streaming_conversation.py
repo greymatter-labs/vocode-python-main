@@ -1098,6 +1098,7 @@ class StreamingConversation(Generic[OutputDeviceType]):
         """Terminates the conversation after 15 seconds if no activity is detected"""
         idle_prompt_sent = False
         while self.is_active():
+            self.logger.debug(f"agent is speaking? {self.is_agent_speaking()}")
             if (
                 time.time() - self.last_action_timestamp > 8
                 and not idle_prompt_sent
