@@ -8,6 +8,7 @@ from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple, TypedD
 
 from openai import AsyncOpenAI
 from pydantic import BaseModel, Field
+
 from vocode import getenv
 from vocode.streaming.action.phone_call_action import (
     TwilioPhoneCallAction,
@@ -515,7 +516,6 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
             while self.chat_history and self.chat_history[-1][0] == "human":
                 self.chat_history.pop()
                 self.json_transcript.entries.pop()
-
         self.chat_history.append((role, message))
         if role == "action-finish":
             self.json_transcript.entries.append(
@@ -527,16 +527,16 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
                 )
             )
         else:
-            self.json_transcript.entries.append(
-                StateAgentTranscriptMessage(role=role, message=message)
+            state_agent_transcript_message = StateAgentTranscriptMessage(
+                role=role, message=message, message_sent=""
             )
-
-        if role == "message.bot" and len(message.strip()) > 0 and speak:
-
-            self.produce_interruptible_agent_response_event_nonblocking(
-                AgentResponseMessage(message=BaseMessage(text=message)),
-                agent_response_tracker=agent_response_tracker,
-            )
+            self.json_transcript.entries.append(state_agent_transcript_message)
+            if role == "message.bot" and len(message.strip()) > 0 and speak:
+                self.produce_interruptible_agent_response_event_nonblocking(
+                    AgentResponseMessage(message=BaseMessage(text=message)),
+                    agent_response_tracker=agent_response_tracker,
+                    json_transcript_entry=state_agent_transcript_message,
+                )
 
     def get_json_transcript(self):
         return self.json_transcript
