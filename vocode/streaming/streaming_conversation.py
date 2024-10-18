@@ -661,11 +661,6 @@ class StreamingConversation(Generic[OutputDeviceType]):
 
                 if isinstance(agent_response, AgentResponseGenerationComplete):
                     self.conversation.logger.debug("Agent response generation complete")
-                    await self.conversation.synthesizer.create_speech(
-                        message=BaseMessage(text="<agent_complete>"),
-                        chunk_size=self.chunk_size,
-                        bot_sentiment=self.conversation.bot_sentiment,
-                    )
                     return
                 agent_response_message = typing.cast(
                     AgentResponseMessage, agent_response
@@ -703,6 +698,11 @@ class StreamingConversation(Generic[OutputDeviceType]):
                             self.conversation.agent.agent_config.language,
                         )
                         current_message = agent_response_message.message.text + ""
+                        # if there is a starting double quote, and an odd number of double quotes, rmeove it
+                        if translated_message.startswith('"'):
+                            double_quote_count = translated_message.count('"')
+                            if double_quote_count % 2 == 1:
+                                translated_message = translated_message[1:]
                         agent_response_message.message.text = translated_message
                         synthesis_result = (
                             await self.conversation.synthesizer.create_speech(
@@ -717,6 +717,15 @@ class StreamingConversation(Generic[OutputDeviceType]):
                         agent_response_message.message.text = (
                             agent_response_message.message.text.strip()
                         )
+                        # if there is a starting double quote, and an odd number of double quotes, rmeove it
+                        if agent_response_message.message.text.startswith('"'):
+                            double_quote_count = (
+                                agent_response_message.message.text.count('"')
+                            )
+                            if double_quote_count % 2 == 1:
+                                agent_response_message.message.text = (
+                                    agent_response_message.message.text[1:]
+                                )
                         synthesis_result = (
                             await self.conversation.synthesizer.create_speech(
                                 agent_response_message.message,
@@ -1178,8 +1187,12 @@ class StreamingConversation(Generic[OutputDeviceType]):
         """
 
         return (
-            self.synthesis_results_worker.current_task is not None
-            and not self.synthesis_results_worker.current_task.done()
+            (
+                self.synthesis_results_worker.current_task is not None
+                and not self.synthesis_results_worker.current_task.done()
+            )
+            or (self.agent_responses_worker.output_queue.qsize() > 0)
+            or (self.synthesis_results_queue.qsize() > 0)
         )
 
     async def broadcast_interrupt(self):
