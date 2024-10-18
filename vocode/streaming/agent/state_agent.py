@@ -130,32 +130,30 @@ async def handle_memory_dep(
     logger: logging.Logger,
 ):
     logger.info(f"handling memory dep {memory_dep}")
+    # Start of Selection
     tool = {
-        # "input": "the user's last message",
-        # "meaning": "the meaning of the user's last message",
-        memory_dep["key"]: "the extracted value or MISSING",
-        "output": "a new message to the user, either thanking them for providing the information or asking for it",
+        memory_dep["key"]: "the extracted value or 'MISSING'",
+        "output": "If the information is missing, a message to ask for it; else 'N/A'",
     }
     message_to_say = memory_dep["question"].get("description") or memory_dep[
         "question"
     ].get("message", "")
     logger.error(f"message_to_say |  {message_to_say}")
     output = await call_ai(
-        f"""You are trying to get this one piece of information: '{memory_dep['key']}'
+        f"""You are trying to obtain the following information: '{memory_dep['key']}'.
 
-    What it means: '{memory_dep['description'] or 'No extra details given.'}'
+What it means: '{memory_dep['description'] or 'No extra details given.'}'.
 
-    What to do:
-    Based on the user's previous responses, extract '{memory_dep['key']}' according to its description:
-       - If the information is provided (either explicitly or implicitly), extract it.
-       - If the information is not provided, is unclear, or you cannot find it, write 'MISSING'.
+Based on the user's previous responses, extract '{memory_dep['key']}' according to its description.
+If the information is provided (either explicitly or implicitly), extract it.
+If the information is not provided, unclear, or you cannot find it, write 'MISSING'.
 
-    Then, generate a new output:
-       - If the information was extracted, thank the user and confirm the information.
-       - If the information is 'MISSING', respond to their last message and then ask for the missing information.
-           - 'output' instructions for if the information is 'MISSING': '{message_to_say}'
+Then, set 'output' as follows:
+- If the information was extracted, set 'output' to 'N/A'.
+- If the information is 'MISSING', generate a message to ask for '{memory_dep['key']}'.
+Use the following instruction for the message: '{message_to_say}'.
 
-    Your response must always be a json containing the keys '{memory_dep['key']}', and 'output'.""",
+Your response must be a JSON containing the keys '{memory_dep['key']}' and 'output'.""",
         tool,
         stream_output=True,
     )
@@ -1119,6 +1117,14 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
         context = (
             "Latest messages:\n" + "\n".join(context_parts) if context_parts else ""
         )
+        # construct pretty printed complete history
+        complete_history = []
+        for role, message in self.chat_history:
+            if role == "message.bot":
+                complete_history.append(f"Bot: {message}")
+            elif role == "human":
+                complete_history.append(f"User: {message}")
+        complete_history = "\n".join(complete_history)
 
         if not tool or tool == {}:
             prompt = f"{self.overall_instructions}\n\nGiven the recent conversation:\n{context}\n\nFollow these instructions:\n{prompt}\n\nReturn a single response."
@@ -1144,9 +1150,10 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
             tool_json_str = json.dumps(tool)
             prompt = (
                 f"{self.overall_instructions}\n\n"
-                f"Given the recent conversation:\n{context}\n\n"
+                f"You are engaged in the following conversation:\n{complete_history}\n\n"
                 "Please follow the instructions below and generate the required response.\n\n"
                 f"Instructions:\n{prompt}\n\n"
+                f"The latest exchange was as follows:\n{context}\n\n"
                 f"Your response must always be a json in the following format: {tool_json_str}.\n"
                 "Return only the json, without any additional commentary."
             )

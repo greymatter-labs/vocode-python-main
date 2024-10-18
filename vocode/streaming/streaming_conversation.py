@@ -274,7 +274,6 @@ class StreamingConversation(Generic[OutputDeviceType]):
                 self.output_queue.put_nowait(event)
                 self.conversation.mark_last_action_timestamp()
                 self.conversation.allow_idle_message = True
-                self.conversation.allow_unmute = False
 
                 self.conversation.logger.info("Transcription event put in output queue")
                 # release the action, if there is one
@@ -290,22 +289,31 @@ class StreamingConversation(Generic[OutputDeviceType]):
                     "Ignoring transcription on initial message"
                 )
                 return
-            if (
-                self.conversation.agent.block_inputs
-            ):  # the two block inputs are different
-                self.conversation.logger.debug(
-                    "Ignoring transcription since we are awaiting a tool call."
-                )
-                self.conversation.mark_last_action_timestamp()
-                return
-            if self.block_inputs and not self.agent.agent_config.allow_interruptions:
-                self.conversation.logger.debug(
-                    "Ignoring transcription since we are in-flight..."
-                )
-                return
+            # if (
+            #     self.conversation.agent.block_inputs
+            # ):  # the two block inputs are different
+            #     self.conversation.logger.debug(
+            #         "Ignoring transcription since we are awaiting a tool call."
+            #     )
+            #     self.conversation.mark_last_action_timestamp()
+            #     return
+            # if self.block_inputs and not self.agent.agent_config.allow_interruptions:
+            #     self.conversation.logger.debug(
+            #         "Ignoring transcription since we are in-flight..."
+            #     )
+            #     return
 
+            if (
+                not self.agent.agent_config.allow_interruptions
+                and self.conversation.is_agent_speaking()
+            ):
+                self.conversation.logger.debug(
+                    "Ignoring transcription since we are SPEAKING..."
+                )
+                return
             # If the message is just "vad", handle it without resetting the buffer check
             if transcription.message.strip() == "vad":
+
                 self.vad_detected = True
 
                 await self.conversation.broadcast_interrupt()
@@ -649,7 +657,11 @@ class StreamingConversation(Generic[OutputDeviceType]):
 
                 if isinstance(agent_response, AgentResponseGenerationComplete):
                     self.conversation.logger.debug("Agent response generation complete")
-                    self.conversation.allow_unmute = True
+                    await self.conversation.synthesizer.create_speech(
+                        message=BaseMessage(text="<agent_complete>"),
+                        chunk_size=self.chunk_size,
+                        bot_sentiment=self.conversation.bot_sentiment,
+                    )
                     return
                 agent_response_message = typing.cast(
                     AgentResponseMessage, agent_response
@@ -1159,6 +1171,7 @@ class StreamingConversation(Generic[OutputDeviceType]):
         """
         Checks if the agent is currently speaking.
         """
+
         return (
             self.synthesis_results_worker.current_task is not None
             and not self.synthesis_results_worker.current_task.done()
@@ -1173,11 +1186,6 @@ class StreamingConversation(Generic[OutputDeviceType]):
         self.stop_event.set()
         if isinstance(self.agent, CommandAgent):
             self.agent.stop = not self.agent.stop
-
-        # this above is done by just calling generate completion
-        self.agent.block_inputs = False
-        self.transcriptions_worker.block_inputs = False
-        self.allow_unmute = True
         num_interrupts = 0
         while True:
             try:
@@ -1204,6 +1212,9 @@ class StreamingConversation(Generic[OutputDeviceType]):
                         num_interrupts += 1
             except asyncio.QueueEmpty:
                 break
+        self.allow_unmute = True
+        self.agent.block_inputs = False
+        self.transcriptions_worker.block_inputs = False
         await self.output_device.clear()
         return num_interrupts > 0
 
