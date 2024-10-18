@@ -8,6 +8,7 @@ from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple, TypedD
 
 from openai import AsyncOpenAI
 from pydantic import BaseModel, Field
+
 from vocode import getenv
 from vocode.streaming.action.phone_call_action import (
     TwilioPhoneCallAction,
@@ -524,18 +525,17 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
                     runtime_inputs=runtime_inputs,
                 )
             )
-
-        if role == "message.bot" and len(message.strip()) > 0 and speak:
-
+        else:
             state_agent_transcript_message = StateAgentTranscriptMessage(
                 role=role, message=message, message_sent=""
             )
             self.json_transcript.entries.append(state_agent_transcript_message)
-            self.produce_interruptible_agent_response_event_nonblocking(
-                AgentResponseMessage(message=BaseMessage(text=message)),
-                agent_response_tracker=agent_response_tracker,
-                json_transcript_entry=state_agent_transcript_message,
-            )
+            if role == "message.bot" and len(message.strip()) > 0 and speak:
+                self.produce_interruptible_agent_response_event_nonblocking(
+                    AgentResponseMessage(message=BaseMessage(text=message)),
+                    agent_response_tracker=agent_response_tracker,
+                    json_transcript_entry=state_agent_transcript_message,
+                )
 
     def get_json_transcript(self):
         return self.json_transcript
