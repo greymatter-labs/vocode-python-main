@@ -862,13 +862,12 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
         if last_user_message:
             user_found = False
             for role, msg in self.chat_history:
-                self.logger.info(f"processing message. user_found={user_found}, role={role}")
+                self.logger.info(f"processing message. user_found={user_found}, role={role}, message={msg}, action_result_after_user={action_result_after_user}")
                 if user_found:
                     if role == "action-finish" and msg and not action_result_after_user:
                         action_result_after_user = msg
                     elif role == "message.bot" and msg and not bot_message_after_user:
                         bot_message_after_user = msg
-                        break
                 elif msg == last_user_message:
                     user_found = True
         
