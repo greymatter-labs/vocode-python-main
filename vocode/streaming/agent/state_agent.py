@@ -870,6 +870,9 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
                         break
                 elif msg == last_user_message:
                     user_found = True
+        
+        self.logger.info(f"ACTION RESULT AFTER USER IS {action_result_after_user}")
+        self.logger.info(f"CHAT_HISTORY IS {self.chat_history}")
 
         prompt = (
             f"Draft a single response to the user based on the latest chat history, taking into account the following guidance:\n'{guide}'\n\n"
