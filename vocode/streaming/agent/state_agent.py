@@ -862,6 +862,7 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
         if last_user_message:
             user_found = False
             for role, msg in self.chat_history:
+                self.logger.info(f"processing message. user_found={user_found}, role={role}")
                 if user_found:
                     if role == "action-finish" and msg and not action_result_after_user:
                         action_result_after_user = msg
@@ -872,6 +873,7 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
                     user_found = True
         
         self.logger.info(f"ACTION RESULT AFTER USER IS {action_result_after_user}")
+        self.logger.info(f"LAST USER MESSAGE IS {last_user_message}")
         self.logger.info(f"CHAT_HISTORY IS {self.chat_history}")
 
         prompt = (
