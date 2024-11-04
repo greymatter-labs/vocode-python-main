@@ -40,6 +40,7 @@ DTYPE = np.int16 if USE_INT16 else np.int8
 CHUNK = 512 if USE_INT16 else 256
 WINDOWS = 3
 WINDOW_SIZE = WINDOWS * SAMPLE_RATE // CHUNK
+PREFIX_PADDING_MS = 150  # Minimum speech duration to trigger detection
 
 
 class VADWorker(AsyncWorker):
@@ -54,6 +55,7 @@ class VADWorker(AsyncWorker):
         self.vad_buffer = b""
         self.voiced_confidences = deque([0.0] * WINDOWS, maxlen=WINDOWS)
         self.last_vad_output_time = 0
+        self.speech_start_time = 0
         self.logger = logger or logging.getLogger(__name__)
         self.transcriber = transcriber
 
@@ -112,22 +114,26 @@ class VADWorker(AsyncWorker):
                 )
 
                 current_time = time.time()
-                if (
-                    current_time - self.last_vad_output_time >= 1
-                    and new_confidence > self.transcriber.VAD_THRESHOLD
-                ):
-
-                    self.voiced_confidences = deque([0.0] * WINDOWS, maxlen=WINDOWS)
-                    # self.vad_buffer = b""  # Clear the buffer when silence is detected
-                    self.output_queue.put_nowait(
-                        Transcription(
-                            message="vad",
-                            confidence=rolling_avg,
-                            is_final=False,
-                            time_silent=time_ns(),
+                if new_confidence > self.transcriber.VAD_THRESHOLD:
+                    if self.speech_start_time == 0:
+                        self.speech_start_time = current_time
+                    elif (
+                        current_time - self.last_vad_output_time >= 1
+                        and (current_time - self.speech_start_time) * 1000
+                        >= PREFIX_PADDING_MS
+                    ):
+                        self.voiced_confidences = deque([0.0] * WINDOWS, maxlen=WINDOWS)
+                        self.output_queue.put_nowait(
+                            Transcription(
+                                message="vad",
+                                confidence=rolling_avg,
+                                is_final=False,
+                                time_silent=time_ns(),
+                            )
                         )
-                    )
-                    self.last_vad_output_time = current_time
+                        self.last_vad_output_time = current_time
+                else:
+                    self.speech_start_time = 0
 
             except asyncio.CancelledError:
                 break
