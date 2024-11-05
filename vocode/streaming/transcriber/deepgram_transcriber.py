@@ -118,13 +118,13 @@ class VADWorker(AsyncWorker):
                 current_time = time.time()
 
                 if rolling_avg > self.transcriber.VAD_THRESHOLD:
-                    if self.speech_start_time != 0:
-                        self.logger.debug(
-                            f"VAD: current speech time: {current_time - self.speech_start_time}"
-                        )
-                        self.logger.debug(
-                            f"VAD: Rolling avg: {rolling_avg}, threshold: {self.transcriber.VAD_THRESHOLD}"
-                        )
+                    # if self.speech_start_time != 0:
+                    # self.logger.debug(
+                    #     f"VAD: current speech time: {current_time - self.speech_start_time}"
+                    # )
+                    # self.logger.debug(
+                    #     f"VAD: Rolling avg: {rolling_avg}, threshold: {self.transcriber.VAD_THRESHOLD}"
+                    # ) usefull for debugging
 
                     if self.speech_start_time == 0:
                         self.speech_start_time = current_time
