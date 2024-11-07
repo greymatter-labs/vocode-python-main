@@ -146,7 +146,12 @@ class RunPython(
 
         status = "success" if response_content["error"] is None else "error"
 
+        memories = []
+        for key, value in response_content.items():
+            memories.append({"key": key, "value": value})
+
         return ActionOutput(
             action_type=action_input.action_config.type,
             response=RunPythonResponse(status=status, response=response_content),
+            memories=memories,
         )

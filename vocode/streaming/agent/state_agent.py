@@ -637,7 +637,7 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
             )
 
             if transfer_task in done:
-                transfer_result = transfer_task.result()
+                transfer_result, streamed = transfer_task.result()
                 if transfer_result:
                     self.logger.info("Transfer condition met")
                     self.resume_task.cancel()
@@ -716,15 +716,29 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
         ):
             original_message = message["message"]
             word_count = len(original_message.split())
-            constructed_guide = f"Rephrase this message in {word_count} words or less, keeping the same meaning and tone: '{original_message}'. Provide only the rephrased message."
+            constructed_guide = f"Rephrase this message in {word_count} words or less, keeping the same meaning and tone: '{original_message}'. Provide only the rephrased message and do not communicate anything that was not in the original message."
             await self.guided_response(constructed_guide)
         else:
+            self.logger.info(f"message: {message}")
             if message["type"] == "verbatim":
                 self.spoken_states.add(current_state_id)
                 self.logger.info(
                     f"Updating history with message: {message['message']} with speak {speak}"
                 )
-                self.update_history("message.bot", message["message"], speak=speak)
+                unprocessed_message = message["message"]
+                processed_message = re.sub(
+                    r"\[\[(\w+)\]\]",
+                    lambda m: str(
+                        self.memories.get(m.group(1), {}).get("value", m.group(0))
+                        if self.memories.get(m.group(1), {}).get("value", None)
+                        != "MISSING"
+                        else m.group(0)
+                    ),
+                    unprocessed_message,
+                )
+                self.logger.info(f"Processed message: {processed_message}")
+                self.logger.info(f"unprocessed message: {unprocessed_message}")
+                self.update_history("message.bot", processed_message, speak=speak)
             else:
                 guide = message["description"]
                 await self.guided_response(guide)
@@ -745,15 +759,17 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
             return False
 
         prompt = (
-            f"Analyze the conversation below to determine if the user explicitly requested to speak with a human agent instead of continuing with the AI system:\n\n"
+            f"Analyze the conversation below to determine if the user explicitly requested to speak with a different support agent instead of the current one:\n\n"
             f"Bot's last message: '{last_bot_message}'\n"
             f"User's response: '{last_user_message}'\n\n"
-            f"Respond with exactly one word:\n'transfer' - if the user clearly asked to speak with a human representative\n'continue' - if the user did not specifically request a human agent"
+            f"Respond with exactly one word:\n'transfer' - if the user clearly asked to speak with a *different* human representative\n'continue' - if the user did not specifically request a human agent. If there is no indication either way, respond with 'continue'"
         )
 
         response, streamed = await self.call_ai(prompt, stream_output=True)
-
-        return response.strip().lower() == "transfer", streamed
+        self.logger.info(f"Transfer prompt response: {response}")
+        should_transfer = response.strip().lower() == "transfer"
+        self.logger.info(f"Should transfer: {should_transfer}")
+        return should_transfer, streamed
 
     async def handle_state(self, state_id_or_label: str, retry_count: int = 0):
         self.logger.info(f"handle state {state_id_or_label} retry count {retry_count}")
@@ -942,7 +958,16 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
         message, streamed = await self.call_ai(prompt, stream_output=True)
         message = message.strip()
         self.logger.info(f"Guided response: {message}")
-        self.update_history("message.bot", message)
+        processed_message = re.sub(
+            r"\[\[(\w+)\]\]",
+            lambda m: (
+                self.memories.get(m.group(1), {}).get("value", m.group(0))
+                if self.memories.get(m.group(1), {}).get("value", None) != "MISSING"
+                else m.group(0)
+            ),
+            message,
+        )
+        self.update_history("message.bot", processed_message)
         return message, streamed
 
     async def compose_action(self, state):
@@ -1002,7 +1027,18 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
             for param_name, param_info in params.items():
                 fill_type = param_info.get("fill_type")
                 if fill_type == "exact":
-                    finalized_params[param_name] = param_info["description"]
+                    value = param_info["description"]
+                    processed_value = re.sub(
+                        r"\[\[(\w+)\]\]",
+                        lambda m: (
+                            self.memories.get(m.group(1), {}).get("value", m.group(0))
+                            if self.memories.get(m.group(1), {}).get("value", None)
+                            != "MISSING"
+                            else m.group(0)
+                        ),
+                        value,
+                    )
+                    finalized_params[param_name] = processed_value
                 else:
                     dict_to_fill[param_name] = "[insert value]"
                     param_descriptions.append(
@@ -1021,7 +1057,23 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
                 self.logger.info(f"Extracted json: {response}")
 
                 try:
-                    ai_filled_params = eval(response)
+                    ai_filled_params_unprocessed = eval(response)
+                    # for each key and value in ai_filled_params, replace the value with the processed value
+                    ai_filled_params = {}
+                    for key, value in ai_filled_params_unprocessed.items():
+                        processed_value = re.sub(
+                            r"\[\[(\w+)\]\]",
+                            lambda m: (
+                                self.memories.get(m.group(1), {}).get(
+                                    "value", m.group(0)
+                                )
+                                if self.memories.get(m.group(1), {}).get("value", None)
+                                != "MISSING"
+                                else m.group(0)
+                            ),
+                            value,
+                        )
+                        ai_filled_params[key] = processed_value
                 except Exception as e:
                     self.logger.error(
                         f"Agent did not respond with a valid json, trying to parse as JSON: {e}."
@@ -1115,6 +1167,8 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
         self.block_inputs = True
         try:
             input, output = await run_action_and_return_input(action, action_input)
+            if len(output.memories) > 0:
+                self.memories.update(output.memories)
         except Exception as e:
             self.logger.error(f"Action failed to run. Error: {str(e)}")
             self.json_transcript.entries.append(
@@ -1203,8 +1257,27 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
             ]
         )
 
+        # construct the memory prompt
+        # it is empty if it doesn't exist
+        memory_prompt = ""
+        # if it does exist, it should incorporate instructions on how to use it
+        saved_memories = {}
+        saved_memories_str = ""
+        # iterate through the dict
+        for key, value in self.memories.items():
+            if value and value["value"] != "MISSING" and value["is_ephemeral"] == False:
+                saved_memories[key] = value
+        saved_memories_str = "\n".join(
+            [
+                f"KEY: '{key}'\nVALUE: '{value.get('value')}'\n---"
+                for key, value in saved_memories.items()
+            ]
+        )
+        if len(saved_memories_str) > 0:
+            memory_prompt = f"From the conversation so far, you've already saved some information. Memories:\n{saved_memories_str}\n\nIf instructed to interpolate a piece of information from your memories, use the exact format [[KEY]]. For example, if you want to use the value stored under 'name', write [[name]] in your response and it will be automatically replaced with the actual value."
+
         if not tool or tool == {}:
-            prompt = f"{self.overall_instructions}\n\nGiven the recent conversation:\n{context}\n\nFollow these instructions:\n{prompt}\n\nReturn a single response."
+            prompt = f"{self.overall_instructions}\n{memory_prompt}\nGiven the recent conversation:\n{context}\n\nFollow these instructions:\n{prompt}\n\nReturn a single response."
             stream = await self.client.chat.completions.create(
                 model=self.model,
                 messages=[
@@ -1229,7 +1302,8 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
                 f"{self.overall_instructions}\n\n"
                 f"You are engaged in the following conversation:\n{complete_history}\n\n"
                 "Please follow the instructions below and generate the required response.\n\n"
-                f"Instructions:\n{prompt}\n\n"
+                f"Instructions:\n{prompt}\n"
+                f"{memory_prompt}\n"
                 f"The latest exchange was as follows:\n{context}\n\n"
                 f"Your response must always be a json in the following format: {tool_json_str}.\n"
                 "Return only the json, without any additional commentary."
@@ -1268,25 +1342,40 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
                         stream_output and "MISSING" in response_text
                     ):  # only want to say the output if its missing
 
-                        while any(p in buffer for p in punctuation):
+                        while (
+                            any(p in buffer for p in punctuation)
+                            and buffer.count("[") == buffer.count("]")
+                            and buffer.count("[[") == buffer.count("]]")
+                        ):
                             split_index = max(
                                 buffer.rfind(p) for p in punctuation if p in buffer
                             )
                             content = buffer[: split_index + 1]
                             buffer = buffer[split_index + 1 :]
-                            if (
-                                content.strip()
-                                and content.strip() != '"}'
-                                and content.strip() != "}"
-                            ):
+                            if content.strip() and content.strip() != '"}':
                                 # if its the first chunk and the first character is a double quote, remove it
                                 if first_chunk and content.strip().startswith('"'):
                                     first_chunk = False
                                     content = content.strip()[1:]
                                 self.logger.info(f"streaming content: {content}")
+                                # Replace [[memories]] with actual memory values
+                                processed_content = re.sub(
+                                    r"\[\[(\w+)\]\]",
+                                    lambda m: str(
+                                        self.memories.get(m.group(1), {}).get(
+                                            "value", m.group(0)
+                                        )
+                                        if self.memories.get(m.group(1), {}).get(
+                                            "value", None
+                                        )
+                                        != "MISSING"
+                                        else m.group(0)
+                                    ),
+                                    content.strip(),
+                                )
                                 self.produce_interruptible_agent_response_event_nonblocking(
                                     AgentResponseMessage(
-                                        message=BaseMessage(text=content.strip())
+                                        message=BaseMessage(text=processed_content)
                                     )
                                 )
                                 streamed = True
@@ -1303,11 +1392,32 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
                 if buffer.strip().count('"') == 1:
                     buffer = buffer.replace('"', "")
                 self.logger.info(f"Streaming final message: {buffer.strip()}")
+                # Replace [[memories]] with actual memory values
+                processed_buffer = re.sub(
+                    r"\[\[(\w+)\]\]",
+                    lambda m: (
+                        self.memories.get(m.group(1), {}).get("value", m.group(0))
+                        if self.memories.get(m.group(1), {}).get("value", None)
+                        != "MISSING"
+                        else m.group(0)
+                    ),
+                    buffer.strip(),
+                )
                 self.produce_interruptible_agent_response_event_nonblocking(
-                    AgentResponseMessage(message=BaseMessage(text=buffer.strip()))
+                    AgentResponseMessage(message=BaseMessage(text=processed_buffer))
                 )
                 streamed = True
-        return response_text, streamed
+        # Replace [[memories]] with actual memory values in final response
+        processed_response = re.sub(
+            r"\[\[(\w+)\]\]",
+            lambda m: (
+                self.memories.get(m.group(1), {}).get("value", m.group(0))
+                if self.memories.get(m.group(1), {}).get("value", None) != "MISSING"
+                else m.group(0)
+            ),
+            response_text,
+        )
+        return processed_response, streamed
 
     def get_functions(self):
         assert self.agent_config.actions
