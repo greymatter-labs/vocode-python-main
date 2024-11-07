@@ -1,7 +1,7 @@
 import asyncio
 import time
 from enum import Enum
-from typing import Generic, List, Optional, TypeVar
+from typing import Any, Dict, Generic, List, Optional, TypeVar
 
 from pydantic import BaseModel, Field
 from transformers import PreTrainedTokenizerFast
@@ -124,3 +124,4 @@ ResponseType = TypeVar("ResponseType", bound=BaseModel)
 class ActionOutput(BaseModel, Generic[ResponseType]):
     action_type: str
     response: ResponseType
+    memories: List[Dict[str, Any]] = []
