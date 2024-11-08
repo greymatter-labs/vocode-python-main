@@ -483,7 +483,7 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
                 if role in ["human", "message.bot", "action-finish"]:
                     if role == "message.bot":
                         state_id = current_state_id
-                        # self.visited_states.add(state_id)
+                        self.visited_states.add(state_id)
                     if len(message.strip()) > 0:
                         self.chat_history.append((role, message))
                         self.logger.info(
