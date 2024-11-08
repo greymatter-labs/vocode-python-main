@@ -1,10 +1,8 @@
 import unittest
 from vocode.streaming.utils import interpolate_memories
 
-
 class TestMemoryInterpolation(unittest.TestCase):
     def setUp(self):
-        # Set up some common test memories
         self.test_memories = {
             "name": {"value": "John"},
             "age": {"value": "30"},
