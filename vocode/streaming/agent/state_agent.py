@@ -418,7 +418,6 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
         self.stop = False
         self.current_block_name = None
         self.visited_states = {self.state_machine["startingStateId"]}
-        self.background_conditions = self.state_machine["backgroundConditions"]
         self.spoken_states = set()
         self.state_history = []
         self.chat_history = []
@@ -595,7 +594,9 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
             self.produce_interruptible_agent_response_event_nonblocking(
                 AgentResponseMessage(
                     message=BaseMessage(
-                        text=interpolate_memories(message, self.memories)
+                        text=interpolate_memories.interpolate_memories(
+                            message, self.memories
+                        )
                     )
                 ),
                 agent_response_tracker=agent_response_tracker,
@@ -652,6 +653,7 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
                 for task in done:
                     if task == intent_task:
                         intent_result, streamed = await intent_task
+                        self.logger.error(f"Intent RESULT: {intent_result}")
                         if intent_result == "transfer":
                             self.logger.info("Transfer condition met")
                             self.resume_task.cancel()
@@ -707,6 +709,7 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
             )
             return "", True
         else:
+            self.logger.error("No intent task")
             self.previous_resume = self.resume
             if not self.resume:
                 self.resume = self.previous_resume
@@ -1321,8 +1324,10 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
                                 if first_chunk and content.strip().startswith('"'):
                                     first_chunk = False
                                     content = content.strip()[1:]
-                                interpolated_content = interpolate_memories(
-                                    content.strip(), self.memories
+                                interpolated_content = (
+                                    interpolate_memories.interpolate_memories(
+                                        content.strip(), self.memories
+                                    )
                                 )
                                 self.logger.info(
                                     f"streaming content. Raw: {content}  interpolated: {interpolated_content}"
@@ -1345,7 +1350,7 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
                 # if there is just one double quote in the whole thing, remove it
                 if buffer.strip().count('"') == 1:
                     buffer = buffer.replace('"', "")
-                interpolated_content = interpolate_memories(
+                interpolated_content = interpolate_memories.interpolate_memories(
                     buffer.strip(), self.memories
                 )
                 self.logger.info(
@@ -1355,7 +1360,10 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
                     AgentResponseMessage(message=BaseMessage(text=interpolated_content))
                 )
                 streamed = True
-        return interpolate_memories(response_text, self.memories), streamed
+        return (
+            interpolate_memories.interpolate_memories(response_text, self.memories),
+            streamed,
+        )
 
     def get_functions(self):
         assert self.agent_config.actions
