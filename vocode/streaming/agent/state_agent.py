@@ -3,6 +3,7 @@ import asyncio
 import json
 import logging
 import re
+import time
 from enum import Enum
 from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple, TypedDict
 
@@ -418,6 +419,7 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
         self.previous_resume = self.resume
         self.memories: dict[str, MemoryValue] = {}
         self.can_send = False
+        self.average_latency = 1
         self.conversation_id = None
         self.twilio_sid = None
         self.block_inputs = False
@@ -632,6 +634,7 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
         self.logger.info(
             f"current intent description: {self.current_intent_description}"
         )
+        self.logger.info(f"average latency: {self.average_latency}")
         self.update_history("human", human_input)
         self.logger.info(
             f"[{self.agent_config.call_type}:{self.agent_config.current_call_id}] Lead:{human_input}"
@@ -1267,6 +1270,7 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
         stop_tokens = stop if stop is not None else []
         response_text = ""
         streamed = False
+        start_time = time.time()
 
         # Extract the last sequence of bot, user, bot messages
         last_bot_messages_before = []
@@ -1350,6 +1354,14 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
                     response_text += text_chunk
                     if any(token in text_chunk for token in stop_tokens):
                         break
+            # For non-streaming, update average latency at completion
+            end_time = time.time()
+            if not hasattr(self, "average_latency"):
+                self.average_latency = end_time - start_time
+            else:
+                self.average_latency = (
+                    self.average_latency + (end_time - start_time)
+                ) / 2  # units are in
         else:
             tool_json_str = json.dumps(tool)
             prompt = (
@@ -1379,6 +1391,7 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
             punctuation = [".", "!", "?", ",", ";", ":"]
             send_final_message = False
             first_chunk = True
+            first_response_sent = False
             async for chunk in stream:
                 await asyncio.sleep(0)
                 text_chunk = chunk.choices[0].delta.content
@@ -1423,6 +1436,17 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
                                         message=BaseMessage(text=interpolated_content)
                                     )
                                 )
+                                if not first_response_sent:
+                                    # Update average latency on first response for streaming
+                                    end_time = time.time()
+                                    if not hasattr(self, "average_latency"):
+                                        self.average_latency = end_time - start_time
+                                    else:
+                                        self.average_latency = (
+                                            self.average_latency
+                                            + (end_time - start_time)
+                                        ) / 2
+                                    first_response_sent = True
                                 streamed = True
                                 send_final_message = True
                     if any(token in text_chunk for token in stop_tokens):
@@ -1445,6 +1469,15 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
                 self.produce_interruptible_agent_response_event_nonblocking(
                     AgentResponseMessage(message=BaseMessage(text=interpolated_content))
                 )
+                if not first_response_sent:
+                    # Update average latency if we haven't sent any responses yet
+                    end_time = time.time()
+                    if not hasattr(self, "average_latency"):
+                        self.average_latency = end_time - start_time
+                    else:
+                        self.average_latency = (
+                            self.average_latency + (end_time - start_time)
+                        ) / 2
                 streamed = True
         return (
             interpolate_memories.interpolate_memories(response_text, self.memories),
