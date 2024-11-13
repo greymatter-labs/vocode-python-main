@@ -340,7 +340,6 @@ async def handle_options(
             raise ValueError("No condition was provided in the response.")
         condition = int(condition)
         next_state_id = response_to_edge[condition]["destStateId"]
-        logger.info(f"index_to_label: {index_to_label}")
         next_state_label = index_to_label[condition]
         append_json_transcript(
             StateAgentTranscriptBranchDecision(
