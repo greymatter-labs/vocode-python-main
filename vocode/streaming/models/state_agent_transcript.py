@@ -89,6 +89,7 @@ class StateAgentTranscriptHandleState(StateAgentTranscriptDebugEntry):
     generated_label: str
     memory_dependencies: Optional[List[MemoryDependency]]
     memory_values: dict
+    trigger: Optional[str] = None
 
 
 class StateAgentTranscriptInvariantViolation(StateAgentTranscriptDebugEntry):
