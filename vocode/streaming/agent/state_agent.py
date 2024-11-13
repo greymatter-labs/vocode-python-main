@@ -235,7 +235,9 @@ async def handle_options(
 
     default_next_state = get_default_next_state(state)
     response_to_edge = {}
-    index_to_label = {}
+    index_to_label = (
+        {}
+    )  # so we can retrieve the label and pass it out for current intent description
     ai_options = []
     prev_state = state_history[-1] if state_history else None
     logger.info(f"state edges {state}")
