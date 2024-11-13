@@ -787,7 +787,10 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
 
         if not last_user_message:
             return "continue", False
-
+        # If no intent description is set:
+        # - We're almost certainly already in the start state, so no need to loop back
+        # - Only allow 'transfer' or 'continue' responses ('unclear' maps to 'continue')
+        # - Intent gets set to the edge's label each time we traverse an edge
         if (
             self.current_intent_description is None
             or self.current_intent_description == ""
@@ -806,7 +809,9 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
             intent = response.strip().lower()
             if intent not in ["transfer", "continue", "unclear"]:
                 intent = "continue"
-            if intent == "unclear":
+            if (
+                intent == "unclear"
+            ):  # just mimic continue behavior because memories deftly handle ambiguity already
                 intent = "continue"
             return intent, streamed
 
@@ -990,6 +995,7 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
             self.json_transcript.entries.append(m)
 
         if state["type"] == "options":
+            # we return the next state label so we can update the intent description from inside the class
             out, clarification_state, next_state_label = await handle_options(
                 state=state,
                 go_to_state=go_to_state,
