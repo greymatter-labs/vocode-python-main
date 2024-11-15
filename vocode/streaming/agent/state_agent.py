@@ -57,8 +57,8 @@ class BranchDecision(Enum):
 
 class MemoryValue(TypedDict):
     is_ephemeral: bool
-    owner_state_id: Optional[bool] = None
-    is_stale: bool = False
+    owner_state_id: Optional[bool]
+    is_stale: bool
     value: str
 
 
@@ -875,7 +875,7 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
             self.logger.info(f"cached memory is {cached_memory}")
             if cached_memory and cached_memory["is_ephemeral"] and cached_memory["owner_state_id"] != state["id"]:
                 cached_memory["is_stale"] = True
-            if not cached_memory or cached_memory["is_stale"]:
+            if not cached_memory or cached_memory.get("is_stale") == True:
 
                 async def retry(memory: Optional[MemoryValue] = None):
                     new_retry_count = retry_count + 1
