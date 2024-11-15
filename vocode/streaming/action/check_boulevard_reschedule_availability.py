@@ -21,7 +21,6 @@ from telephony_app.integrations.boulevard.boulevard_client import (
     parse_times,
 )
 
-logging.basicConfig()
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
 

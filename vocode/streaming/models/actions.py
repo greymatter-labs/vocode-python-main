@@ -118,11 +118,6 @@ class TwilioPhoneCallActionInput(ActionInput[ParametersType]):
     twilio_sid: str
 
 
-class MemoryValue(TypedDict):
-    is_ephemeral: bool
-    value: str
-
-
 ResponseType = TypeVar("ResponseType", bound=BaseModel)
 
 
