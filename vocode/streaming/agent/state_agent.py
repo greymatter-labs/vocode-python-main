@@ -57,6 +57,8 @@ class BranchDecision(Enum):
 
 class MemoryValue(TypedDict):
     is_ephemeral: bool
+    owner_state_id: Optional[bool] = None
+    is_stale: bool = False
     value: str
 
 
@@ -871,11 +873,14 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
         for memory_dep in state.get("memory_dependencies", []):
             cached_memory = self.memories.get(memory_dep["key"])
             self.logger.info(f"cached memory is {cached_memory}")
-            if not cached_memory:
+            if cached_memory and cached_memory["is_ephemeral"] and cached_memory["owner_state_id"] != state["id"]:
+                cached_memory["is_stale"] = True
+            if not cached_memory or cached_memory["is_stale"]:
 
                 async def retry(memory: Optional[MemoryValue] = None):
                     new_retry_count = retry_count + 1
                     if memory:
+                        memory["owner_state_id"] = state["id"]
                         new_retry_count = 0
                         self.memories[memory_dep["key"]] = memory
                     return await self.handle_state(
@@ -906,8 +911,6 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
                         )
                     )
                     return await retry()
-            elif cached_memory["is_ephemeral"]:
-                self.memories.pop(memory_dep["key"], None)
 
         # Add handling for memory edges
         memory_edges = state.get("memoryEdges", [])
