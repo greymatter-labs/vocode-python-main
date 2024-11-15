@@ -873,7 +873,11 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
         for memory_dep in state.get("memory_dependencies", []):
             cached_memory = self.memories.get(memory_dep["key"])
             self.logger.info(f"cached memory is {cached_memory}")
-            if cached_memory and cached_memory["is_ephemeral"] and cached_memory["owner_state_id"] != state["id"]:
+            if (
+                cached_memory
+                and cached_memory["is_ephemeral"]
+                and cached_memory["owner_state_id"] != state["id"]
+            ):
                 cached_memory["is_stale"] = True
             if not cached_memory or cached_memory.get("is_stale") == True:
 
@@ -962,7 +966,9 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
                         original_state=state,
                     )
                 )
-                return await self.handle_state(self.state_machine["startingStateId"], trigger="memoryEdge-error")
+                return await self.handle_state(
+                    self.state_machine["startingStateId"], trigger="memoryEdge-error"
+                )
 
         await self.print_start_message(state, start=start)
 
@@ -1124,7 +1130,11 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
             for param_name, param_info in params.items():
                 fill_type = param_info.get("fill_type")
                 if fill_type == "exact":
-                    finalized_params[param_name] = param_info["description"]
+                    without_interpolation = param_info["description"]
+                    with_interpolation = interpolate_memories.interpolate_memories(
+                        without_interpolation.strip(), self.memories
+                    )
+                    finalized_params[param_name] = with_interpolation
                 else:
                     dict_to_fill[param_name] = "[insert value]"
                     param_descriptions.append(
@@ -1348,9 +1358,27 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
             merged_history.append(formatted_msg)
 
         complete_history = "\n".join(merged_history)
+        # construct the memory prompt
+        # it is empty if it doesn't exist
+        memory_prompt = ""
+        # if it does exist, it should incorporate instructions on how to use it
+        saved_memories = {}
+        saved_memories_str = ""
+        # iterate through the dict
+        for key, value in self.memories.items():
+            if value and value["value"] != "MISSING" and value["is_ephemeral"] == False:
+                saved_memories[key] = value
+        saved_memories_str = "\n".join(
+            [
+                f"KEY: '{key}'\nVALUE: '{value.get('value')}'\n---"
+                for key, value in saved_memories.items()
+            ]
+        )
+        if len(saved_memories_str) > 0:
+            memory_prompt = f"From the conversation so far, you've already saved some information. Memories:\n{saved_memories_str}\n\nIf instructed to interpolate a piece of information from your memories, use the exact format [[KEY]]. For example, if you want to use the value stored under 'x', write [[x]] in your response and it will be automatically replaced with the actual value."
 
         if not tool or tool == {}:
-            prompt = f"{self.overall_instructions}\n\nGiven the recent conversation:\n{context}\n\nFollow these instructions:\n{prompt}\n\nReturn a single response."
+            prompt = f"{self.overall_instructions}\n{memory_prompt}\nGiven the recent conversation:\n{context}\n\nFollow these instructions:\n{prompt}\n\nReturn a single response."
             stream = await self.client.chat.completions.create(
                 model=self.model,
                 messages=[
@@ -1383,6 +1411,8 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
                 f"{self.overall_instructions}\n\n"
                 f"You are engaged in the following conversation:\n{complete_history}\n\n"
                 "Please follow the instructions below and generate the required response.\n\n"
+                f"Instructions:\n{prompt}\n"
+                f"{memory_prompt}\n"
                 f"Instructions:\n{prompt}\n\n"
                 f"The latest exchange was as follows:\n{context}\n\n"
                 f"Your response must always be a json in the following format: {tool_json_str}.\n"
@@ -1403,7 +1433,7 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
             buffer = ""
             output_started = False
             json_key = '"output": '
-            punctuation = [".", "!", "?", ",", ";", ":"]
+            punctuation = [".", "!", "?", ",", ";"]
             send_final_message = False
             first_chunk = True
             first_response_sent = False
