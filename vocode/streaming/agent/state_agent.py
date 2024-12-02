@@ -1047,6 +1047,7 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
         if last_user_message:
             user_found = False
             for role, msg in self.chat_history:
+                self.logger.info(f"processing message. user_found={user_found}, role={role}, message={msg}, action_result_after_user={action_result_after_user}")
                 if user_found:
                     if role == "action-finish" and msg and not action_result_after_user:
                         action_result_after_user = msg
@@ -1054,6 +1055,10 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
                         bot_message_after_user = msg
                 elif msg == last_user_message:
                     user_found = True
+        
+        self.logger.info(f"ACTION RESULT AFTER USER IS {action_result_after_user}")
+        self.logger.info(f"LAST USER MESSAGE IS {last_user_message}")
+        self.logger.info(f"CHAT_HISTORY IS {self.chat_history}")
 
         prompt = (
             f"Draft a single response to the user based on the latest chat history, taking into account the following guidance:\n'{guide}'\n\n"
@@ -1065,6 +1070,7 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
         if bot_message_after_user:
             prompt += f"Bot's is thinking: '{bot_message_after_user}'\n"
         prompt += "\nNow, respond as the BOT directly."
+        self.logger.info(f"FULL GUIDED RESPONSE PROMPT {prompt}")
 
         message, streamed = await self.call_ai(prompt, stream_output=True)
         message = message.strip()
