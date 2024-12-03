@@ -72,7 +72,10 @@ class RedisConfigManager(BaseConfigManager):
             return None
 
     async def set(self, key: str, value: BaseModel, expiry: int = 300) -> None:
-        """Set a key-value pair in Redis with optional expiry in seconds"""
+        """
+        Set a key-value pair in Redis with optional expiry in seconds
+        Default to 5 minutes since that is the ~length of a call
+        """
         assert isinstance(value, BaseModel)
         # Convert model to dict and add type info, pydantic serde is better
         json_str = json.dumps({"data": value.json(), "__type": str(type(value))})
