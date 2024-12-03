@@ -497,7 +497,6 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
         cls, state: StateAgentState, *, logger: Optional[logging.Logger] = None
     ):
         agent = cls(agent_config=state.agent_config, logger=logger)
-        agent.previous_resume = agent.resume
         agent.previous_visited_states = state.previous_visited_states
         agent.memories = state.memories
         agent.can_send = state.can_send
