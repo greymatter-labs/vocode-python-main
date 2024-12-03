@@ -74,18 +74,15 @@ class RedisConfigManager(BaseConfigManager):
     async def set(self, key: str, value: BaseModel, expiry: int = 300) -> None:
         """Set a key-value pair in Redis with optional expiry in seconds"""
         assert isinstance(value, BaseModel)
-        # Convert model to dict and add type info
-        # We do this because pydantic  can serialize more stuff
+        # Convert model to dict and add type info, pydantic serde is better
         json_str = json.dumps({"data": value.json(), "__type": str(type(value))})
 
         await self.redis.set(key, json_str, ex=expiry)
 
     async def delete(self, key: str) -> None:
-        """Delete a key from Redis"""
         await self.redis.delete(key)
 
     async def cleanup(self) -> None:
-        """Close Redis connection"""
-        if self._redis:
-            await self._redis.close()
-            self._redis = None
+        if self.redis:
+            await self.redis.close()
+            self.redis = None
