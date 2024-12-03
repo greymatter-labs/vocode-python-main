@@ -46,7 +46,7 @@ class Call(StreamingConversation[TelephonyOutputDeviceType]):
         synthesizer_config: SynthesizerConfig,
         conversation_id: Optional[str] = None,
         transcriber_factory: TranscriberFactory = TranscriberFactory(),
-        agent_factory: AgentFactory | BaseAgent = AgentFactory(),
+        agent_or_agent_factory: AgentFactory | BaseAgent = AgentFactory(),
         synthesizer_factory: SynthesizerFactory = SynthesizerFactory(),
         events_manager: Optional[EventsManager] = None,
         logger: Optional[logging.Logger] = None,
@@ -66,9 +66,9 @@ class Call(StreamingConversation[TelephonyOutputDeviceType]):
             output_device,
             transcriber_factory.create_transcriber(transcriber_config, logger=logger),
             (
-                agent_factory.create_agent(agent_config, logger=logger)
-                if not isinstance(agent_factory, BaseAgent)
-                else agent_factory
+                agent_or_agent_factory.create_agent(agent_config, logger=logger)
+                if not isinstance(agent_or_agent_factory, BaseAgent)
+                else agent_or_agent_factory
             ),
             synthesizer_factory.create_synthesizer(synthesizer_config, logger=logger),
             conversation_id=conversation_id,

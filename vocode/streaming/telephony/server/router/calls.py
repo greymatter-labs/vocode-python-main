@@ -55,9 +55,9 @@ class CallsRouter(BaseRouter):
         synthesizer_factory: SynthesizerFactory = SynthesizerFactory(),
         events_manager: Optional[EventsManager] = None,
     ):
-        # if agent_factory.await_agent:
-        # Why is this better
-        agent = await agent_factory.new_agent(call_config.agent_config, logger=logger)
+        agent = await agent_factory.get_cached_agent(
+            call_config.agent_config, logger=logger
+        )
 
         if isinstance(call_config, TwilioCallConfig):
             return TwilioCall(

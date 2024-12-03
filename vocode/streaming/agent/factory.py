@@ -53,7 +53,7 @@ class AgentFactory:
             return MistralAgent(agent_config=agent_config, logger=logger)
         raise Exception("Invalid agent config", agent_config.type)
 
-    async def new_agent(
+    async def get_cached_agent(
         self, agent_config: AgentConfig, logger: Optional[logging.Logger] = None
     ) -> Optional[BaseAgent]:
         return None  # noop
