@@ -59,7 +59,7 @@ class TwilioCall(Call[TwilioOutputDevice]):
         twilio_config: Optional[TwilioConfig] = None,
         conversation_id: Optional[str] = None,
         transcriber_factory: TranscriberFactory = TranscriberFactory(),
-        agent_factory: AgentFactory | BaseAgent = AgentFactory(),
+        agent_or_agent_factory: AgentFactory | BaseAgent = AgentFactory(),
         synthesizer_factory: SynthesizerFactory = SynthesizerFactory(),
         events_manager: Optional[EventsManager] = None,
         logger: Optional[logging.Logger] = None,
@@ -76,7 +76,7 @@ class TwilioCall(Call[TwilioOutputDevice]):
             conversation_id=conversation_id,
             events_manager=events_manager,
             transcriber_factory=transcriber_factory,
-            agent_or_agent_factory=agent_factory,
+            agent_or_agent_factory=agent_or_agent_factory,
             synthesizer_factory=synthesizer_factory,
             logger=logger,
         )

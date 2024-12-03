@@ -73,7 +73,7 @@ class CallsRouter(BaseRouter):
                 twilio_sid=call_config.twilio_sid,
                 conversation_id=conversation_id,
                 transcriber_factory=transcriber_factory,
-                agent_factory=agent or agent_factory,
+                agent_or_agent_factory=agent or agent_factory,
                 synthesizer_factory=synthesizer_factory,
                 events_manager=events_manager,
             )
