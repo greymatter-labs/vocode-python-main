@@ -28,9 +28,12 @@ from vocode.streaming.models.agent import (
 
 
 class AgentFactory:
+    # await_agent: bool = False
+
     def create_agent(
         self, agent_config: AgentConfig, logger: Optional[logging.Logger] = None
     ) -> BaseAgent:
+
         if isinstance(agent_config, LLMAgentConfig):
             return LLMAgent(agent_config=agent_config, logger=logger)
         elif isinstance(agent_config, ChatGPTAgentConfig):
@@ -50,3 +53,8 @@ class AgentFactory:
         elif isinstance(agent_config, MistralAgentConfig):
             return MistralAgent(agent_config=agent_config, logger=logger)
         raise Exception("Invalid agent config", agent_config.type)
+
+    async def new_agent(
+        self, agent_config: AgentConfig, logger: Optional[logging.Logger] = None
+    ) -> Optional[BaseAgent]:
+        return None  # noop
