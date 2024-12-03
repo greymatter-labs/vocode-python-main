@@ -28,7 +28,6 @@ from vocode.streaming.models.agent import (
 
 
 class AgentFactory:
-    # await_agent: bool = False
 
     def create_agent(
         self, agent_config: AgentConfig, logger: Optional[logging.Logger] = None

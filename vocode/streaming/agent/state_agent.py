@@ -448,9 +448,6 @@ class StateAgentState(BaseModel):
     label_to_state_id: dict = {}
     agent_config: CommandAgentConfig
 
-    # class Config:
-    #     arbitrary_types_allowed = True
-
 
 class StateAgent(RespondAgent[CommandAgentConfig]):
     def __init__(
