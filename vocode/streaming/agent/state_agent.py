@@ -425,7 +425,6 @@ from pydantic import BaseModel
 class StateAgentState(BaseModel):
     state_machine: dict
     current_state: Optional[dict] = None
-    resume_state: Optional[str] = None
     previous_visited_states: set = set()
     memories: dict[str, MemoryValue] = {}
     can_send: bool = False
@@ -463,7 +462,6 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
         self.current_state = None
         self.resume_task = None
         self.resume = lambda _: self.handle_state(self.state_machine["startingStateId"])
-        self.resume_state = self.state_machine["startingStateId"]
         self.previous_resume = self.resume
         self.previous_visited_states = set()
         self.memories: dict[str, MemoryValue] = {}
@@ -516,8 +514,6 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
         agent.chat_history = state.chat_history
         agent.json_transcript = state.json_transcript
         agent.current_state = state.current_state
-        agent.resume_state = state.resume_state
-        agent.resume = lambda _: agent.handle_state(agent.resume_state)
         agent.logger = logger
         return agent
 
@@ -548,7 +544,6 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
         self.stop = False
         current_state_id = self.state_machine["startingStateId"]
         self.resume = lambda _: self.handle_state(self.state_machine["startingStateId"])
-        self.resume_state = self.state_machine["startingStateId"]
 
         # Process entries
         for entry in transcript.entries:
