@@ -1,9 +1,11 @@
 import datetime
 import json
+import re
 from enum import Enum
 from typing import List, Optional, Union
 
 from pydantic import BaseModel, Field, root_validator
+
 from vocode.streaming.models.memory_dependency import MemoryDependency
 
 
@@ -57,6 +59,25 @@ class StateAgentTranscriptActionFinish(StateAgentTranscriptEntry):
     role: StateAgentTranscriptRole = StateAgentTranscriptRole.ACTION_FINISH
     action_name: str
     runtime_inputs: dict
+
+    def __init__(self, **data):
+        super().__init__(**data)
+        self.runtime_inputs = self.scrub_secrets(self.runtime_inputs)
+
+    @staticmethod
+    def scrub_secrets(runtime_inputs: dict) -> dict:
+        def scrub_dict(d):
+            scrubbed = {}
+            for k, v in d.items():
+                if isinstance(v, dict):
+                    scrubbed[k] = scrub_dict(v)
+                elif 'secret' in k.lower():
+                    scrubbed[k] = "*****"
+                else:
+                    scrubbed[k] = v
+            return scrubbed
+
+        return scrub_dict(runtime_inputs)
 
 
 class StateAgentTranscriptActionInvoke(StateAgentTranscriptDebugEntry):
