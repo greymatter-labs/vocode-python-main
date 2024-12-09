@@ -55,16 +55,6 @@ class WebsocketOutputDevice(BaseOutputDevice):
                         f"Unsupported audio encoding: {self.audio_encoding}"
                     )
             audio_message = AudioMessage.from_bytes(chunk)
-            # if self.into_pcm:
-            # if audio_message.audio_encoding == AudioEncoding.LINEAR16:
-            #     audio_message.data = convert_linear16_to_pcm(audio_message.data)
-            # elif audio_message.audio_encoding == AudioEncoding.MULAW:
-            #     raise ValueError("Mu-law encoding is not supported yet")
-            #     audio_message.data = mulaw_to_pcm(audio_message.data)
-            # else:
-            #     raise ValueError(
-            #         f"Unsupported audio encoding: {audio_message.audio_encoding}"
-            # )
 
             self.queue.put_nowait(audio_message.json())
 
