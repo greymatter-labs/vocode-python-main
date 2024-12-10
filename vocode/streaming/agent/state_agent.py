@@ -74,6 +74,32 @@ class MemoryValue(TypedDict):
     value: str
 
 
+class StateAgentState(BaseModel):
+    state_machine: dict
+    current_state: Optional[dict] = None
+    previous_visited_states: set = set()
+    memories: dict[str, MemoryValue] = {}
+    can_send: bool = False
+    average_latency: int = 1
+    conversation_id: Optional[str] = None
+    twilio_sid: Optional[str] = None
+    block_inputs: bool = False
+    stop: bool = False
+    current_block_name: Optional[str] = None
+    visited_states: set = set()
+    spoken_states: set = set()
+    state_history: list = []
+    current_intent_description: Optional[str] = None
+    chat_history: list = []
+    base_url: Optional[str] = None  # maybe not important
+    model: Optional[str] = None
+    mark_start: bool = False
+    json_transcript: Optional[StateAgentTranscript] = None
+    overall_instructions: str = ""
+    label_to_state_id: dict = {}
+    agent_config: CommandAgentConfig
+
+
 def parse_llm_json(s):
     if isinstance(s, dict):
         return s
@@ -417,35 +443,6 @@ def get_default_next_state(state):
     for edge in state["edges"]:
         if "isDefault" in edge and edge["isDefault"]:
             return edge["destStateId"]
-
-
-from pydantic import BaseModel
-
-
-class StateAgentState(BaseModel):
-    state_machine: dict
-    current_state: Optional[dict] = None
-    previous_visited_states: set = set()
-    memories: dict[str, MemoryValue] = {}
-    can_send: bool = False
-    average_latency: int = 1
-    conversation_id: Optional[str] = None
-    twilio_sid: Optional[str] = None
-    block_inputs: bool = False
-    stop: bool = False
-    current_block_name: Optional[str] = None
-    visited_states: set = set()
-    spoken_states: set = set()
-    state_history: list = []
-    current_intent_description: Optional[str] = None
-    chat_history: list = []
-    base_url: Optional[str] = None  # maybe not important
-    model: Optional[str] = None
-    mark_start: bool = False
-    json_transcript: Optional[StateAgentTranscript] = None
-    overall_instructions: str = ""
-    label_to_state_id: dict = {}
-    agent_config: CommandAgentConfig
 
 
 class StateAgent(RespondAgent[CommandAgentConfig]):
