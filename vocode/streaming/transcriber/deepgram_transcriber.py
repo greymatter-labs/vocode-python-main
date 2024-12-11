@@ -36,7 +36,7 @@ model, utils = torch.hub.load(repo_or_dir="snakers4/silero-vad", model="silero_v
 (get_speech_timestamps, save_audio, read_audio, VADIterator, collect_chunks) = utils
 
 # Constants for Silero VAD
-USE_INT16 = True
+USE_INT16 = True  # TODO this breaks mulaw, need to pass this in
 SAMPLE_RATE = 16000 if USE_INT16 else 8000
 DTYPE = np.int16 if USE_INT16 else np.int8
 CHUNK = 512 if USE_INT16 else 256
@@ -270,7 +270,7 @@ class DeepgramTranscriber(BaseAsyncTranscriber[DeepgramTranscriberConfig]):
             if self.transcriber_config.audio_encoding == AudioEncoding.LINEAR16
             else "mulaw"
         )
-        assert self.transcriber_config.sampling_rate == 48000
+        assert self.transcriber_config.sampling_rate == 48000 and encoding == "linear16"
         url_params = {
             "encoding": encoding,
             "sample_rate": self.transcriber_config.sampling_rate,
