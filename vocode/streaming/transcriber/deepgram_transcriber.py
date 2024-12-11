@@ -199,7 +199,7 @@ class DeepgramTranscriber(BaseAsyncTranscriber[DeepgramTranscriberConfig]):
             self.vad_input_queue, self.output_queue, self, logger
         )
         self.vad_worker_task = None
-        # self.muted = False
+        self.is_muted = False
 
     async def _run_loop(self):
         self.vad_worker_task = self.vad_worker.start()
@@ -224,7 +224,6 @@ class DeepgramTranscriber(BaseAsyncTranscriber[DeepgramTranscriberConfig]):
         return volume < self.VOLUME_THRESHOLD
 
     def send_audio(self, chunk):
-        # self.logger.debug("ds send_audio")
         if (
             self.transcriber_config.downsampling
             and self.transcriber_config.audio_encoding == AudioEncoding.LINEAR16
@@ -271,6 +270,7 @@ class DeepgramTranscriber(BaseAsyncTranscriber[DeepgramTranscriberConfig]):
             if self.transcriber_config.audio_encoding == AudioEncoding.LINEAR16
             else "mulaw"
         )
+        assert self.transcriber_config.sampling_rate == 48000
         url_params = {
             "encoding": encoding,
             "sample_rate": self.transcriber_config.sampling_rate,
@@ -344,8 +344,11 @@ class DeepgramTranscriber(BaseAsyncTranscriber[DeepgramTranscriberConfig]):
     async def sender(self, ws: WebSocketClientProtocol):
         while not self._ended:
             try:
-                data = await asyncio.wait_for(self.input_queue.get(), 5)
-                # self.logger.debug(f"sender {data[:10]}")
+                data = await asyncio.wait_for(self.input_queue.get(), 20)
+                buff = np.frombuffer(data, dtype=np.int16)
+                volume = np.abs(buff).mean()
+                gt_threshold = np.sum(buff > self.VOLUME_THRESHOLD)
+                self.logger.debug(f"sender {volume=} {gt_threshold/len(buff)=}")
                 assert data is not None and len(data) > 0
 
                 self.audio_cursor += len(data) / (
@@ -363,6 +366,8 @@ class DeepgramTranscriber(BaseAsyncTranscriber[DeepgramTranscriberConfig]):
             try:
                 msg = await ws.recv()
                 data = json.loads(msg)
+                self.logger.error(f"receiver {data=}")
+
                 if "is_final" not in data:
                     break
                 top_choice = data["channel"]["alternatives"][0]
