@@ -160,7 +160,7 @@ class VADWorker(AsyncWorker):
                 self.logger.warning(f"VAD error: {str(e)}", exc_info=True)
 
     def send_audio(self, chunk):
-        self.logger.debug(f"vad send_audio {self.transcriber.is_muted=}")
+        # self.logger.debug(f"vad send_audio {self.transcriber.is_muted=}")
         if not self.transcriber.is_muted:
             self.consume_nonblocking(chunk)
         else:
@@ -199,6 +199,7 @@ class DeepgramTranscriber(BaseAsyncTranscriber[DeepgramTranscriberConfig]):
             self.vad_input_queue, self.output_queue, self, logger
         )
         self.vad_worker_task = None
+        # self.muted = False
 
     async def _run_loop(self):
         self.vad_worker_task = self.vad_worker.start()
@@ -223,7 +224,7 @@ class DeepgramTranscriber(BaseAsyncTranscriber[DeepgramTranscriberConfig]):
         return volume < self.VOLUME_THRESHOLD
 
     def send_audio(self, chunk):
-        self.logger.debug(f"ds send_audio {chunk[:10]=}")
+        # self.logger.debug("ds send_audio")
         if (
             self.transcriber_config.downsampling
             and self.transcriber_config.audio_encoding == AudioEncoding.LINEAR16
@@ -343,14 +344,14 @@ class DeepgramTranscriber(BaseAsyncTranscriber[DeepgramTranscriberConfig]):
     async def sender(self, ws: WebSocketClientProtocol):
         while not self._ended:
             try:
-                data = await asyncio.wait_for(self.input_queue.get(), 20)
-                self.logger.debug(f"sender {data[:10]}")
+                data = await asyncio.wait_for(self.input_queue.get(), 5)
+                # self.logger.debug(f"sender {data[:10]}")
                 assert data is not None and len(data) > 0
 
                 self.audio_cursor += len(data) / (
                     self.transcriber_config.sampling_rate * 2
                 )
-                self.logger.debug(f"sender after {data[:10]}")
+                # self.logger.debug("sender after ")
                 await ws.send(data)
             except asyncio.exceptions.TimeoutError:
                 self.logger.error("Deepgram transcriber sender timeout")
@@ -377,7 +378,7 @@ class DeepgramTranscriber(BaseAsyncTranscriber[DeepgramTranscriberConfig]):
                 self.output_queue.put_nowait(transc)
                 try:
                     vad_result = self.vad_output_queue.get_nowait()
-                    self.logger.debug(f"vad_result {vad_result[:10]}")
+                    # self.logger.debug(f"vad_result {vad_result[:10]}")
                     if vad_result:
                         self.output_queue.put_nowait(vad_result)
                 except asyncio.QueueEmpty:
