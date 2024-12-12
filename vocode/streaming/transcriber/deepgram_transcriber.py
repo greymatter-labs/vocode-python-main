@@ -61,14 +61,6 @@ class VADWorker(AsyncWorker):
         super().__init__(input_queue, output_queue)
         self.vad_buffer = b""
         # # Constants for Silero VAD
-        # USE_INT16 = True  # TODO this breaks mulaw, need to pass this in
-        # SAMPLE_RATE = 16000 if USE_INT16 else 8000
-        # DTYPE = np.int16 if USE_INT16 else np.int8
-        # CHUNK = 512 if USE_INT16 else 256
-        # WINDOWS = 3
-        # WINDOW_SIZE = WINDOWS * SAMPLE_RATE // CHUNK
-        # self.PREFIX_PADDING_MS = 150  # Minimum speech duration to trigger detection
-
         self.WINDOWS = 3
         self.CHUNK = self.transcriber.encoding.chunk
         self.SAMPLE_RATE = self.transcriber.encoding.speech_default_sampling_rate
