@@ -2,6 +2,7 @@ import asyncio
 import audioop
 import json
 import logging
+import math
 from pprint import PrettyPrinter
 import time
 from collections import deque
@@ -62,9 +63,11 @@ class VADWorker(AsyncWorker):
         # # Constants for Silero VAD
         self.WINDOWS = 3
         self.transcriber = transcriber
-
-        self.CHUNK = self.transcriber.encoding.chunk
         self.SAMPLE_RATE = self.transcriber.encoding.vad_sampling_rate
+        # Ensure minimum chunk size for Silero VAD (sr/chunk_size should be <= 31.25)
+        min_chunk_size = math.ceil(self.SAMPLE_RATE / 31.25)
+
+        self.CHUNK = max(self.transcriber.encoding.chunk, min_chunk_size)
         self.WINDOW_SIZE = self.WINDOWS * self.SAMPLE_RATE // self.CHUNK
         self.voiced_confidences = deque([0.0] * self.WINDOWS, maxlen=self.WINDOWS)
 
@@ -195,7 +198,7 @@ class DeepgramTranscriber(BaseAsyncTranscriber[DeepgramTranscriberConfig]):
         AudioEncoding.LINEAR16: AudioEncodingModel(
             name="linear16",
             dtype=np.int16,
-            chunk=512,
+            chunk=1024,  # increase min size because I hit he error where vad chunk size was too small
             vad_sampling_rate=16_000,  # recomended by google speech to text
         ),
         AudioEncoding.MULAW: AudioEncodingModel(
@@ -231,7 +234,7 @@ class DeepgramTranscriber(BaseAsyncTranscriber[DeepgramTranscriberConfig]):
             self.vad_input_queue, self.vad_output_queue, self, logger
         )
         self.vad_worker_task = None
-        # self.is_muted = False
+        self.is_muted = False
         self.vad_sampling_rate = self.encoding.vad_sampling_rate
         self.sampling_rate = self.transcriber_config.sampling_rate
         # TODO if it's important, we can add more adaptive downsampling, but for now
@@ -392,6 +395,9 @@ class DeepgramTranscriber(BaseAsyncTranscriber[DeepgramTranscriberConfig]):
         while not self._ended:
             try:
                 data = await asyncio.wait_for(self.input_queue.get(), 20)
+                assert (
+                    len(data) % self.encoding.dtype.itemsize == 0
+                ), f"data len {len(data)} is not divisible by {self.encoding.dtype.itemsize}"
                 buff = np.frombuffer(data, dtype=self.encoding.dtype)
                 volume = np.abs(buff).mean()
                 self.volume = volume
