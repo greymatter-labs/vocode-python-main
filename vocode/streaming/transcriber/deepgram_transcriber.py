@@ -1,5 +1,6 @@
 import asyncio
 import audioop
+from dataclasses import dataclass
 import json
 import logging
 import time
@@ -24,6 +25,7 @@ from vocode.streaming.transcriber.base_transcriber import (
 )
 from vocode.streaming.utils.worker import AsyncWorker
 from websockets.client import WebSocketClientProtocol
+from numpy.typing import DTypeLike
 
 PUNCTUATION_TERMINATORS = [".", "!", "?"]
 MAX_SILENCE_DURATION = 2.0
@@ -35,15 +37,16 @@ NUM_RESTARTS = 5
 model, utils = torch.hub.load(repo_or_dir="snakers4/silero-vad", model="silero_vad")
 (get_speech_timestamps, save_audio, read_audio, VADIterator, collect_chunks) = utils
 
-# Constants for Silero VAD
-USE_INT16 = True  # TODO this breaks mulaw, need to pass this in
-SAMPLE_RATE = 16000 if USE_INT16 else 8000
-DTYPE = np.int16 if USE_INT16 else np.int8
-CHUNK = 512 if USE_INT16 else 256
-WINDOWS = 3
-WINDOW_SIZE = WINDOWS * SAMPLE_RATE // CHUNK
-PREFIX_PADDING_MS = 150  # Minimum speech duration to trigger detection
-GRACE_PERIOD_MS = 300  # Grace period before resetting speech detection
+
+@dataclass
+class AudioEncodingModel:
+    name: str
+    chunk: int
+    dtype: DTypeLike
+    speech_default_sampling_rate: int
+
+    class Config:
+        arbitrary_types_allowed = True
 
 
 class VADWorker(AsyncWorker):
@@ -52,23 +55,41 @@ class VADWorker(AsyncWorker):
         self,
         input_queue: asyncio.Queue,
         output_queue: asyncio.Queue,
-        transcriber: BaseAsyncTranscriber,
+        transcriber: "DeepgramTranscriber",
         logger: Optional[logging.Logger] = None,
     ):
         super().__init__(input_queue, output_queue)
         self.vad_buffer = b""
-        self.voiced_confidences = deque([0.0] * WINDOWS, maxlen=WINDOWS)
+        # # Constants for Silero VAD
+        # USE_INT16 = True  # TODO this breaks mulaw, need to pass this in
+        # SAMPLE_RATE = 16000 if USE_INT16 else 8000
+        # DTYPE = np.int16 if USE_INT16 else np.int8
+        # CHUNK = 512 if USE_INT16 else 256
+        # WINDOWS = 3
+        # WINDOW_SIZE = WINDOWS * SAMPLE_RATE // CHUNK
+        # self.PREFIX_PADDING_MS = 150  # Minimum speech duration to trigger detection
+
+        self.WINDOWS = 3
+        self.CHUNK = self.transcriber.encoding.chunk
+        self.SAMPLE_RATE = self.transcriber.encoding.speech_default_sampling_rate
+        self.WINDOW_SIZE = self.WINDOWS * self.SAMPLE_RATE // self.CHUNK
+        self.voiced_confidences = deque([0.0] * self.WINDOWS, maxlen=self.WINDOWS)
+
+        self.PREFIX_PADDING_MS = 150  # Minimum speech duration to trigger detection
+        self.GRACE_PERIOD_MS = 300  # Grace period before resetting speech detection
         self.last_vad_output_time = 0
         self.speech_start_time = 0
         self.last_speech_time = 0
         self.logger = logger or logging.getLogger(__name__)
         self.transcriber = transcriber
 
-    def int2float(self, sound):
-        abs_max = np.abs(sound).max()
+    def int2float(self, sound: np.ndarray) -> np.ndarray:
+        abs_max: np.ndarray = np.abs(sound).max()
         sound = sound.astype("float32")
         if abs_max > 0:
-            sound *= 1 / 32768 if USE_INT16 else 1 / 128
+            sound *= (
+                1 / 32768 if self.transcriber.encoding.dtype == np.int16 else 1 / 128
+            )
         return sound.squeeze()
 
     async def _run_loop(self):
@@ -95,15 +116,15 @@ class VADWorker(AsyncWorker):
                             f"VAD buffer stats: received={cursor_index}, chunk_size={len(chunk)}, buffer_size={len(self.vad_buffer)}, delta={delta/1e9:.3f}s"
                         )
 
-                    if len(self.vad_buffer) >= CHUNK:
-                        audio_chunk = self.vad_buffer[-CHUNK:]
+                    if len(self.vad_buffer) >= self.CHUNK:
+                        audio_chunk = self.vad_buffer[-self.CHUNK :]
                         self.vad_buffer = b""
 
                         audio_float32 = self.int2float(
-                            np.frombuffer(audio_chunk, DTYPE)
+                            np.frombuffer(audio_chunk, self.transcriber.encoding.dtype)
                         )
                         new_confidence = model(
-                            torch.from_numpy(audio_float32), SAMPLE_RATE
+                            torch.from_numpy(audio_float32), self.SAMPLE_RATE
                         ).item()
                 else:
                     # Ensure the deque only keeps the last 3 confidences
@@ -133,9 +154,11 @@ class VADWorker(AsyncWorker):
                         self.speech_start_time = current_time
                     elif (
                         current_time - self.speech_start_time
-                        >= PREFIX_PADDING_MS / 1000
+                        >= self.PREFIX_PADDING_MS / 1000
                     ):
-                        self.voiced_confidences = deque([0.0] * WINDOWS, maxlen=WINDOWS)
+                        self.voiced_confidences = deque(
+                            [0.0] * self.WINDOWS, maxlen=self.WINDOWS
+                        )
                         self.output_queue.put_nowait(
                             Transcription(
                                 message="vad",
@@ -150,7 +173,7 @@ class VADWorker(AsyncWorker):
                     # Only reset speech_start_time if we've exceeded the grace period
                     if self.last_speech_time > 0 and (
                         current_time - self.last_speech_time
-                    ) > (GRACE_PERIOD_MS / 1000):
+                    ) > (self.GRACE_PERIOD_MS / 1000):
                         self.speech_start_time = 0
                         self.last_speech_time = 0
 
@@ -175,6 +198,21 @@ class VADWorker(AsyncWorker):
 
 
 class DeepgramTranscriber(BaseAsyncTranscriber[DeepgramTranscriberConfig]):
+    ENCODING_MAPPING = {
+        AudioEncoding.LINEAR16: AudioEncodingModel(
+            name="linear16",
+            dtype=np.int16,
+            chunk=512,
+            speech_default_sampling_rate=16_000,  # recomended by google speech to text
+        ),
+        AudioEncoding.MULAW: AudioEncodingModel(
+            name="mulaw",
+            dtype=np.int8,
+            chunk=256,
+            speech_default_sampling_rate=8_000,
+        ),
+    }
+
     def __init__(
         self,
         transcriber_config: DeepgramTranscriberConfig,
@@ -193,13 +231,14 @@ class DeepgramTranscriber(BaseAsyncTranscriber[DeepgramTranscriberConfig]):
         self.audio_cursor = 0.0
         self.VAD_THRESHOLD = vad_threshold
         self.VOLUME_THRESHOLD = volume_threshold
-        self.vad_input_queue = asyncio.Queue()
-        self.vad_output_queue = asyncio.Queue()
+        self.vad_input_queue = asyncio.Queue[str]()
+        self.vad_output_queue = asyncio.Queue[Transcription]()
         self.vad_worker = VADWorker(
-            self.vad_input_queue, self.output_queue, self, logger
+            self.vad_input_queue, self.vad_output_queue, self, logger
         )
         self.vad_worker_task = None
         self.is_muted = False
+        self.encoding = self.ENCODING_MAPPING[self.transcriber_config.audio_encoding]
 
     async def _run_loop(self):
         self.vad_worker_task = self.vad_worker.start()
@@ -209,15 +248,15 @@ class DeepgramTranscriber(BaseAsyncTranscriber[DeepgramTranscriberConfig]):
             restarts += 1
             self.logger.debug(f"Deepgram connection restarting, attempt {restarts}")
 
-    def is_volume_low(self, chunk):
+    def is_volume_low(self, chunk: bytes) -> bool:
         try:
             # Additional check for low volume
             if self.transcriber_config.audio_encoding == AudioEncoding.LINEAR16:
-                volume = np.abs(np.frombuffer(chunk, dtype=np.int16)).mean()
+                volume = np.abs(np.frombuffer(chunk, self.encoding.dtype)).mean()
             else:
                 # TODO: FIX ENCODING
                 decoded = audioop.ulaw2lin(chunk, 2)
-                volume = np.abs(np.frombuffer(decoded, dtype=np.int16)).mean()
+                volume = np.abs(np.frombuffer(decoded, self.encoding.dtype)).mean()
         except Exception as e:
             self.logger.warning(f"Error calculating volume: {e}")
             return True
@@ -241,7 +280,7 @@ class DeepgramTranscriber(BaseAsyncTranscriber[DeepgramTranscriberConfig]):
                 None,
             )
         if self.transcriber_config.audio_encoding == AudioEncoding.LINEAR16:
-            chunk = np.frombuffer(chunk, dtype=np.int16).astype(DTYPE).tobytes()
+            chunk = np.frombuffer(chunk, self.encoding.dtype).tobytes()
 
         is_silence = self.is_volume_low(chunk)
         if is_silence:
@@ -273,7 +312,7 @@ class DeepgramTranscriber(BaseAsyncTranscriber[DeepgramTranscriberConfig]):
         assert self.transcriber_config.sampling_rate == 48000 and encoding == "linear16"
         url_params = {
             "encoding": encoding,
-            "sample_rate": self.transcriber_config.sampling_rate,
+            "self.SAMPLE_RATE": self.transcriber_config.sampling_rate,
             "channels": 1,
             "vad_events": "false",
             "interim_results": "false",
