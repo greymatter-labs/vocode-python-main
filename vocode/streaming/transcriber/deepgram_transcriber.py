@@ -226,20 +226,20 @@ class DeepgramTranscriber(BaseAsyncTranscriber[DeepgramTranscriberConfig]):
         self.VOLUME_THRESHOLD = volume_threshold
         self.vad_input_queue = asyncio.Queue[str]()
         self.vad_output_queue = asyncio.Queue[Transcription]()
+        self.encoding = self.ENCODING_MAPPING[self.transcriber_config.audio_encoding]
         self.vad_worker = VADWorker(
             self.vad_input_queue, self.vad_output_queue, self, logger
         )
         self.vad_worker_task = None
         # self.is_muted = False
-        self.encoding = self.ENCODING_MAPPING[self.transcriber_config.audio_encoding]
         self.vad_sampling_rate = self.encoding.vad_sampling_rate
         self.sampling_rate = self.transcriber_config.sampling_rate
         # TODO if it's important, we can add more adaptive downsampling, but for now
         # we are sticking with 16k for VAD linear16 and multiples of 16k
         # for mulaw we do not downsample
         assert (
-            self.vad_sampling_rate % self.sampling_rate == 0
-        ), f"VAD downsampling need {self.vad_sampling_rate} % {self.sampling_rate} != 0"
+            self.sampling_rate % self.vad_sampling_rate == 0
+        ), f"VAD downsampling need to be a multiple of {self.vad_sampling_rate} but got {self.sampling_rate}"
         assert (
             self.sampling_rate >= self.vad_sampling_rate
         ), f"VAD sampling rate must be less than or equal to the input sampling rate {self.vad_sampling_rate} <= {self.sampling_rate}"
@@ -408,7 +408,7 @@ class DeepgramTranscriber(BaseAsyncTranscriber[DeepgramTranscriberConfig]):
             try:
                 msg = await ws.recv()
                 data = json.loads(msg)
-                self.logger.error(f"receiver {data=}")
+                self.logger.info(f"receiver {data=}")
 
                 if "is_final" not in data:
                     break
