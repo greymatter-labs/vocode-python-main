@@ -234,7 +234,6 @@ class DeepgramTranscriber(BaseAsyncTranscriber[DeepgramTranscriberConfig]):
             self.vad_input_queue, self.vad_output_queue, self, logger
         )
         self.vad_worker_task = None
-        self.is_muted = False
         self.vad_sampling_rate = self.encoding.vad_sampling_rate
         self.sampling_rate = self.transcriber_config.sampling_rate
         # TODO if it's important, we can add more adaptive downsampling, but for now
@@ -249,6 +248,7 @@ class DeepgramTranscriber(BaseAsyncTranscriber[DeepgramTranscriberConfig]):
         self.volume = 0
         self.gt_threshold = 0
         self.buf_len = 0
+        # self.is_muted = False
 
     async def _run_loop(self):
         self.vad_worker_task = self.vad_worker.start()
@@ -272,7 +272,7 @@ class DeepgramTranscriber(BaseAsyncTranscriber[DeepgramTranscriberConfig]):
             return True
         return volume < self.VOLUME_THRESHOLD
 
-    def send_audio(self, chunk):
+    def send_audio(self, chunk: bytes):
         vad_chunk = chunk
         if self.transcriber_config.audio_encoding == AudioEncoding.LINEAR16:
             # Downsample from sampling rate to 16k for VAD
@@ -306,7 +306,7 @@ class DeepgramTranscriber(BaseAsyncTranscriber[DeepgramTranscriberConfig]):
         super().send_audio(chunk)
 
     def terminate(self):
-        self.input_queue.put_nowait(json.dumps({"type": "CloseStream"}).encode())
+        self.input_queue.put_nowait(json.dumps({"type": "CloseStream"}))
         self._ended = True
         if self.vad_worker_task:
             self.vad_worker_task.cancel()
@@ -395,9 +395,6 @@ class DeepgramTranscriber(BaseAsyncTranscriber[DeepgramTranscriberConfig]):
         while not self._ended:
             try:
                 data = await asyncio.wait_for(self.input_queue.get(), 20)
-                assert (
-                    len(data) % self.encoding.dtype.itemsize == 0
-                ), f"data len {len(data)} is not divisible by {self.encoding.dtype.itemsize}"
                 buff = np.frombuffer(data, dtype=self.encoding.dtype)
                 volume = np.abs(buff).mean()
                 self.volume = volume
@@ -407,19 +404,19 @@ class DeepgramTranscriber(BaseAsyncTranscriber[DeepgramTranscriberConfig]):
                         gt_threshold=np.sum(buff > self.VOLUME_THRESHOLD),
                         gt_threshold_ratio=np.sum(buff > self.VOLUME_THRESHOLD)
                         / len(buff),
-                        amp_std=np.std(buff),
-                        amp_max=np.max(np.abs(buff)),
-                        amp_min=np.min(np.abs(buff)),
-                        amp_median=np.median(np.abs(buff)),
-                        zero_crossings=np.sum(np.diff(np.signbit(buff))),
-                        samples_above_mean=np.sum(buff > np.mean(buff)),
-                        samples_below_mean=np.sum(buff < np.mean(buff)),
-                        rms=np.sqrt(np.abs(np.mean(np.square(buff)))),
-                        peak_to_peak=np.ptp(buff),
+                        # amp_std=np.std(buff),
+                        # amp_max=np.max(np.abs(buff)),
+                        # amp_min=np.min(np.abs(buff)),
+                        # amp_median=np.median(np.abs(buff)),
+                        # zero_crossings=np.sum(np.diff(np.signbit(buff))),
+                        # samples_above_mean=np.sum(buff > np.mean(buff)),
+                        # samples_below_mean=np.sum(buff < np.mean(buff)),
+                        # rms=np.sqrt(np.abs(np.mean(np.square(buff)))),
+                        # peak_to_peak=np.ptp(buff),
                     )
                 )
                 # self.logger.debug(f"sender {self.debug_info}")
-                assert data is not None and len(data) > 0
+                # assert data is not None and len(data) > 0
 
                 self.audio_cursor += len(data) / (
                     self.transcriber_config.sampling_rate * 2
