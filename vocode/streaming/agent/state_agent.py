@@ -968,15 +968,14 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
         self.logger.info(
             f"{state['id']} memory deps: {state.get('memory_dependencies')}"
         )
+
+        for memory_key, memory_value in self.memories.items():
+            if memory_value.get("is_ephemeral") and memory_value.get("owner_state_id") != state["id"]:
+                memory_value["is_stale"] = True
+
         for memory_dep in state.get("memory_dependencies", []):
             cached_memory = self.memories.get(memory_dep["key"])
             self.logger.info(f"cached memory is {cached_memory}")
-            if (
-                cached_memory
-                and cached_memory["is_ephemeral"]
-                and cached_memory["owner_state_id"] != state["id"]
-            ):
-                cached_memory["is_stale"] = True
             if not cached_memory or cached_memory.get("is_stale") == True:
 
                 async def retry(memory: Optional[MemoryValue] = None):
