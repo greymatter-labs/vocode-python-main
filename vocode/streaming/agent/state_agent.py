@@ -844,19 +844,26 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
                 f"Respond with exactly one word:\n"
                 f"'transfer' - if the user asks to speak with someone else like a human, representative or operator.\n"
                 f"'unclear' - if the user's intent is at all unclear or ambiguous.\n"
-                f"'answered' - if the user directly answered a question that was asked.\n"
+                f"'valid_answer' - if the user directly answered the question that was asked with a relevant response.\n"
+                f"'invalid_answer' - if the user provided an answer but it wasn't a valid or relevant response to the specific question.\n"
                 f"'continue' - if none of the above apply."
             )
             response, streamed = await self.call_ai(prompt, stream_output=True)
             self.logger.info(f"Initial intent analysis response: {response}")
             intent = response.strip().lower()
-            if intent not in ["transfer", "continue", "unclear", "answered"]:
+            if intent not in [
+                "transfer",
+                "continue",
+                "unclear",
+                "valid_answer",
+                "invalid_answer",
+            ]:
                 intent = "continue"
             if (
                 intent == "unclear"
             ):  # just mimic continue behavior because memories deftly handle ambiguity already
                 intent = "continue"
-            if intent == "answered":
+            if intent in ["valid_answer", "invalid_answer"]:
                 intent = "continue"
             return intent, streamed
 
@@ -868,18 +875,26 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
             f"'switch' - if the current intent has nothing to do with the user's message or the user indicates they want to do something else entirely.\n"
             f"'transfer' - if the user asks to speak with someone else like a human, representative or operator.\n"
             f"'unclear' - if it's not clear whether the current intent is still applicable.\n"
-            f"'answered' - if the user directly answered a question that was asked.\n"
+            f"'valid_answer' - if the user directly answered the question that was asked with a relevant response.\n"
+            f"'invalid_answer' - if the user provided an answer but it wasn't a valid or relevant response to the specific question.\n"
             f"'continue' - if the user's message is relevant to the current intent and they are engaged in the conversation (e.g. asking follow-up questions or providing additional context) but none of the above apply."
         )
 
         response, streamed = await self.call_ai(prompt, stream_output=True)
         self.logger.info(f"Analyze user intent prompt response: {response}")
         intent = response.strip().lower()
-        if intent not in ["switch", "transfer", "continue", "unclear", "answered"]:
+        if intent not in [
+            "switch",
+            "transfer",
+            "continue",
+            "unclear",
+            "valid_answer",
+            "invalid_answer",
+        ]:
             intent = "continue"
         if intent == "unclear":
             intent = "continue"
-        if intent == "answered":
+        if intent in ["valid_answer", "invalid_answer"]:
             intent = "continue"
         self.logger.info(f"Determined user intent: {intent}")
         return intent, streamed
