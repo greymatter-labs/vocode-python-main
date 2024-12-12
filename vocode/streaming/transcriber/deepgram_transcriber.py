@@ -43,7 +43,7 @@ class AudioEncodingModel:
     name: str
     chunk: int
     dtype: DTypeLike
-    speech_default_sampling_rate: int
+    vad_sampling_rate: int
 
     class Config:
         arbitrary_types_allowed = True
@@ -62,8 +62,10 @@ class VADWorker(AsyncWorker):
         self.vad_buffer = b""
         # # Constants for Silero VAD
         self.WINDOWS = 3
+        self.transcriber = transcriber
+
         self.CHUNK = self.transcriber.encoding.chunk
-        self.SAMPLE_RATE = self.transcriber.encoding.speech_default_sampling_rate
+        self.SAMPLE_RATE = self.transcriber.encoding.vad_sampling_rate
         self.WINDOW_SIZE = self.WINDOWS * self.SAMPLE_RATE // self.CHUNK
         self.voiced_confidences = deque([0.0] * self.WINDOWS, maxlen=self.WINDOWS)
 
@@ -73,7 +75,6 @@ class VADWorker(AsyncWorker):
         self.speech_start_time = 0
         self.last_speech_time = 0
         self.logger = logger or logging.getLogger(__name__)
-        self.transcriber = transcriber
 
     def int2float(self, sound: np.ndarray) -> np.ndarray:
         abs_max: np.ndarray = np.abs(sound).max()
@@ -195,13 +196,13 @@ class DeepgramTranscriber(BaseAsyncTranscriber[DeepgramTranscriberConfig]):
             name="linear16",
             dtype=np.int16,
             chunk=512,
-            speech_default_sampling_rate=16_000,  # recomended by google speech to text
+            vad_sampling_rate=16_000,  # recomended by google speech to text
         ),
         AudioEncoding.MULAW: AudioEncodingModel(
             name="mulaw",
             dtype=np.int8,
             chunk=256,
-            speech_default_sampling_rate=8_000,
+            vad_sampling_rate=8_000,
         ),
     }
 
@@ -229,8 +230,19 @@ class DeepgramTranscriber(BaseAsyncTranscriber[DeepgramTranscriberConfig]):
             self.vad_input_queue, self.vad_output_queue, self, logger
         )
         self.vad_worker_task = None
-        self.is_muted = False
+        # self.is_muted = False
         self.encoding = self.ENCODING_MAPPING[self.transcriber_config.audio_encoding]
+        self.vad_sampling_rate = self.encoding.vad_sampling_rate
+        self.sampling_rate = self.transcriber_config.sampling_rate
+        # TODO if it's important, we can add more adaptive downsampling, but for now
+        # we are sticking with 16k for VAD linear16 and multiples of 16k
+        # for mulaw we do not downsample
+        assert (
+            self.vad_sampling_rate % self.sampling_rate == 0
+        ), f"VAD downsampling need {self.vad_sampling_rate} % {self.sampling_rate} != 0"
+        assert (
+            self.sampling_rate >= self.vad_sampling_rate
+        ), f"VAD sampling rate must be less than or equal to the input sampling rate {self.vad_sampling_rate} <= {self.sampling_rate}"
 
     async def _run_loop(self):
         self.vad_worker_task = self.vad_worker.start()
@@ -255,22 +267,21 @@ class DeepgramTranscriber(BaseAsyncTranscriber[DeepgramTranscriberConfig]):
         return volume < self.VOLUME_THRESHOLD
 
     def send_audio(self, chunk):
-        if (
-            self.transcriber_config.downsampling
-            and self.transcriber_config.audio_encoding == AudioEncoding.LINEAR16
-        ):
-            self.logger.debug(
-                f"downsampling {self.transcriber_config.downsampling=} {self.transcriber_config.audio_encoding =}"
-            )
-            chunk, _ = audioop.ratecv(
-                chunk,
-                2,
-                1,
-                self.transcriber_config.sampling_rate
-                * self.transcriber_config.downsampling,
-                self.transcriber_config.sampling_rate,
-                None,
-            )
+        vad_chunk = chunk
+        if self.transcriber_config.audio_encoding == AudioEncoding.LINEAR16:
+            # Downsample from sampling rate to 16k for VAD
+            if self.transcriber_config.sampling_rate > self.vad_sampling_rate:
+                self.logger.debug(
+                    f"downsampling from {self.transcriber_config.sampling_rate} to {self.vad_sampling_rate}"
+                )
+                vad_chunk, _ = audioop.ratecv(
+                    chunk,
+                    2,  # width=2 for LINEAR16 i.e. bytes per sample
+                    1,  # channels
+                    self.transcriber_config.sampling_rate,
+                    self.vad_sampling_rate,  # target VAD sample rate
+                    None,
+                )
         if self.transcriber_config.audio_encoding == AudioEncoding.LINEAR16:
             chunk = np.frombuffer(chunk, self.encoding.dtype).tobytes()
 
@@ -279,7 +290,7 @@ class DeepgramTranscriber(BaseAsyncTranscriber[DeepgramTranscriberConfig]):
             self.logger.debug(f"is_silence {is_silence=}")
         self.vad_worker.send_audio(
             {
-                "chunk": chunk,
+                "chunk": vad_chunk,  # vad library max sampling rate is 16k, so need to downsample
                 "timestamp": time_ns(),
                 "is_silence": is_silence,
                 "ignore": False,
@@ -296,15 +307,15 @@ class DeepgramTranscriber(BaseAsyncTranscriber[DeepgramTranscriberConfig]):
         super().terminate()
 
     def get_deepgram_url(self):
-        encoding = (
-            "linear16"
-            if self.transcriber_config.audio_encoding == AudioEncoding.LINEAR16
-            else "mulaw"
-        )
-        assert self.transcriber_config.sampling_rate == 48000 and encoding == "linear16"
+        # encoding = (
+        #     "linear16"
+        #     if self.transcriber_config.audio_encoding == AudioEncoding.LINEAR16
+        #     else "mulaw"
+        # )
+        # assert self.transcriber_config.sampling_rate == 48000 and encoding == "linear16"
         url_params = {
-            "encoding": encoding,
-            "self.SAMPLE_RATE": self.transcriber_config.sampling_rate,
+            "encoding": self.encoding.name,
+            "sample_rate": self.transcriber_config.sampling_rate,
             "channels": 1,
             "vad_events": "false",
             "interim_results": "false",
