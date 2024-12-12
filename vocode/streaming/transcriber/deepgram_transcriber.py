@@ -2,7 +2,6 @@ import asyncio
 import audioop
 import json
 import logging
-import math
 from pprint import PrettyPrinter
 import time
 from collections import deque
@@ -65,9 +64,10 @@ class VADWorker(AsyncWorker):
         self.transcriber = transcriber
         self.SAMPLE_RATE = self.transcriber.encoding.vad_sampling_rate
         # Ensure minimum chunk size for Silero VAD (sr/chunk_size should be <= 31.25)
-        min_chunk_size = math.ceil(self.SAMPLE_RATE / 31.25)
+        # min_chunk_size = math.ceil(self.SAMPLE_RATE / 31.25)
+        # self.CHUNK = max(self.transcriber.encoding.chunk, min_chunk_size)
 
-        self.CHUNK = max(self.transcriber.encoding.chunk, min_chunk_size)
+        self.CHUNK = self.transcriber.encoding.chunk
         self.WINDOW_SIZE = self.WINDOWS * self.SAMPLE_RATE // self.CHUNK
         self.voiced_confidences = deque([0.0] * self.WINDOWS, maxlen=self.WINDOWS)
 
