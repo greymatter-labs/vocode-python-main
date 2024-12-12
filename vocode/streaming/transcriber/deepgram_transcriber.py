@@ -190,6 +190,7 @@ class VADWorker(AsyncWorker):
 
 
 class DeepgramTranscriber(BaseAsyncTranscriber[DeepgramTranscriberConfig]):
+    debug_log = []
     ENCODING_MAPPING = {
         AudioEncoding.LINEAR16: AudioEncodingModel(
             name="linear16",
@@ -242,6 +243,9 @@ class DeepgramTranscriber(BaseAsyncTranscriber[DeepgramTranscriberConfig]):
         assert (
             self.sampling_rate >= self.vad_sampling_rate
         ), f"VAD sampling rate must be less than or equal to the input sampling rate {self.vad_sampling_rate} <= {self.sampling_rate}"
+        self.volume = 0
+        self.gt_threshold = 0
+        self.buf_len = 0
 
     async def _run_loop(self):
         self.vad_worker_task = self.vad_worker.start()
@@ -299,7 +303,7 @@ class DeepgramTranscriber(BaseAsyncTranscriber[DeepgramTranscriberConfig]):
         super().send_audio(chunk)
 
     def terminate(self):
-        self.input_queue.put_nowait(json.dumps({"type": "CloseStream"}))
+        self.input_queue.put_nowait(json.dumps({"type": "CloseStream"}).encode())
         self._ended = True
         if self.vad_worker_task:
             self.vad_worker_task.cancel()
@@ -320,6 +324,8 @@ class DeepgramTranscriber(BaseAsyncTranscriber[DeepgramTranscriberConfig]):
             "interim_results": "false",
             "filler_words": "true",
         }
+        self.logger.info(f"deepgram url {url_params=}")
+        self.logger.info(f"deepgram transcriber config {self.transcriber_config=}")
         extra_params = {
             k: v
             for k, v in {
@@ -386,15 +392,33 @@ class DeepgramTranscriber(BaseAsyncTranscriber[DeepgramTranscriberConfig]):
         while not self._ended:
             try:
                 data = await asyncio.wait_for(self.input_queue.get(), 20)
-                buff = np.frombuffer(data, dtype=np.int16)
+                buff = np.frombuffer(data, dtype=self.encoding.dtype)
                 volume = np.abs(buff).mean()
-                gt_threshold = np.sum(buff > self.VOLUME_THRESHOLD)
-                self.logger.debug(f"sender {volume=} {gt_threshold/len(buff)=}")
+                self.volume = volume
+                self.debug_log.append(
+                    dict(
+                        volume=volume,
+                        gt_threshold=np.sum(buff > self.VOLUME_THRESHOLD),
+                        gt_threshold_ratio=np.sum(buff > self.VOLUME_THRESHOLD)
+                        / len(buff),
+                        amp_std=np.std(buff),
+                        amp_max=np.max(np.abs(buff)),
+                        amp_min=np.min(np.abs(buff)),
+                        amp_median=np.median(np.abs(buff)),
+                        zero_crossings=np.sum(np.diff(np.signbit(buff))),
+                        samples_above_mean=np.sum(buff > np.mean(buff)),
+                        samples_below_mean=np.sum(buff < np.mean(buff)),
+                        rms=np.sqrt(np.abs(np.mean(np.square(buff)))),
+                        peak_to_peak=np.ptp(buff),
+                    )
+                )
+                # self.logger.debug(f"sender {self.debug_info}")
                 assert data is not None and len(data) > 0
 
                 self.audio_cursor += len(data) / (
                     self.transcriber_config.sampling_rate * 2
                 )
+                self.buf_len = len(data)
                 # self.logger.debug("sender after ")
                 await ws.send(data)
             except asyncio.exceptions.TimeoutError:
@@ -407,7 +431,7 @@ class DeepgramTranscriber(BaseAsyncTranscriber[DeepgramTranscriberConfig]):
             try:
                 msg = await ws.recv()
                 data = json.loads(msg)
-                self.logger.info(f"receiver {data=}")
+                # self.logger.info(f"receiver {data=}")
 
                 if "is_final" not in data:
                     break
@@ -421,6 +445,8 @@ class DeepgramTranscriber(BaseAsyncTranscriber[DeepgramTranscriberConfig]):
                     )
                 )
 
+                self.logger.info(f"sender {self.debug_log}")
+                self.debug_log.clear()
                 self.output_queue.put_nowait(transc)
                 try:
                     vad_result = self.vad_output_queue.get_nowait()
