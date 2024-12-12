@@ -57,7 +57,8 @@ class WebsocketOutputDevice(BaseOutputDevice):
                     )
             audio_message = AudioMessage.from_bytes(chunk)
 
-            self.queue.put_nowait(audio_message)
+            if len(audio_message.data) > 0:
+                self.queue.put_nowait(audio_message)
 
     def consume_transcript(self, event: TranscriptEvent):
         if self.active:
