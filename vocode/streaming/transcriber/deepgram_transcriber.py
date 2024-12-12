@@ -1,6 +1,5 @@
 import asyncio
 import audioop
-from dataclasses import dataclass
 import json
 import logging
 import time
@@ -26,6 +25,7 @@ from vocode.streaming.transcriber.base_transcriber import (
 from vocode.streaming.utils.worker import AsyncWorker
 from websockets.client import WebSocketClientProtocol
 from numpy.typing import DTypeLike
+from pydantic import BaseModel
 
 PUNCTUATION_TERMINATORS = [".", "!", "?"]
 MAX_SILENCE_DURATION = 2.0
@@ -38,8 +38,7 @@ model, utils = torch.hub.load(repo_or_dir="snakers4/silero-vad", model="silero_v
 (get_speech_timestamps, save_audio, read_audio, VADIterator, collect_chunks) = utils
 
 
-@dataclass
-class AudioEncodingModel:
+class AudioEncodingModel(BaseModel):
     name: str
     chunk: int
     dtype: DTypeLike
