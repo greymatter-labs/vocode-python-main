@@ -248,7 +248,6 @@ class DeepgramTranscriber(BaseAsyncTranscriber[DeepgramTranscriberConfig]):
         self.volume = 0
         self.gt_threshold = 0
         self.buf_len = 0
-        # self.is_muted = False
 
     async def _run_loop(self):
         self.vad_worker_task = self.vad_worker.start()
@@ -275,11 +274,8 @@ class DeepgramTranscriber(BaseAsyncTranscriber[DeepgramTranscriberConfig]):
     def send_audio(self, chunk: bytes):
         vad_chunk = chunk
         if self.transcriber_config.audio_encoding == AudioEncoding.LINEAR16:
-            # Downsample from sampling rate to 16k for VAD
+            # Downsample from sampling rate to 16k for VAD, since the browser support 44k-48k for common devices
             if self.transcriber_config.sampling_rate > self.vad_sampling_rate:
-                # self.logger.debug(
-                #     f"downsampling from {self.transcriber_config.sampling_rate} to {self.vad_sampling_rate}"
-                # )
                 vad_chunk, _ = audioop.ratecv(
                     chunk,
                     2,  # width=2 for LINEAR16 i.e. bytes per sample
@@ -292,8 +288,6 @@ class DeepgramTranscriber(BaseAsyncTranscriber[DeepgramTranscriberConfig]):
             chunk = np.frombuffer(chunk, self.encoding.dtype).tobytes()
 
         is_silence = self.is_volume_low(chunk)
-        # if is_silence:
-        #     self.logger.debug(f"is_silence {is_silence=}")
         self.vad_worker.send_audio(
             {
                 "chunk": vad_chunk,  # vad library max sampling rate is 16k, so need to downsample
@@ -306,6 +300,7 @@ class DeepgramTranscriber(BaseAsyncTranscriber[DeepgramTranscriberConfig]):
         super().send_audio(chunk)
 
     def terminate(self):
+        # causing issue when i converted to bytes
         self.input_queue.put_nowait(json.dumps({"type": "CloseStream"}))
         self._ended = True
         if self.vad_worker_task:
@@ -313,12 +308,6 @@ class DeepgramTranscriber(BaseAsyncTranscriber[DeepgramTranscriberConfig]):
         super().terminate()
 
     def get_deepgram_url(self):
-        # encoding = (
-        #     "linear16"
-        #     if self.transcriber_config.audio_encoding == AudioEncoding.LINEAR16
-        #     else "mulaw"
-        # )
-        # assert self.transcriber_config.sampling_rate == 48000 and encoding == "linear16"
         url_params = {
             "encoding": self.encoding.name,
             "sample_rate": self.transcriber_config.sampling_rate,
@@ -404,6 +393,7 @@ class DeepgramTranscriber(BaseAsyncTranscriber[DeepgramTranscriberConfig]):
                         gt_threshold=np.sum(buff > self.VOLUME_THRESHOLD),
                         gt_threshold_ratio=np.sum(buff > self.VOLUME_THRESHOLD)
                         / len(buff),
+                        # extended debug info but may cause issues
                         # amp_std=np.std(buff),
                         # amp_max=np.max(np.abs(buff)),
                         # amp_min=np.min(np.abs(buff)),
@@ -415,8 +405,6 @@ class DeepgramTranscriber(BaseAsyncTranscriber[DeepgramTranscriberConfig]):
                         # peak_to_peak=np.ptp(buff),
                     )
                 )
-                # self.logger.debug(f"sender {self.debug_info}")
-                # assert data is not None and len(data) > 0
 
                 self.audio_cursor += len(data) / (
                     self.transcriber_config.sampling_rate * 2
@@ -448,15 +436,12 @@ class DeepgramTranscriber(BaseAsyncTranscriber[DeepgramTranscriberConfig]):
                     )
                 )
 
-                # self.logger.info(
-                #     f"sender {json.dumps(self.debug_log, indent=2, cls=NumpyEncoder)}"
-                # )
                 self.logger.debug(f"sender {pp.pformat(self.debug_log[:10])=}")
                 self.debug_log.clear()
                 self.output_queue.put_nowait(transc)
                 try:
                     vad_result = self.vad_output_queue.get_nowait()
-                    # self.logger.debug(f"vad_result {vad_result[:10]}")
+
                     if vad_result:
                         self.output_queue.put_nowait(vad_result)
                 except asyncio.QueueEmpty:
