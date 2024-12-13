@@ -94,6 +94,7 @@ class VADWorker(AsyncWorker[VadChunk]):
         # min_chunk_size = math.ceil(self.SAMPLE_RATE / 31.25)
         # self.CHUNK = max(self.transcriber.encoding.chunk, min_chunk_size)
 
+        # self.CHUNK = self.transcriber.encoding.chunk
         self.WINDOW_SIZE = (
             self.WINDOWS * self.encoding.vad_sampling_rate // self.encoding.vad_chunk_sz
         )
@@ -295,6 +296,8 @@ class DeepgramTranscriber(BaseAsyncTranscriber[DeepgramTranscriberConfig]):
         )
         self.vad_worker_task = None
         self.volume = 0
+        self.gt_threshold = 0
+        self.buf_len = 0
 
     async def _run_loop(self):
         self.vad_worker_task = self.vad_worker.start()
@@ -427,6 +430,8 @@ class DeepgramTranscriber(BaseAsyncTranscriber[DeepgramTranscriberConfig]):
                 self.audio_cursor += len(data) / (
                     self.transcriber_config.sampling_rate * 2
                 )
+                self.buf_len = len(data)
+                # self.logger.debug("sender after ")
                 await ws.send(data)
             except asyncio.exceptions.TimeoutError:
                 self.logger.error("Deepgram transcriber sender timeout")
@@ -438,6 +443,7 @@ class DeepgramTranscriber(BaseAsyncTranscriber[DeepgramTranscriberConfig]):
             try:
                 msg = await ws.recv()
                 data = json.loads(msg)
+                # self.logger.info(f"receiver {data=}")
 
                 if "is_final" not in data:
                     break
