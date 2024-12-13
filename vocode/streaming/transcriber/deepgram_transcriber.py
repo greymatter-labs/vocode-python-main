@@ -165,11 +165,11 @@ class VADWorker(AsyncWorker[VadChunk]):
                         self.vad_buffer = b""
 
                         audio_float32 = self.int2float(
-                            np.frombuffer(audio_chunk, self.transcriber.encoding.dtype)
+                            np.frombuffer(audio_chunk, self.encoding.dtype)
                         )
                         new_confidence = model(
                             torch.from_numpy(audio_float32),
-                            self.transcriber.encoding.vad_sampling_rate,
+                            self.encoding.vad_sampling_rate,
                         ).item()
                 else:
                     # Ensure the deque only keeps the last 3 confidences
@@ -256,7 +256,7 @@ class VADWorker(AsyncWorker[VadChunk]):
                     self.transcriber.transcriber_config.sampling_rate
                     > self.encoding.vad_sampling_rate
                 ):
-                    vad_chunk, _ = audioop.ratecv(
+                    chunk, _ = audioop.ratecv(
                         chunk,
                         2,  # width=2 for LINEAR16 i.e. bytes per sample
                         1,  # channels
@@ -264,11 +264,11 @@ class VADWorker(AsyncWorker[VadChunk]):
                         self.encoding.vad_sampling_rate,  # target VAD sample rate
                         None,
                     )
-            if (
-                self.transcriber.transcriber_config.audio_encoding
-                == AudioEncoding.LINEAR16
-            ):
-                chunk = np.frombuffer(chunk, self.encoding.dtype).tobytes()
+            # if (
+            #     self.transcriber.transcriber_config.audio_encoding
+            #     == AudioEncoding.LINEAR16
+            # ):
+            #     chunk = np.frombuffer(chunk, self.encoding.dtype).tobytes()
 
             if not self.transcriber.is_muted:
                 self.consume_nonblocking(
