@@ -11,29 +11,30 @@ import logging
 logger = logging.getLogger(__name__)
 
 WorkerInputType = TypeVar("WorkerInputType")
+WorkerOutputType = TypeVar("WorkerOutputType")
 
 
-class AsyncWorker(Generic[WorkerInputType]):
+class AsyncWorker(Generic[WorkerInputType, WorkerOutputType]):
     def __init__(
         self,
-        input_queue: asyncio.Queue,
-        output_queue: asyncio.Queue = asyncio.Queue(),
+        input_queue: asyncio.Queue[WorkerInputType],
+        output_queue: asyncio.Queue[WorkerOutputType] = asyncio.Queue(),
     ) -> None:
-        self.worker_task: Optional[asyncio.Task] = None
+        self.worker_task: Optional[asyncio.Task[None]] = None
         self.input_queue = input_queue
         self.output_queue = output_queue
 
-    def start(self) -> asyncio.Task:
+    def start(self) -> asyncio.Task[None]:
         self.worker_task = asyncio.create_task(self._run_loop())
         return self.worker_task
 
     def consume_nonblocking(self, item: WorkerInputType):
         self.input_queue.put_nowait(item)
 
-    def produce_nonblocking(self, item):
+    def produce_nonblocking(self, item: WorkerOutputType):
         self.output_queue.put_nowait(item)
 
-    async def _run_loop(self):
+    async def _run_loop(self) -> None:
         raise NotImplementedError
 
     def terminate(self):
@@ -94,7 +95,7 @@ class AsyncQueueWorker(AsyncWorker):
                 await self.process(item)
             except asyncio.CancelledError:
                 return
-            except Exception as e:
+            except Exception:
                 logger.exception("AsyncQueueWorker", exc_info=True)
 
     async def process(self, item):
@@ -228,7 +229,7 @@ class InterruptibleWorker(AsyncWorker[InterruptibleEventType]):
                 await self.current_task
             except asyncio.CancelledError:
                 return
-            except Exception as e:
+            except Exception:
                 logger.exception("InterruptibleWorker", exc_info=True)
             self.interruptible_event.is_interruptible = False
             self.current_task = None
