@@ -16,7 +16,7 @@ WorkerInputType = TypeVar("WorkerInputType")
 class AsyncWorker(Generic[WorkerInputType]):
     def __init__(
         self,
-        input_queue: asyncio.Queue,
+        input_queue: asyncio.Queue[WorkerInputType],
         output_queue: asyncio.Queue = asyncio.Queue(),
     ) -> None:
         self.worker_task: Optional[asyncio.Task] = None
@@ -94,7 +94,7 @@ class AsyncQueueWorker(AsyncWorker):
                 await self.process(item)
             except asyncio.CancelledError:
                 return
-            except Exception as e:
+            except Exception:
                 logger.exception("AsyncQueueWorker", exc_info=True)
 
     async def process(self, item):
@@ -228,7 +228,7 @@ class InterruptibleWorker(AsyncWorker[InterruptibleEventType]):
                 await self.current_task
             except asyncio.CancelledError:
                 return
-            except Exception as e:
+            except Exception:
                 logger.exception("InterruptibleWorker", exc_info=True)
             self.interruptible_event.is_interruptible = False
             self.current_task = None
