@@ -6,7 +6,7 @@ from pprint import PrettyPrinter
 import time
 from collections import deque
 from time import time_ns
-from typing import Optional, TypedDict
+from typing import Optional
 from urllib.parse import urlencode
 
 import numpy as np
@@ -38,13 +38,6 @@ model, utils = torch.hub.load(repo_or_dir="snakers4/silero-vad", model="silero_v
 (get_speech_timestamps, save_audio, read_audio, VADIterator, collect_chunks) = utils
 
 
-class VadChunk(TypedDict):
-    chunk: bytes
-    timestamp: float
-    is_silence: bool
-    ignore: bool
-
-
 class AudioEncodingModel(BaseModel):
     name: str
     vad_chunk_sz: int
@@ -71,12 +64,12 @@ ENCODING_MODEL = {
 }
 
 
-class VADWorker(AsyncWorker[VadChunk, Transcription]):
+class VADWorker(AsyncWorker):
 
     def __init__(
         self,
-        input_queue: asyncio.Queue[VadChunk],
-        output_queue: asyncio.Queue[Transcription],
+        input_queue: asyncio.Queue,
+        output_queue: asyncio.Queue,
         transcriber: "DeepgramTranscriber",
         logger: Optional[logging.Logger] = None,
     ):
@@ -247,12 +240,12 @@ class VADWorker(AsyncWorker[VadChunk, Transcription]):
                 None,
             )
 
-        chunk_data = VadChunk(
-            chunk=chunk,  # vad library max sampling rate is 16k, so need to downsample
-            timestamp=time_ns(),
-            is_silence=self.is_volume_low(chunk),
-            ignore=False,
-        )
+        chunk_data = {
+            "chunk": chunk,  # vad library max sampling rate is 16k, so need to downsample
+            "timestamp": time_ns(),
+            "is_silence": self.is_volume_low(chunk),
+            "ignore": False,
+        }
         if not self.transcriber.is_muted:
             self.consume_nonblocking(chunk_data)
         else:
@@ -287,7 +280,7 @@ class DeepgramTranscriber(BaseAsyncTranscriber[DeepgramTranscriberConfig]):
         self.audio_cursor = 0.0
         self.VAD_THRESHOLD = vad_threshold
         self.VOLUME_THRESHOLD = volume_threshold
-        self.vad_input_queue = asyncio.Queue[VadChunk]()
+        self.vad_input_queue = asyncio.Queue[str]()
         self.vad_output_queue = asyncio.Queue[Transcription]()
         self.encoding = self.transcriber_config.audio_encoding
         self.vad_worker = VADWorker(
