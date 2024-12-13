@@ -71,7 +71,7 @@ ENCODING_MODEL = {
 }
 
 
-class VADWorker(AsyncWorker[VadChunk]):
+class VADWorker(AsyncWorker[VadChunk, Transcription]):
 
     def __init__(
         self,
@@ -84,7 +84,6 @@ class VADWorker(AsyncWorker[VadChunk]):
         self.vad_buffer: bytes = b""
         # # Constants for Silero VAD
         self.WINDOWS = 3
-        self.output_queue: asyncio.Queue[Transcription]
         self.transcriber = transcriber
         self.encoding = ENCODING_MODEL[
             self.transcriber.transcriber_config.audio_encoding
@@ -268,7 +267,7 @@ class VADWorker(AsyncWorker[VadChunk]):
 
 
 class DeepgramTranscriber(BaseAsyncTranscriber[DeepgramTranscriberConfig]):
-    debug_log: list[dict] = []
+    debug_log = []
 
     def __init__(
         self,
