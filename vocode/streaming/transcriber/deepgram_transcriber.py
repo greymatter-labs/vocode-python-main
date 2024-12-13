@@ -89,7 +89,7 @@ class VADWorker(AsyncWorker):
 
         self.WINDOW_SIZE = (
             self.WINDOWS
-            * self.transcriber.encoding.vad_sampling_rate
+            * self.encoding.vad_sampling_rate
             // self.encoding.vad_chunk_size
         )
         self.voiced_confidences = deque([0.0] * self.WINDOWS, maxlen=self.WINDOWS)
