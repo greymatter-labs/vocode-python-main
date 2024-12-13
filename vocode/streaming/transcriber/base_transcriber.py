@@ -56,17 +56,15 @@ class AbstractTranscriber(Generic[TranscriberConfigType]):
 
 
 class BaseAsyncTranscriber(
-    AbstractTranscriber[TranscriberConfigType], AsyncWorker[bytes, Transcription]
+    AbstractTranscriber[TranscriberConfigType], AsyncWorker[bytes]
 ):
     def __init__(
         self,
         transcriber_config: TranscriberConfigType,
     ):
         self.input_queue: asyncio.Queue[bytes] = asyncio.Queue()
-        self.output_queue: asyncio.Queue[Transcription] = asyncio.Queue()
-        AsyncWorker[bytes, Transcription].__init__(
-            self, self.input_queue, self.output_queue
-        )
+        self.output_queue: asyncio.Queue = asyncio.Queue()
+        AsyncWorker[bytes].__init__(self, self.input_queue, self.output_queue)
         AbstractTranscriber[TranscriberConfigType].__init__(self, transcriber_config)
 
     async def _run_loop(self):
