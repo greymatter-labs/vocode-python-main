@@ -143,7 +143,7 @@ class VADWorker(AsyncWorker):
                     # )
                     # self.logger.debug(
                     #     f"VAD: Rolling avg: {rolling_avg}, threshold: {self.transcriber.VAD_THRESHOLD}"
-                    # ) usefull for debugging
+                    # )  # usefull for debugging
 
                     if self.speech_start_time == 0:
                         self.speech_start_time = current_time
@@ -177,8 +177,8 @@ class VADWorker(AsyncWorker):
             except Exception as e:
                 self.logger.warning(f"VAD error: {str(e)}", exc_info=True)
 
-    def send_audio(self, chunk):
-        # self.logger.debug(f"vad send_audio {self.transcriber.is_muted=}")
+    def send_audio(self, chunk: dict):
+        # self.logger.debug(f"vad send_audio {self.transcriber.is_muted=} {chunk=}")
         if not self.transcriber.is_muted:
             self.consume_nonblocking(chunk)
         else:
@@ -301,8 +301,12 @@ class DeepgramTranscriber(BaseAsyncTranscriber[DeepgramTranscriberConfig]):
 
     def terminate(self):
         # causing issue when i converted to bytes
-        self.input_queue.put_nowait(json.dumps({"type": "CloseStream"}))
-        self._ended = True
+        self.logger.debug("Terminating Deepgram transcriber")
+        self.input_queue.put_nowait(
+            json.dumps({"type": "CloseStream"}).encode()
+        )  # pretty sure does nothing
+        self.logger.debug("Sent CloseStream message")
+        self._ended = True  # important
         if self.vad_worker_task:
             self.vad_worker_task.cancel()
         super().terminate()
