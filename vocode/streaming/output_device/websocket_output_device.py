@@ -9,15 +9,8 @@ from vocode.streaming.models.websocket import TranscriptMessage
 from vocode.streaming.models.transcript import TranscriptEvent
 
 
-def convert_linear16_to_pcm(linear16_audio: bytes) -> bytes:
-    # audio_array = (
-    #     np.frombuffer(linear16_audio, dtype=np.int16).astype(np.float32) / 32768.0
-    # )
-    # return audio_array.tobytes()
-    return linear16_audio
-
-
 class WebsocketOutputDevice(BaseOutputDevice):
+
     def __init__(
         self,
         ws: WebSocket,
@@ -45,16 +38,9 @@ class WebsocketOutputDevice(BaseOutputDevice):
 
     async def consume_nonblocking(self, chunk: bytes):
         if self.active:
-            if self.into_pcm:
-                # I need to test this in my next pr, since I need to fix up the ws to use StateAgent first
-                if self.audio_encoding == AudioEncoding.LINEAR16:
-                    chunk = convert_linear16_to_pcm(chunk)
-                elif self.audio_encoding == AudioEncoding.MULAW:
-                    raise ValueError("Mu-law encoding is not supported yet")
-                else:
-                    raise ValueError(
-                        f"Unsupported audio encoding: {self.audio_encoding}"
-                    )
+            assert (
+                self.audio_encoding == AudioEncoding.LINEAR16
+            ), "Only Linear16 is supported for now"
             audio_message = AudioMessage.from_bytes(chunk)
 
             if len(audio_message.data) > 0:
