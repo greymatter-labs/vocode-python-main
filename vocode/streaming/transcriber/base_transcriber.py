@@ -63,9 +63,9 @@ class BaseAsyncTranscriber(
         transcriber_config: TranscriberConfigType,
     ):
         self.input_queue: asyncio.Queue[bytes] = asyncio.Queue()
-        self.output_queue: asyncio.Queue = asyncio.Queue()
-        AsyncWorker[bytes].__init__(self, self.input_queue, self.output_queue)
-        AbstractTranscriber[TranscriberConfigType].__init__(self, transcriber_config)
+        self.output_queue: asyncio.Queue[Transcription] = asyncio.Queue()
+        AsyncWorker.__init__(self, self.input_queue, self.output_queue)
+        AbstractTranscriber.__init__(self, transcriber_config)
 
     async def _run_loop(self):
         raise NotImplementedError
