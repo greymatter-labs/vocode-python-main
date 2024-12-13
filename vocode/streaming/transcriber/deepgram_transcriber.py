@@ -40,12 +40,28 @@ model, utils = torch.hub.load(repo_or_dir="snakers4/silero-vad", model="silero_v
 
 class AudioEncodingModel(BaseModel):
     name: str
-    chunk: int
+    vad_chunk_sz: int
     dtype: DTypeLike
     vad_sampling_rate: int
 
     class Config:
         arbitrary_types_allowed = True
+
+
+ENCODING_MODEL = {
+    AudioEncoding.LINEAR16: AudioEncodingModel(
+        name="linear16",
+        dtype=np.int16,
+        vad_chunk_sz=1024,  # increase min size because I hit he error where vad chunk size was too small
+        vad_sampling_rate=16_000,  # recomended by google speech to text
+    ),
+    AudioEncoding.MULAW: AudioEncodingModel(
+        name="mulaw",
+        dtype=np.int8,
+        vad_chunk_sz=256,
+        vad_sampling_rate=8_000,
+    ),
+}
 
 
 class VADWorker(AsyncWorker):
@@ -58,17 +74,22 @@ class VADWorker(AsyncWorker):
         logger: Optional[logging.Logger] = None,
     ):
         super().__init__(input_queue, output_queue)
-        self.vad_buffer = b""
+        self.vad_buffer: bytes = b""
         # # Constants for Silero VAD
         self.WINDOWS = 3
         self.transcriber = transcriber
-        self.SAMPLE_RATE = self.transcriber.encoding.vad_sampling_rate
+        self.encoding = ENCODING_MODEL[
+            self.transcriber.transcriber_config.audio_encoding
+        ]
+        # self.vad_sampling_rate = self.encoding.vad_sampling_rate
         # Ensure minimum chunk size for Silero VAD (sr/chunk_size should be <= 31.25)
         # min_chunk_size = math.ceil(self.SAMPLE_RATE / 31.25)
         # self.CHUNK = max(self.transcriber.encoding.chunk, min_chunk_size)
 
-        self.CHUNK = self.transcriber.encoding.chunk
-        self.WINDOW_SIZE = self.WINDOWS * self.SAMPLE_RATE // self.CHUNK
+        # self.CHUNK = self.transcriber.encoding.chunk
+        self.WINDOW_SIZE = (
+            self.WINDOWS * self.encoding.vad_sampling_rate // self.encoding.vad_chunk_sz
+        )
         self.voiced_confidences = deque([0.0] * self.WINDOWS, maxlen=self.WINDOWS)
 
         self.PREFIX_PADDING_MS = 150  # Minimum speech duration to trigger detection
@@ -78,13 +99,38 @@ class VADWorker(AsyncWorker):
         self.last_speech_time = 0
         self.logger = logger or logging.getLogger(__name__)
 
+        assert (
+            self.transcriber.transcriber_config.sampling_rate
+            % self.encoding.vad_sampling_rate
+            == 0
+        ), f"VAD downsampling need to be a multiple of {self.encoding.vad_sampling_rate} but got {self.transcriber.transcriber_config.sampling_rate}"
+        assert (
+            self.transcriber.transcriber_config.sampling_rate
+            >= self.encoding.vad_sampling_rate
+        ), f"VAD sampling rate must be less than or equal to the input sampling rate {self.transcriber.transcriber_config.sampling_rate} <= {self.encoding.vad_sampling_rate}"
+
+    def is_volume_low(self, chunk: bytes) -> bool:
+        try:
+            # Additional check for low volume
+            if (
+                self.transcriber.transcriber_config.audio_encoding
+                == AudioEncoding.LINEAR16
+            ):
+                volume = np.abs(np.frombuffer(chunk, self.encoding.dtype)).mean()
+            else:
+                # TODO: FIX ENCODING
+                decoded = audioop.ulaw2lin(chunk, 2)
+                volume = np.abs(np.frombuffer(decoded, self.encoding.dtype)).mean()
+        except Exception as e:
+            self.logger.warning(f"Error calculating volume: {e}")
+            return True
+        return volume < self.transcriber.VOLUME_THRESHOLD
+
     def int2float(self, sound: np.ndarray) -> np.ndarray:
         abs_max: np.ndarray = np.abs(sound).max()
         sound = sound.astype("float32")
         if abs_max > 0:
-            sound *= (
-                1 / 32768 if self.transcriber.encoding.dtype == np.int16 else 1 / 128
-            )
+            sound *= 1 / 32768 if self.encoding.dtype == np.int16 else 1 / 128
         return sound.squeeze()
 
     async def _run_loop(self):
@@ -111,15 +157,16 @@ class VADWorker(AsyncWorker):
                             f"VAD buffer stats: received={cursor_index}, chunk_size={len(chunk)}, buffer_size={len(self.vad_buffer)}, delta={delta/1e9:.3f}s"
                         )
 
-                    if len(self.vad_buffer) >= self.CHUNK:
-                        audio_chunk = self.vad_buffer[-self.CHUNK :]
+                    if len(self.vad_buffer) >= self.encoding.vad_chunk_sz:
+                        audio_chunk = self.vad_buffer[-self.encoding.vad_chunk_sz :]
                         self.vad_buffer = b""
 
                         audio_float32 = self.int2float(
-                            np.frombuffer(audio_chunk, self.transcriber.encoding.dtype)
+                            np.frombuffer(audio_chunk, self.encoding.dtype)
                         )
                         new_confidence = model(
-                            torch.from_numpy(audio_float32), self.SAMPLE_RATE
+                            torch.from_numpy(audio_float32),
+                            self.encoding.vad_sampling_rate,
                         ).item()
                 else:
                     # Ensure the deque only keeps the last 3 confidences
@@ -177,10 +224,30 @@ class VADWorker(AsyncWorker):
             except Exception as e:
                 self.logger.warning(f"VAD error: {str(e)}", exc_info=True)
 
-    def send_audio(self, chunk: dict):
+    def send_audio(self, chunk: bytes):
         # self.logger.debug(f"vad send_audio {self.transcriber.is_muted=} {chunk=}")
+        if (
+            self.transcriber.transcriber_config.audio_encoding == AudioEncoding.LINEAR16
+            and self.transcriber.transcriber_config.sampling_rate
+            > self.encoding.vad_sampling_rate
+        ):
+            chunk, _ = audioop.ratecv(
+                chunk,
+                2,  # width=2 for LINEAR16
+                1,  # channels
+                self.transcriber.transcriber_config.sampling_rate,
+                self.encoding.vad_sampling_rate,
+                None,
+            )
+
+        chunk_data = {
+            "chunk": chunk,  # vad library max sampling rate is 16k, so need to downsample
+            "timestamp": time_ns(),
+            "is_silence": self.is_volume_low(chunk),
+            "ignore": False,
+        }
         if not self.transcriber.is_muted:
-            self.consume_nonblocking(chunk)
+            self.consume_nonblocking(chunk_data)
         else:
             self.consume_nonblocking(
                 {
@@ -194,20 +261,6 @@ class VADWorker(AsyncWorker):
 
 class DeepgramTranscriber(BaseAsyncTranscriber[DeepgramTranscriberConfig]):
     debug_log = []
-    ENCODING_MAPPING = {
-        AudioEncoding.LINEAR16: AudioEncodingModel(
-            name="linear16",
-            dtype=np.int16,
-            chunk=1024,  # increase min size because I hit he error where vad chunk size was too small
-            vad_sampling_rate=16_000,  # recomended by google speech to text
-        ),
-        AudioEncoding.MULAW: AudioEncodingModel(
-            name="mulaw",
-            dtype=np.int8,
-            chunk=256,
-            vad_sampling_rate=8_000,
-        ),
-    }
 
     def __init__(
         self,
@@ -229,22 +282,11 @@ class DeepgramTranscriber(BaseAsyncTranscriber[DeepgramTranscriberConfig]):
         self.VOLUME_THRESHOLD = volume_threshold
         self.vad_input_queue = asyncio.Queue[str]()
         self.vad_output_queue = asyncio.Queue[Transcription]()
-        self.encoding = self.ENCODING_MAPPING[self.transcriber_config.audio_encoding]
+        self.encoding = self.transcriber_config.audio_encoding
         self.vad_worker = VADWorker(
             self.vad_input_queue, self.vad_output_queue, self, logger
         )
         self.vad_worker_task = None
-        self.vad_sampling_rate = self.encoding.vad_sampling_rate
-        self.sampling_rate = self.transcriber_config.sampling_rate
-        # TODO if it's important, we can add more adaptive downsampling, but for now
-        # we are sticking with 16k for VAD linear16 and multiples of 16k
-        # for mulaw we do not downsample
-        assert (
-            self.sampling_rate % self.vad_sampling_rate == 0
-        ), f"VAD downsampling need to be a multiple of {self.vad_sampling_rate} but got {self.sampling_rate}"
-        assert (
-            self.sampling_rate >= self.vad_sampling_rate
-        ), f"VAD sampling rate must be less than or equal to the input sampling rate {self.vad_sampling_rate} <= {self.sampling_rate}"
         self.volume = 0
         self.gt_threshold = 0
         self.buf_len = 0
@@ -257,45 +299,9 @@ class DeepgramTranscriber(BaseAsyncTranscriber[DeepgramTranscriberConfig]):
             restarts += 1
             self.logger.debug(f"Deepgram connection restarting, attempt {restarts}")
 
-    def is_volume_low(self, chunk: bytes) -> bool:
-        try:
-            # Additional check for low volume
-            if self.transcriber_config.audio_encoding == AudioEncoding.LINEAR16:
-                volume = np.abs(np.frombuffer(chunk, self.encoding.dtype)).mean()
-            else:
-                # TODO: FIX ENCODING
-                decoded = audioop.ulaw2lin(chunk, 2)
-                volume = np.abs(np.frombuffer(decoded, self.encoding.dtype)).mean()
-        except Exception as e:
-            self.logger.warning(f"Error calculating volume: {e}")
-            return True
-        return volume < self.VOLUME_THRESHOLD
-
     def send_audio(self, chunk: bytes):
-        vad_chunk = chunk
-        if self.transcriber_config.audio_encoding == AudioEncoding.LINEAR16:
-            # Downsample from sampling rate to 16k for VAD, since the browser support 44k-48k for common devices
-            if self.transcriber_config.sampling_rate > self.vad_sampling_rate:
-                vad_chunk, _ = audioop.ratecv(
-                    chunk,
-                    2,  # width=2 for LINEAR16 i.e. bytes per sample
-                    1,  # channels
-                    self.transcriber_config.sampling_rate,
-                    self.vad_sampling_rate,  # target VAD sample rate
-                    None,
-                )
-        if self.transcriber_config.audio_encoding == AudioEncoding.LINEAR16:
-            chunk = np.frombuffer(chunk, self.encoding.dtype).tobytes()
 
-        is_silence = self.is_volume_low(chunk)
-        self.vad_worker.send_audio(
-            {
-                "chunk": vad_chunk,  # vad library max sampling rate is 16k, so need to downsample
-                "timestamp": time_ns(),
-                "is_silence": is_silence,
-                "ignore": False,
-            }
-        )
+        self.vad_worker.send_audio(chunk)
 
         super().send_audio(chunk)
 
@@ -370,7 +376,7 @@ class DeepgramTranscriber(BaseAsyncTranscriber[DeepgramTranscriberConfig]):
             )
         raise Exception("Unsupported endpointing config")
 
-    def calculate_time_silent(self, data: dict):
+    def calculate_time_silent(self, data: dict) -> float:
         end = data["start"] + data["duration"]
         words = data["channel"]["alternatives"][0]["words"]
         return end - words[-1]["end"] if words else data["duration"]
@@ -388,7 +394,10 @@ class DeepgramTranscriber(BaseAsyncTranscriber[DeepgramTranscriberConfig]):
         while not self._ended:
             try:
                 data = await asyncio.wait_for(self.input_queue.get(), 20)
-                buff = np.frombuffer(data, dtype=self.encoding.dtype)
+                buff = np.frombuffer(
+                    data,
+                    dtype=ENCODING_MODEL[self.transcriber_config.audio_encoding].dtype,
+                )
                 volume = np.abs(buff).mean()
                 self.volume = volume
                 self.debug_log.append(
