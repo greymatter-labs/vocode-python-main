@@ -6,7 +6,7 @@ from pprint import PrettyPrinter
 import time
 from collections import deque
 from time import time_ns
-from typing import Optional
+from typing import Optional, TypeVar, TypedDict
 from urllib.parse import urlencode
 
 import numpy as np
@@ -18,6 +18,7 @@ from vocode.streaming.models.transcriber import (
     DeepgramTranscriberConfig,
     PunctuationEndpointingConfig,
     TimeEndpointingConfig,
+    TranscriberConfig,
 )
 from vocode.streaming.transcriber.base_transcriber import (
     BaseAsyncTranscriber,
@@ -64,16 +65,29 @@ ENCODING_MAPPING = {
 }
 
 
-class VADWorker(AsyncWorker):
+ConfigType = TypeVar("ConfigType", contravariant=True, bound=TranscriberConfig)
+
+
+class VadChunk(TypedDict):
+    chunk: bytes
+    timestamp: float
+    ignore: bool
+    is_silence: bool
+
+
+class VADWorker(AsyncWorker[VadChunk]):
 
     def __init__(
         self,
-        input_queue: asyncio.Queue,
+        input_queue: asyncio.Queue[VadChunk],
         output_queue: asyncio.Queue,
-        transcriber: "DeepgramTranscriber",
+        transcriber: BaseAsyncTranscriber[ConfigType],
         logger: Optional[logging.Logger] = None,
+        vad_threshold: float = 0.35,
+        volume_threshold: int = 700,
     ):
         super().__init__(input_queue, output_queue)
+        self.output_queue: asyncio.Queue[Transcription]
         self.vad_buffer: bytes = b""
         # # Constants for Silero VAD
         self.WINDOWS = 3
@@ -83,6 +97,8 @@ class VADWorker(AsyncWorker):
             self.transcriber.transcriber_config.audio_encoding
         ]
 
+        self.VAD_THRESHOLD = vad_threshold
+        self.VOLUME_THRESHOLD = volume_threshold
         # Ensure minimum chunk size for Silero VAD (sr/chunk_size should be <= 31.25)
         # min_chunk_size = math.ceil(self.transcriber.encoding.vad_sampling_rate / 31.25)
         # self.encoding.vad_chunk_size = max(self.transcriber.encoding.chunk, min_chunk_size)
@@ -117,9 +133,7 @@ class VADWorker(AsyncWorker):
         abs_max: np.ndarray = np.abs(sound).max()
         sound = sound.astype("float32")
         if abs_max > 0:
-            sound *= (
-                1 / 32768 if self.transcriber.encoding.dtype == np.int16 else 1 / 128
-            )
+            sound *= 1 / 32768 if self.encoding.dtype == np.int16 else 1 / 128
         return sound.squeeze()
 
     async def _run_loop(self):
@@ -172,7 +186,7 @@ class VADWorker(AsyncWorker):
 
                 current_time = time.time()
 
-                if rolling_avg > self.transcriber.VAD_THRESHOLD:
+                if rolling_avg > self.VAD_THRESHOLD:
                     # if self.speech_start_time != 0:
                     # self.logger.debug(
                     #     f"VAD: current speech time: {current_time - self.speech_start_time}"
@@ -228,7 +242,7 @@ class VADWorker(AsyncWorker):
         except Exception as e:
             self.logger.warning(f"Error calculating volume: {e}")
             return True
-        return volume < self.transcriber.VOLUME_THRESHOLD
+        return volume < self.VOLUME_THRESHOLD
 
     def send_audio(self, chunk: bytes):
         # self.logger.debug(f"vad send_audio {self.transcriber.is_muted=} {chunk=}")
@@ -254,7 +268,7 @@ class VADWorker(AsyncWorker):
                 self.transcriber.transcriber_config.audio_encoding
                 == AudioEncoding.LINEAR16
             ):
-                chunk = np.frombuffer(chunk, self.transcriber.encoding.dtype).tobytes()
+                chunk = np.frombuffer(chunk, self.encoding.dtype).tobytes()
 
             if not self.transcriber.is_muted:
                 self.consume_nonblocking(
@@ -297,13 +311,16 @@ class DeepgramTranscriber(BaseAsyncTranscriber[DeepgramTranscriberConfig]):
         self.logger = logger or logging.getLogger(__name__)
 
         self.audio_cursor = 0.0
-        self.VAD_THRESHOLD = vad_threshold
-        self.VOLUME_THRESHOLD = volume_threshold
-        self.vad_input_queue = asyncio.Queue[str]()
+        self.vad_input_queue = asyncio.Queue[VadChunk]()
         self.vad_output_queue = asyncio.Queue[Transcription]()
         self.encoding = ENCODING_MAPPING[self.transcriber_config.audio_encoding]
         self.vad_worker = VADWorker(
-            self.vad_input_queue, self.vad_output_queue, self, logger
+            self.vad_input_queue,
+            self.vad_output_queue,
+            self,
+            logger,
+            vad_threshold,
+            volume_threshold,
         )
         self.vad_worker_task = None
         self.volume = 0
@@ -420,8 +437,10 @@ class DeepgramTranscriber(BaseAsyncTranscriber[DeepgramTranscriberConfig]):
                 self.debug_log.append(
                     dict(
                         volume=volume,
-                        gt_threshold=np.sum(buff > self.VOLUME_THRESHOLD),
-                        gt_threshold_ratio=np.sum(buff > self.VOLUME_THRESHOLD)
+                        gt_threshold=np.sum(buff > self.vad_worker.VOLUME_THRESHOLD),
+                        gt_threshold_ratio=np.sum(
+                            buff > self.vad_worker.VOLUME_THRESHOLD
+                        )
                         / len(buff),
                         # extended debug info but may cause issues
                         # amp_std=np.std(buff),
