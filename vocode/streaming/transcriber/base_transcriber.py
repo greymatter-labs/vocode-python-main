@@ -55,20 +55,24 @@ class AbstractTranscriber(Generic[TranscriberConfigType]):
             return audioop.lin2ulaw(linear_audio, sample_width)
 
 
-class BaseAsyncTranscriber(AbstractTranscriber[TranscriberConfigType], AsyncWorker):
+class BaseAsyncTranscriber(
+    AbstractTranscriber[TranscriberConfigType], AsyncWorker[bytes, Transcription]
+):
     def __init__(
         self,
         transcriber_config: TranscriberConfigType,
     ):
         self.input_queue: asyncio.Queue[bytes] = asyncio.Queue()
         self.output_queue: asyncio.Queue[Transcription] = asyncio.Queue()
-        AsyncWorker.__init__(self, self.input_queue, self.output_queue)
-        AbstractTranscriber.__init__(self, transcriber_config)
+        AsyncWorker[bytes, Transcription].__init__(
+            self, self.input_queue, self.output_queue
+        )
+        AbstractTranscriber[TranscriberConfigType].__init__(self, transcriber_config)
 
     async def _run_loop(self):
         raise NotImplementedError
 
-    def send_audio(self, chunk):
+    def send_audio(self, chunk: bytes):
         if not self.is_muted:
             self.consume_nonblocking(chunk)
         else:
