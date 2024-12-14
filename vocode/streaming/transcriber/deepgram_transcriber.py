@@ -34,12 +34,9 @@ model, utils = torch.hub.load(repo_or_dir="snakers4/silero-vad", model="silero_v
 (get_speech_timestamps, save_audio, read_audio, VADIterator, collect_chunks) = utils
 
 # Constants for Silero VAD
-USE_INT16 = False
-SAMPLE_RATE = 16000 if USE_INT16 else 8000
-DTYPE = np.int16 if USE_INT16 else np.int8
-CHUNK = 512 if USE_INT16 else 256
+LINEAR16_VAD_SAMPLE_RATE = 16000
 WINDOWS = 3
-WINDOW_SIZE = WINDOWS * SAMPLE_RATE // CHUNK
+# WINDOW_SIZE = WINDOWS * SAMPLE_RATE // CHUNK
 PREFIX_PADDING_MS = 150  # Minimum speech duration to trigger detection
 GRACE_PERIOD_MS = 300  # Grace period before resetting speech detection
 
@@ -61,11 +58,15 @@ class VADWorker(AsyncWorker):
         self.logger = logger or logging.getLogger(__name__)
         self.transcriber = transcriber
 
-    def int2float(self, sound):
-        abs_max = np.abs(sound).max()
+    def int2float(self, sound) -> np.ndarray:
+        abs_max: np.ndarray = np.abs(sound).max()
         sound = sound.astype("float32")
         if abs_max > 0:
-            sound *= 1 / 32768 if USE_INT16 else 1 / 128
+            use_int16 = (
+                self.transcriber.transcriber_config.audio_encoding
+                == AudioEncoding.LINEAR16
+            )
+            sound *= 1 / 32768 if use_int16 else 1 / 128
         return sound.squeeze()
 
     async def _run_loop(self):
@@ -91,16 +92,29 @@ class VADWorker(AsyncWorker):
                         self.logger.debug(
                             f"VAD buffer stats: received={cursor_index}, chunk_size={len(chunk)}, buffer_size={len(self.vad_buffer)}, delta={delta/1e9:.3f}s"
                         )
-
-                    if len(self.vad_buffer) >= CHUNK:
-                        audio_chunk = self.vad_buffer[-CHUNK:]
+                    use_linear16 = self.transcriber.transcriber_config.audio_encoding == AudioEncoding.LINEAR16
+                    chunk_size = (
+                        512
+                        if  use_linear16
+                        else 256
+                    )
+                    if len(self.vad_buffer) >= chunk_size:
+                        audio_chunk = self.vad_buffer[-chunk_size:]
                         self.vad_buffer = b""
 
                         audio_float32 = self.int2float(
-                            np.frombuffer(audio_chunk, DTYPE)
+                            np.frombuffer(
+                                audio_chunk,
+                                (
+                                    np.int16
+                                    if use_linear16
+                                    else np.int8
+                                ),
+                            )
                         )
                         new_confidence = model(
-                            torch.from_numpy(audio_float32), SAMPLE_RATE
+                            torch.from_numpy(audio_float32),
+                            LINEAR16_VAD_SAMPLE_RATE if use_linear16 else 8000,
                         ).item()
                 else:
                     # Ensure the deque only keeps the last 3 confidences
@@ -221,18 +235,17 @@ class DeepgramTranscriber(BaseAsyncTranscriber[DeepgramTranscriberConfig]):
         if (
             self.transcriber_config.downsampling
             and self.transcriber_config.audio_encoding == AudioEncoding.LINEAR16
+            and self.transcriber_config.sampling_rate
+            > LINEAR16_VAD_SAMPLE_RATE
         ):
             chunk, _ = audioop.ratecv(
                 chunk,
-                2,
-                1,
-                self.transcriber_config.sampling_rate
-                * self.transcriber_config.downsampling,
-                self.transcriber_config.sampling_rate,
+                2,  # bytes per sample
+                1,  # channels
+                self.transcriber_config.sampling_rate,  # input sampling rate
+                LINEAR16_VAD_SAMPLE_RATE,
                 None,
             )
-        if self.transcriber_config.audio_encoding == AudioEncoding.LINEAR16:
-            chunk = np.frombuffer(chunk, dtype=np.int16).astype(DTYPE).tobytes()
 
         is_silence = self.is_volume_low(chunk)
 
