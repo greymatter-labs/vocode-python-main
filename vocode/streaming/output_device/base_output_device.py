@@ -1,7 +1,8 @@
+from abc import ABC
 from vocode.streaming.models.audio_encoding import AudioEncoding
 
 
-class BaseOutputDevice:
+class BaseOutputDevice(ABC):
     def __init__(self, sampling_rate: int, audio_encoding: AudioEncoding):
         self.sampling_rate = sampling_rate
         self.audio_encoding = audio_encoding
