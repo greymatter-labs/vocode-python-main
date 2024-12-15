@@ -92,12 +92,11 @@ class VADWorker(AsyncWorker):
                         self.logger.debug(
                             f"VAD buffer stats: received={cursor_index}, chunk_size={len(chunk)}, buffer_size={len(self.vad_buffer)}, delta={delta/1e9:.3f}s"
                         )
-                    use_linear16 = self.transcriber.transcriber_config.audio_encoding == AudioEncoding.LINEAR16
-                    chunk_size = (
-                        1024
-                        if  use_linear16
-                        else 256
+                    use_linear16 = (
+                        self.transcriber.transcriber_config.audio_encoding
+                        == AudioEncoding.LINEAR16
                     )
+                    chunk_size = 1024 if use_linear16 else 256
                     if len(self.vad_buffer) >= chunk_size:
                         audio_chunk = self.vad_buffer[-chunk_size:]
                         self.vad_buffer = b""
@@ -105,11 +104,7 @@ class VADWorker(AsyncWorker):
                         audio_float32 = self.int2float(
                             np.frombuffer(
                                 audio_chunk,
-                                (
-                                    np.int16
-                                    if use_linear16
-                                    else np.int8
-                                ),
+                                (np.int16 if use_linear16 else np.int8),
                             )
                         )
                         new_confidence = model(
@@ -235,8 +230,7 @@ class DeepgramTranscriber(BaseAsyncTranscriber[DeepgramTranscriberConfig]):
         if (
             self.transcriber_config.downsampling
             and self.transcriber_config.audio_encoding == AudioEncoding.LINEAR16
-            and self.transcriber_config.sampling_rate
-            > LINEAR16_VAD_SAMPLE_RATE
+            and self.transcriber_config.sampling_rate > LINEAR16_VAD_SAMPLE_RATE
         ):
             chunk, _ = audioop.ratecv(
                 chunk,
