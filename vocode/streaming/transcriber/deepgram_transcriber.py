@@ -94,7 +94,7 @@ class VADWorker(AsyncWorker):
                         )
                     use_linear16 = self.transcriber.transcriber_config.audio_encoding == AudioEncoding.LINEAR16
                     chunk_size = (
-                        512
+                        1024
                         if  use_linear16
                         else 256
                     )
