@@ -932,12 +932,15 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
         if start_of_block:
             self.current_block_name = start_of_block
 
+        memory_values_snapshot = {
+            key: value.copy() for key, value in self.memories.items()
+        }
         self.json_transcript.entries.append(
             StateAgentTranscriptHandleState(
                 state_id=state["id"],
                 generated_label=state.get("generated_label", state["id"]),
                 memory_dependencies=state.get("memory_dependencies"),
-                memory_values=self.memories.copy(),
+                memory_values=memory_values_snapshot,
                 trigger=trigger,
             )
         )
