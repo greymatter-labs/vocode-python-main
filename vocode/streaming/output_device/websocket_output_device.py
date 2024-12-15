@@ -62,4 +62,4 @@ class WebsocketOutputDevice(BaseOutputDevice):
 
     async def clear(self):
         while not self.queue.empty():
-            self.queue.get_nowait()
+            await self.queue.get()
