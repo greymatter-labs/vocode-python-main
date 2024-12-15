@@ -45,16 +45,9 @@ class WebsocketOutputDevice(BaseOutputDevice):
 
     def consume_nonblocking(self, chunk: bytes):
         if self.active:
-            if self.into_pcm:
-                # I need to test this in my next pr, since I need to fix up the ws to use StateAgent first
-                if self.audio_encoding == AudioEncoding.LINEAR16:
-                    chunk = convert_linear16_to_pcm(chunk)
-                elif self.audio_encoding == AudioEncoding.MULAW:
-                    raise ValueError("Mu-law encoding is not supported yet")
-                else:
-                    raise ValueError(
-                        f"Unsupported audio encoding: {self.audio_encoding}"
-                    )
+            assert (
+                self.audio_encoding == AudioEncoding.LINEAR16
+            ), "Only Linear16 is supported for now"
             audio_message = AudioMessage.from_bytes(chunk)
 
             self.queue.put_nowait(audio_message.json())
