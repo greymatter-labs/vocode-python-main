@@ -97,6 +97,7 @@ class VADWorker(AsyncWorker):
                         == AudioEncoding.LINEAR16
                     )
                     chunk_size = 1024 if use_linear16 else 256
+
                     if len(self.vad_buffer) >= chunk_size:
                         audio_chunk = self.vad_buffer[-chunk_size:]
                         self.vad_buffer = b""
