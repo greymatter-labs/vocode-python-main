@@ -31,6 +31,8 @@ TranscriberConfigType = TypeVar("TranscriberConfigType", bound=TranscriberConfig
 
 
 class AbstractTranscriber(Generic[TranscriberConfigType]):
+    transcriber_config: TranscriberConfig
+
     def __init__(self, transcriber_config: TranscriberConfigType):
         self.transcriber_config = transcriber_config
         self.is_muted = False

@@ -1344,7 +1344,12 @@ class StreamingConversation(Generic[OutputDeviceType]):
         self.transcriptions_worker.block_inputs = False
         self.agent.clear_task_queue()
         self.agent_responses_worker.clear_task_queue()
-        await self.output_device.clear()
+        try:
+            await self.output_device.clear()
+        except:
+            self.logger.debug(
+                f"failed to clear output device. output_device={self.output_device}"
+            )
         if not self.agent.get_agent_config().allow_interruptions:
             self.synthesis_results_worker.clear_task_queue()
         while True:
