@@ -43,14 +43,14 @@ class WebsocketOutputDevice(BaseOutputDevice):
             message = await self.queue.get()
             await self.ws.send_text(message)
 
-    def consume_nonblocking(self, chunk: bytes):
+    async def consume_nonblocking(self, chunk: bytes):
         if self.active:
             assert (
                 self.audio_encoding == AudioEncoding.LINEAR16
             ), "Only Linear16 is supported for now"
             audio_message = AudioMessage.from_bytes(chunk)
 
-            self.queue.put_nowait(audio_message.json())
+            await self.queue.put(audio_message.json())
 
     def consume_transcript(self, event: TranscriptEvent):
         if self.active:
