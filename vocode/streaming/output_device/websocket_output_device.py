@@ -67,6 +67,6 @@ class WebsocketOutputDevice(BaseOutputDevice):
     def terminate(self):
         self.process_task.cancel()
 
-    def clear(self):
+    async def clear(self):
         while not self.queue.empty():
             self.queue.get_nowait()
