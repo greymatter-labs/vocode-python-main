@@ -5,7 +5,7 @@ from fastapi import WebSocket
 import numpy as np
 from vocode.streaming.models.audio_encoding import AudioEncoding
 from vocode.streaming.output_device.base_output_device import BaseOutputDevice
-from vocode.streaming.models.websocket import AudioMessage
+from vocode.streaming.models.websocket import AudioMessage, WebSocketMessage
 from vocode.streaming.models.websocket import TranscriptMessage
 from vocode.streaming.models.transcript import TranscriptEvent
 
@@ -28,7 +28,7 @@ class WebsocketOutputDevice(BaseOutputDevice):
         super().__init__(sampling_rate, audio_encoding)
         self.ws = ws
         self.active = False
-        self.queue: asyncio.Queue[str] = asyncio.Queue()
+        self.queue: asyncio.Queue[WebSocketMessage] = asyncio.Queue()
         self.into_pcm = into_pcm
 
     def start(self):
@@ -41,7 +41,7 @@ class WebsocketOutputDevice(BaseOutputDevice):
     async def process(self):
         while self.active:
             message = await self.queue.get()
-            await self.ws.send_text(message)
+            await self.ws.send_text(message.json())
 
     async def consume_nonblocking(self, chunk: bytes):
         if self.active:
@@ -50,12 +50,13 @@ class WebsocketOutputDevice(BaseOutputDevice):
             ), "Only Linear16 is supported for now"
             audio_message = AudioMessage.from_bytes(chunk)
 
-            await self.queue.put(audio_message.json())
+            if len(audio_message.data) > 0:
+                self.queue.put_nowait(audio_message)
 
     def consume_transcript(self, event: TranscriptEvent):
         if self.active:
             transcript_message = TranscriptMessage.from_event(event)
-            self.queue.put_nowait(transcript_message.json())
+            self.queue.put_nowait(transcript_message)
 
     def terminate(self):
         self.process_task.cancel()
