@@ -842,7 +842,7 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
                 f"Bot's last message: '{last_bot_message}'\n"
                 f"User's response: '{last_user_message}'\n\n"
                 f"Respond with exactly one word:\n"
-                f"'transfer' - if the user asks to speak with someone else like a human, representative or operator.\n"
+                f"'transfer' - ONLY if the user completely ignores the question and instead specifically requests to speak with someone else like a human, representative or operator.\n"
                 f"'unclear' - if the user's intent is at all unclear or ambiguous.\n"
                 f"'valid_answer' - if the user directly answered the question that was asked with a relevant response.\n"
                 f"'invalid_answer' - if the user provided an answer but it wasn't a valid or relevant response to the specific question.\n"
@@ -872,8 +872,8 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
             f"Bot's last message: '{last_bot_message}'\n"
             f"User's response: '{last_user_message}'\n\n"
             f"Given the current intent: '{self.current_intent_description}', respond with exactly one word:\n"
-            f"'switch' - if the current intent has nothing to do with the user's message or the user indicates they want to do something else entirely.\n"
-            f"'transfer' - if the user asks to speak with someone else like a human, representative or operator.\n"
+            f"'switch' - ONLY if the user completely ignores the current conversation and specifically asks to do something entirely different (e.g. 'Actually I want to check my account balance' in the middle of scheduling an appointment).\n"
+            f"'transfer' - ONLY if the user completely ignores the current conversation and specifically requests to speak with someone else like a human, representative or operator.\n"
             f"'unclear' - if it's not clear whether the current intent is still applicable.\n"
             f"'valid_answer' - if the user directly answered the question that was asked with a relevant response.\n"
             f"'invalid_answer' - if the user provided an answer but it wasn't a valid or relevant response to the specific question.\n"
@@ -973,7 +973,10 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
         )
 
         for memory_key, memory_value in self.memories.items():
-            if memory_value.get("is_ephemeral") and memory_value.get("owner_state_id") != state["id"]:
+            if (
+                memory_value.get("is_ephemeral")
+                and memory_value.get("owner_state_id") != state["id"]
+            ):
                 memory_value["is_stale"] = True
 
         for memory_dep in state.get("memory_dependencies", []):
