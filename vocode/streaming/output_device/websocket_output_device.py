@@ -5,9 +5,11 @@ from fastapi import WebSocket
 import numpy as np
 from vocode.streaming.models.audio_encoding import AudioEncoding
 from vocode.streaming.output_device.base_output_device import BaseOutputDevice
-from vocode.streaming.models.websocket import AudioMessage
-from vocode.streaming.models.websocket import TranscriptMessage
-from vocode.streaming.models.transcript import TranscriptEvent
+from vocode.streaming.models.websocket import AudioMessage, TranscriptMessage
+from vocode.streaming.models.transcript import (
+    StateAgentTranscriptEvent,
+    TranscriptEvent,
+)
 
 
 def convert_linear16_to_pcm(linear16_audio: bytes) -> bytes:
@@ -52,9 +54,12 @@ class WebsocketOutputDevice(BaseOutputDevice):
 
             await self.queue.put(audio_message.json())
 
-    def consume_transcript(self, event: TranscriptEvent):
+    def consume_transcript(self, event: TranscriptEvent | StateAgentTranscriptEvent):
         if self.active:
-            transcript_message = TranscriptMessage.from_event(event)
+            if isinstance(event, StateAgentTranscriptEvent):
+                transcript_message = event.transcript
+            elif isinstance(event, TranscriptEvent):
+                transcript_message = TranscriptMessage.from_event(event)
             self.queue.put_nowait(transcript_message.json())
 
     def terminate(self):

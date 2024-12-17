@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import math
 import queue
 import random
 import threading
@@ -11,14 +10,9 @@ import time
 import typing
 from copy import deepcopy
 from enum import Enum
-from typing import Any, Awaitable, Callable, Generic, Optional, Tuple, TypeVar, cast
+from typing import Any, Awaitable, Callable, Generic, Optional, Tuple, TypeVar
 
-import aiohttp
 import httpx
-import numpy
-import requests
-from openai import AsyncOpenAI, OpenAI
-from vocode import getenv
 from vocode.streaming.action.worker import ActionsWorker
 from vocode.streaming.agent.base_agent import (
     AgentInput,
@@ -27,7 +21,6 @@ from vocode.streaming.agent.base_agent import (
     AgentResponseGenerationComplete,
     AgentResponseMessage,
     AgentResponseStop,
-    AgentResponseType,
     BaseAgent,
     TranscriptionAgentInput,
 )
@@ -35,25 +28,17 @@ from vocode.streaming.agent.bot_sentiment_analyser import BotSentimentAnalyser
 from vocode.streaming.agent.command_agent import CommandAgent
 from vocode.streaming.agent.state_agent import StateAgent
 from vocode.streaming.agent.utils import (
-    collate_response_async,
-    format_openai_chat_messages_from_transcript,
-    openai_get_tokens,
     translate_message,
-    vector_db_result_to_openai_chat_message,
 )
 from vocode.streaming.constants import (
-    ALLOWED_IDLE_TIME,
-    INCOMPLETE_SCALING_FACTOR,
-    MAX_SILENCE_DURATION,
     PER_CHUNK_ALLOWANCE_SECONDS,
     TEXT_TO_SPEECH_CHUNK_SIZE_SECONDS,
 )
-from vocode.streaming.models.actions import ActionInput
-from vocode.streaming.models.agent import CommandAgentConfig, FillerAudioConfig
+from vocode.streaming.models.agent import FillerAudioConfig
 from vocode.streaming.models.events import Sender
 from vocode.streaming.models.message import BaseMessage
 from vocode.streaming.models.synthesizer import SentimentConfig
-from vocode.streaming.models.transcriber import EndpointingConfig, TranscriberConfig
+from vocode.streaming.models.transcriber import TranscriberConfig
 from vocode.streaming.models.transcript import (
     Message,
     Transcript,
@@ -69,11 +54,9 @@ from vocode.streaming.transcriber.base_transcriber import BaseTranscriber, Trans
 from vocode.streaming.utils import create_conversation_id, get_chunk_size_per_second
 from vocode.streaming.utils.conversation_logger_adapter import wrap_logger
 from vocode.streaming.utils.events_manager import EventsManager
-from vocode.streaming.utils.goodbye_model import GoodbyeModel
 from vocode.streaming.utils.setup_tracer import (
     end_span,
     setup_tracer,
-    span_event,
     start_span_in_ctx,
 )
 from vocode.streaming.utils.state_manager import ConversationStateManager
@@ -83,11 +66,9 @@ from vocode.streaming.utils.worker import (
     InterruptibleAgentResponseWorker,
     InterruptibleEvent,
     InterruptibleEventFactory,
-    InterruptibleWorker,
 )
 
 from telephony_app.models.call_type import CallType
-from telephony_app.utils.call_information_handler import update_call_transcripts
 
 tracer = setup_tracer()
 
@@ -382,7 +363,7 @@ class StreamingConversation(Generic[OutputDeviceType]):
             if transcription.message.strip() == "vad":
                 self.vad_detected = True
                 stashed_buffer = deepcopy(self.buffer)
-                self.conversation.logger.info(f"Broadcasting interrupt from VAD")
+                self.conversation.logger.info("Broadcasting interrupt from VAD")
                 await self.conversation.broadcast_interrupt()
 
                 # Start inaudible fallback task that will be cancelled if real transcription comes in
@@ -402,24 +383,24 @@ class StreamingConversation(Generic[OutputDeviceType]):
                                 stashed_buffer.to_message()
                             ):
                                 self.conversation.logger.info(
-                                    f"Stashed buffer is a prefix of current buffer, using current buffer (vad)"
+                                    "Stashed buffer is a prefix of current buffer, using current buffer (vad)"
                                 )
                             else:
                                 self.conversation.logger.info(
-                                    f"Stashed buffer is not a prefix of current buffer, concatenating (vad)"
+                                    "Stashed buffer is not a prefix of current buffer, concatenating (vad)"
                                 )
                                 self.buffer.update_buffer(stashed_buffer, True)
                     elif len(stashed_buffer) > 0:
                         self.conversation.logger.info(
-                            f"Only stashed buffer has content, using stashed buffer (vad)"
+                            "Only stashed buffer has content, using stashed buffer (vad)"
                         )
                         self.buffer = stashed_buffer
                     elif len(self.buffer) > 0:
                         self.conversation.logger.info(
-                            f"Only current buffer has content, keeping current buffer (vad)"
+                            "Only current buffer has content, keeping current buffer (vad)"
                         )
                     else:
-                        self.conversation.logger.info(f"Both buffers are empty (vad)")
+                        self.conversation.logger.info("Both buffers are empty (vad)")
                         return
 
                 self.conversation.transcriber.VOLUME_THRESHOLD = 700
@@ -514,7 +495,7 @@ class StreamingConversation(Generic[OutputDeviceType]):
             await self.conversation.broadcast_interrupt()
             if stashed_buffer != self.buffer:
                 self.conversation.logger.info(
-                    f"Buffer changed on interrupt, putting stashed buffer back"
+                    "Buffer changed on interrupt, putting stashed buffer back"
                 )
                 self.buffer = stashed_buffer
             self.ready_to_send = BufferStatus.DISCARD
@@ -1060,6 +1041,9 @@ class StreamingConversation(Generic[OutputDeviceType]):
             )
 
         self.events_manager = events_manager or EventsManager()
+        if isinstance(self.agent, StateAgent):
+            self.agent.events_manager = self.events_manager
+
         self.events_task: Optional[asyncio.Task] = None
         self.per_chunk_allowance_seconds = per_chunk_allowance_seconds
         self.transcript = Transcript()
@@ -1513,7 +1497,7 @@ class StreamingConversation(Generic[OutputDeviceType]):
         if (
             not stop_event.is_set()
             and not buffer_cleared
-            and not message_sent in message_options
+            and message_sent not in message_options
         ):
             self.transcriptions_worker.synthesis_done = True
             started_event.set()

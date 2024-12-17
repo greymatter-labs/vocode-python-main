@@ -1,8 +1,7 @@
-import ast
 import asyncio
+import contextlib
 import json
 import logging
-import re
 import time
 from enum import Enum
 from typing import (
@@ -12,22 +11,17 @@ from typing import (
     Dict,
     List,
     Optional,
-    Set,
     Tuple,
     TypedDict,
-    Union,
-    cast,
 )
 
 from openai import AsyncOpenAI
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 from vocode import getenv
 from vocode.streaming.action.phone_call_action import (
     TwilioPhoneCallAction,
-    VonagePhoneCallAction,
 )
 from vocode.streaming.agent.base_agent import (
-    AgentInput,
     AgentResponseGenerationComplete,
     AgentResponseMessage,
     RespondAgent,
@@ -35,8 +29,6 @@ from vocode.streaming.agent.base_agent import (
 from vocode.streaming.agent.utils import translate_message
 from vocode.streaming.models.actions import ActionInput
 from vocode.streaming.models.agent import CommandAgentConfig
-from vocode.streaming.models.call_type import CallType
-from vocode.streaming.models.events import Sender
 from vocode.streaming.models.memory_dependency import MemoryDependency
 from vocode.streaming.models.message import BaseMessage
 from vocode.streaming.models.state_agent_transcript import (
@@ -50,10 +42,9 @@ from vocode.streaming.models.state_agent_transcript import (
     StateAgentTranscriptInvariantViolation,
     StateAgentTranscriptMessage,
 )
-from vocode.streaming.transcriber.base_transcriber import Transcription
+from vocode.streaming.models.transcript import StateAgentTranscriptEvent
 from vocode.streaming.utils import interpolate_memories
-from vocode.streaming.utils.conversation_logger_adapter import wrap_logger
-from vocode.streaming.utils.find_sparse_subarray import find_last_sparse_subarray
+from vocode.streaming.utils.events_manager import EventsManager
 
 
 class StateMachine(BaseModel):
@@ -453,6 +444,8 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
         self,
         agent_config: CommandAgentConfig,
         logger: Optional[logging.Logger] = None,
+        *,
+        events_manager: Optional[EventsManager] = None,
     ):
         super().__init__(
             agent_config=agent_config,
@@ -491,6 +484,7 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
             + self.state_machine["states"]["start"]["instructions"]
         )
         self.label_to_state_id = self.state_machine["labelToStateId"]
+        self.events_manager = events_manager
 
     @classmethod
     def from_state(
@@ -655,6 +649,7 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
         runtime_inputs: Optional[dict] = None,
         speak: bool = True,
     ):
+
         if role == "human":
             while self.chat_history and self.chat_history[-1][0] == "human":
                 self.chat_history.pop()
@@ -702,6 +697,26 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
                 return message
         return "How can I assist you today?"
 
+    # @staticmethod
+    @contextlib.asynccontextmanager
+    async def send_state_transcript_ctx(self):
+        assert self.conversation_id is not None, f"{self.conversation_id=}  must be set"
+        # TODO send when the state changes only, may want to look at proxy, or add hashes
+        try:
+            yield
+        finally:
+            if self.events_manager:
+                self.logger.info("sending transcript event")
+                self.events_manager.publish_event(
+                    StateAgentTranscriptEvent.copy_from_transcript(
+                        self.json_transcript, self.conversation_id
+                    )
+                )
+            else:
+                self.logger.info(
+                    f"no events manager bound on {self.__class__.__name__}"
+                )
+
     async def generate_completion(
         self,
         affirmative_phrase: Optional[str],
@@ -710,72 +725,75 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
         is_interrupt: bool = False,
         stream_output: bool = True,
     ):
-        self.logger.info(
-            f"current intent description: {self.current_intent_description}"
-        )
-        self.logger.info(f"average latency: {self.average_latency}")
-        self.update_history("human", human_input)
-        if self.agent_config.call_type:
+        async with self.send_state_transcript_ctx():
             self.logger.info(
-                f"[CallType.{self.agent_config.call_type.upper()}:{self.agent_config.current_call_id}] Lead:{human_input}"
+                f"current intent description: {self.current_intent_description}"
             )
-
-        transfer_block_name = self.state_machine.get("transfer_block_name")
-        if (
-            self.resume_task
-            and not self.resume_task.cancelled()
-            and not self.resume_task.done()
-        ):
-            self.resume_task.cancel()
-            try:
-                await self.resume_task
-            except asyncio.CancelledError:
-                self.logger.info("Old resume task cancelled")
-
-        if transfer_block_name and self.current_block_name != transfer_block_name:
-            # First analyze intent
-            intent_result, streamed = await self.analyze_user_intent()
-            self.logger.error(f"Intent RESULT: {intent_result}")
-
-            if intent_result == "transfer":
-                self.logger.info("Transfer condition met")
-                if transfer_block_name:
-                    self.resume = lambda _: self.handle_state(transfer_block_name)
-                    self.previous_resume = self.resume
-                    self.previous_visited_states = self.visited_states
-                    self.resume_task = asyncio.create_task(self.resume(human_input))
-                    await self.resume_task
-                else:
-                    self.logger.error("transfer_block_name not found in state_machine")
-                return "", True
-
-            elif intent_result == "switch":
-                self.logger.info("Switch condition met, going to start state")
-                result = await self.handle_state(
-                    self.state_machine["startingStateId"],
-                    trigger="switch",
+            self.logger.info(f"average latency: {self.average_latency}")
+            self.update_history("human", human_input)
+            if self.agent_config.call_type:
+                self.logger.info(
+                    f"[CallType.{self.agent_config.call_type.upper()}:{self.agent_config.current_call_id}] Lead:{human_input}"
                 )
-                self.current_intent_description = None
-                return result, True
 
-            else:  # continue or unknown intent
+            transfer_block_name = self.state_machine.get("transfer_block_name")
+            if (
+                self.resume_task
+                and not self.resume_task.cancelled()
+                and not self.resume_task.done()
+            ):
+                self.resume_task.cancel()
+                try:
+                    await self.resume_task
+                except asyncio.CancelledError:
+                    self.logger.info("Old resume task cancelled")
+
+            if transfer_block_name and self.current_block_name != transfer_block_name:
+                # First analyze intent
+                intent_result, streamed = await self.analyze_user_intent()
+                self.logger.error(f"Intent RESULT: {intent_result}")
+
+                if intent_result == "transfer":
+                    self.logger.info("Transfer condition met")
+                    if transfer_block_name:
+                        self.resume = lambda _: self.handle_state(transfer_block_name)
+                        self.previous_resume = self.resume
+                        self.previous_visited_states = self.visited_states
+                        self.resume_task = asyncio.create_task(self.resume(human_input))
+                        await self.resume_task
+                    else:
+                        self.logger.error(
+                            "transfer_block_name not found in state_machine"
+                        )
+                    return "", True
+
+                elif intent_result == "switch":
+                    self.logger.info("Switch condition met, going to start state")
+                    result = await self.handle_state(
+                        self.state_machine["startingStateId"],
+                        trigger="switch",
+                    )
+                    self.current_intent_description = None
+                    return result, True
+
+                else:  # continue or unknown intent
+                    self.resume_task = asyncio.create_task(self.resume(human_input))
+                    resume_output = await self.resume_task
+                    self.resume = resume_output
+                    return "", True
+
+            else:
+                self.logger.error("No intent task")
+                self.previous_resume = self.resume
+                self.previous_visited_states = self.visited_states
+                if not self.resume:
+                    self.resume = self.previous_resume
+                    self.visited_states = self.previous_visited_states
+                    self.logger.info("Resuming from previous resume")
                 self.resume_task = asyncio.create_task(self.resume(human_input))
                 resume_output = await self.resume_task
                 self.resume = resume_output
                 return "", True
-
-        else:
-            self.logger.error("No intent task")
-            self.previous_resume = self.resume
-            self.previous_visited_states = self.visited_states
-            if not self.resume:
-                self.resume = self.previous_resume
-                self.visited_states = self.previous_visited_states
-                self.logger.info("Resuming from previous resume")
-            self.resume_task = asyncio.create_task(self.resume(human_input))
-            resume_output = await self.resume_task
-            self.resume = resume_output
-            return "", True
 
     async def print_start_message(self, state, start: bool):
         if "start_message" in state:
@@ -973,7 +991,10 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
         )
 
         for memory_key, memory_value in self.memories.items():
-            if memory_value.get("is_ephemeral") and memory_value.get("owner_state_id") != state["id"]:
+            if (
+                memory_value.get("is_ephemeral")
+                and memory_value.get("owner_state_id") != state["id"]
+            ):
                 memory_value["is_stale"] = True
 
         for memory_dep in state.get("memory_dependencies", []):

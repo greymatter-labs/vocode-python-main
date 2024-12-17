@@ -1,10 +1,13 @@
+from copy import deepcopy
 import time
-from typing import Any, Dict, List, Optional, Union
+from typing import List, Optional
 from pydantic import BaseModel, Field
-from enum import Enum
 from vocode.streaming.models.actions import ActionInput, ActionOutput
 from vocode.streaming.models.events import ActionEvent, Sender, Event, EventType
 
+from vocode.streaming.models.state_agent_transcript import (
+    StateAgentTranscript,
+)
 from vocode.streaming.utils.events_manager import EventsManager
 
 
@@ -213,3 +216,14 @@ class TranscriptEvent(Event, type=EventType.TRANSCRIPT):
 
 class TranscriptCompleteEvent(Event, type=EventType.TRANSCRIPT_COMPLETE):
     transcript: Transcript
+
+
+class StateAgentTranscriptEvent(Event, type=EventType.STATE_AGENT_PUBLISH):
+    transcript: StateAgentTranscript
+
+    @classmethod
+    def copy_from_transcript(
+        cls, transcript: StateAgentTranscript, conversation_id: str
+    ):
+        copy_transcript = deepcopy(transcript)
+        return cls(transcript=copy_transcript, conversation_id=conversation_id)
