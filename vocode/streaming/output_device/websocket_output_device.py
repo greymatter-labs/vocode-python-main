@@ -5,7 +5,11 @@ from fastapi import WebSocket
 import numpy as np
 from vocode.streaming.models.audio_encoding import AudioEncoding
 from vocode.streaming.output_device.base_output_device import BaseOutputDevice
-from vocode.streaming.models.websocket import AudioMessage, TranscriptMessage
+from vocode.streaming.models.websocket import (
+    AudioMessage,
+    DebugTranscriptMessage,
+    TranscriptMessage,
+)
 from vocode.streaming.models.transcript import (
     StateAgentTranscriptEvent,
     TranscriptEvent,
@@ -57,7 +61,7 @@ class WebsocketOutputDevice(BaseOutputDevice):
     def consume_transcript(self, event: TranscriptEvent | StateAgentTranscriptEvent):
         if self.active:
             if isinstance(event, StateAgentTranscriptEvent):
-                transcript_message = event.transcript
+                transcript_message = DebugTranscriptMessage(transcript=event.transcript)
             elif isinstance(event, TranscriptEvent):
                 transcript_message = TranscriptMessage.from_event(event)
             self.queue.put_nowait(transcript_message.json())

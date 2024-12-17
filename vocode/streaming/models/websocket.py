@@ -2,8 +2,8 @@ import base64
 from enum import Enum
 from typing import Optional
 
-from vocode.streaming.models.audio_encoding import AudioEncoding
 from vocode.streaming.models.client_backend import InputAudioConfig, OutputAudioConfig
+from vocode.streaming.models.state_agent_transcript import StateAgentTranscript
 from .model import TypedModel
 from .transcriber import TranscriberConfig
 from .agent import AgentConfig
@@ -20,6 +20,7 @@ class WebSocketMessageType(str, Enum):
     READY = "websocket_ready"
     STOP = "websocket_stop"
     AUDIO_CONFIG_START = "websocket_audio_config_start"
+    DEBUG_TRANSCRIPT = "websocket_debug_transcript"
 
 
 class WebSocketMessage(TypedModel, type=WebSocketMessageType.BASE):
@@ -69,3 +70,9 @@ class ReadyMessage(WebSocketMessage, type=WebSocketMessageType.READY):
 
 class StopMessage(WebSocketMessage, type=WebSocketMessageType.STOP):
     pass
+
+
+class DebugTranscriptMessage(
+    WebSocketMessage, type=WebSocketMessageType.DEBUG_TRANSCRIPT
+):
+    transcript: StateAgentTranscript
