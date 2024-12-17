@@ -4,7 +4,6 @@ import typing
 
 from fastapi import APIRouter, WebSocket
 from vocode.streaming.agent.base_agent import BaseAgent
-from vocode.streaming.models.audio_encoding import AudioEncoding
 from vocode.streaming.models.client_backend import InputAudioConfig, OutputAudioConfig
 from vocode.streaming.models.synthesizer import AzureSynthesizerConfig
 from vocode.streaming.models.transcriber import (
@@ -28,7 +27,10 @@ from vocode.streaming.transcriber.deepgram_transcriber import DeepgramTranscribe
 from vocode.streaming.utils.base_router import BaseRouter
 
 from vocode.streaming.models.events import Event, EventType
-from vocode.streaming.models.transcript import TranscriptEvent
+from vocode.streaming.models.transcript import (
+    StateAgentTranscriptEvent,
+    TranscriptEvent,
+)
 from vocode.streaming.utils import events_manager
 
 BASE_CONVERSATION_ENDPOINT = "/conversation"
@@ -78,9 +80,11 @@ class ConversationRouter(BaseRouter):
             agent=self.agent_thunk(),
             synthesizer=synthesizer,
             conversation_id=start_message.conversation_id,
-            events_manager=TranscriptEventManager(output_device, self.logger)
-            if start_message.subscribe_transcript
-            else None,
+            events_manager=(
+                TranscriptEventManager(output_device, self.logger)
+                if start_message.subscribe_transcript
+                else None
+            ),
             logger=self.logger,
         )
 
@@ -89,7 +93,7 @@ class ConversationRouter(BaseRouter):
         start_message: AudioConfigStartMessage = AudioConfigStartMessage.parse_obj(
             await websocket.receive_json()
         )
-        self.logger.debug(f"Conversation started")
+        self.logger.debug("Conversation started")
         output_device = WebsocketOutputDevice(
             websocket,
             start_message.output_audio_config.sampling_rate,
@@ -118,7 +122,9 @@ class TranscriptEventManager(events_manager.EventsManager):
         output_device: WebsocketOutputDevice,
         logger: Optional[logging.Logger] = None,
     ):
-        super().__init__(subscriptions=[EventType.TRANSCRIPT])
+        super().__init__(
+            subscriptions=[EventType.TRANSCRIPT, EventType.STATE_AGENT_PUBLISH]
+        )
         self.output_device = output_device
         self.logger = logger or logging.getLogger(__name__)
 
@@ -126,7 +132,9 @@ class TranscriptEventManager(events_manager.EventsManager):
         if event.type == EventType.TRANSCRIPT:
             transcript_event = typing.cast(TranscriptEvent, event)
             self.output_device.consume_transcript(transcript_event)
-            # self.logger.debug(event.dict())
+        elif event.type == EventType.STATE_AGENT_PUBLISH:
+            state_agent_publish_event = typing.cast(StateAgentTranscriptEvent, event)
+            self.output_device.consume_transcript(state_agent_publish_event)
 
     def restart(self, output_device: WebsocketOutputDevice):
         self.output_device = output_device

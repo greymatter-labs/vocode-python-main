@@ -17,6 +17,7 @@ class EventType(str, Enum):
     PHONE_CALL_ENDED = "event_phone_call_ended"
     RECORDING = "event_recording"
     ACTION = "event_action"
+    STATE_AGENT_PUBLISH = "event_state_agent_publish"
 
 
 class Event(TypedModel):
