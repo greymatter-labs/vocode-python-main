@@ -697,7 +697,6 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
                 return message
         return "How can I assist you today?"
 
-    # @staticmethod
     @contextlib.asynccontextmanager
     async def send_state_transcript_ctx(self):
         assert self.conversation_id is not None, f"{self.conversation_id=}  must be set"
