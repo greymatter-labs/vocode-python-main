@@ -37,9 +37,11 @@ from vocode.streaming.constants import (
 from vocode.streaming.models.agent import FillerAudioConfig
 from vocode.streaming.models.events import Sender
 from vocode.streaming.models.message import BaseMessage
+from vocode.streaming.models.state_agent_transcript import StateAgentTranscript
 from vocode.streaming.models.synthesizer import SentimentConfig
 from vocode.streaming.models.transcriber import TranscriberConfig
 from vocode.streaming.models.transcript import (
+    JsonTranscriptEvent,
     Message,
     Transcript,
     TranscriptCompleteEvent,
@@ -1040,9 +1042,16 @@ class StreamingConversation(Generic[OutputDeviceType]):
                 input_queue=self.filler_audio_queue, conversation=self
             )
 
+        def on_json_transcript_update(json_transcript: StateAgentTranscript):
+            self.events_manager.publish_event(
+                JsonTranscriptEvent.copy_from_transcript(
+                    transcript=json_transcript,
+                    conversation_id=self.id,
+                )
+            )
+
+        self.agent.on_json_transcript_update = on_json_transcript_update
         self.events_manager = events_manager or EventsManager()
-        if isinstance(self.agent, StateAgent):
-            self.agent.events_manager = self.events_manager
 
         self.events_task: Optional[asyncio.Task] = None
         self.per_chunk_allowance_seconds = per_chunk_allowance_seconds

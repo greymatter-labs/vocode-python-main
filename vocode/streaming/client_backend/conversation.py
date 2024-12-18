@@ -28,7 +28,7 @@ from vocode.streaming.utils.base_router import BaseRouter
 
 from vocode.streaming.models.events import Event, EventType
 from vocode.streaming.models.transcript import (
-    StateAgentJsonTranscriptEvent,
+    JsonTranscriptEvent,
     TranscriptEvent,
 )
 from vocode.streaming.utils import events_manager
@@ -123,7 +123,7 @@ class TranscriptEventManager(events_manager.EventsManager):
         logger: Optional[logging.Logger] = None,
     ):
         super().__init__(
-            subscriptions=[EventType.TRANSCRIPT, EventType.STATE_AGENT_JSON_TRANSCRIPT]
+            subscriptions=[EventType.TRANSCRIPT, EventType.JSON_TRANSCRIPT]
         )
         self.output_device = output_device
         self.logger = logger or logging.getLogger(__name__)
@@ -132,10 +132,8 @@ class TranscriptEventManager(events_manager.EventsManager):
         if event.type == EventType.TRANSCRIPT:
             transcript_event = typing.cast(TranscriptEvent, event)
             self.output_device.consume_transcript(transcript_event)
-        elif event.type == EventType.STATE_AGENT_JSON_TRANSCRIPT:
-            state_agent_publish_event = typing.cast(
-                StateAgentJsonTranscriptEvent, event
-            )
+        elif event.type == EventType.JSON_TRANSCRIPT:
+            state_agent_publish_event = typing.cast(JsonTranscriptEvent, event)
             self.output_device.consume_transcript(state_agent_publish_event)
 
     def restart(self, output_device: WebsocketOutputDevice):

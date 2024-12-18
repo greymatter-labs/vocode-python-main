@@ -11,7 +11,7 @@ from vocode.streaming.models.websocket import (
     TranscriptMessage,
 )
 from vocode.streaming.models.transcript import (
-    StateAgentJsonTranscriptEvent,
+    JsonTranscriptEvent,
     TranscriptEvent,
 )
 
@@ -58,11 +58,9 @@ class WebsocketOutputDevice(BaseOutputDevice):
 
             await self.queue.put(audio_message.json())
 
-    def consume_transcript(
-        self, event: TranscriptEvent | StateAgentJsonTranscriptEvent
-    ):
+    def consume_transcript(self, event: TranscriptEvent | JsonTranscriptEvent):
         if self.active:
-            if isinstance(event, StateAgentJsonTranscriptEvent):
+            if isinstance(event, JsonTranscriptEvent):
                 transcript_message = DebugTranscriptMessage(transcript=event.transcript)
             elif isinstance(event, TranscriptEvent):
                 transcript_message = TranscriptMessage.from_event(event)

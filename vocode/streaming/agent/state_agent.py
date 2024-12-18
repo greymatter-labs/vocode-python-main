@@ -1,5 +1,4 @@
 import asyncio
-import contextlib
 import json
 import logging
 import time
@@ -42,7 +41,6 @@ from vocode.streaming.models.state_agent_transcript import (
     StateAgentTranscriptInvariantViolation,
     StateAgentTranscriptMessage,
 )
-from vocode.streaming.models.transcript import StateAgentJsonTranscriptEvent
 from vocode.streaming.utils import interpolate_memories
 from vocode.streaming.utils.events_manager import EventsManager
 
@@ -484,7 +482,6 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
             + self.state_machine["states"]["start"]["instructions"]
         )
         self.label_to_state_id = self.state_machine["labelToStateId"]
-        self.events_manager = events_manager
 
     @classmethod
     def from_state(
@@ -697,26 +694,6 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
                 return message
         return "How can I assist you today?"
 
-    @contextlib.asynccontextmanager
-    async def publish_state_transcript_on_end(self):
-        assert self.conversation_id is not None, f"{self.conversation_id=}  must be set"
-        # TODO send when the state changes only, may want to look at proxy, or add hashes
-        # TODO if errors we may want to append it to the transcript before sending
-        try:
-            yield
-        finally:
-            if self.events_manager:
-                self.logger.info("sending transcript event")
-                self.events_manager.publish_event(
-                    StateAgentJsonTranscriptEvent.copy_from_transcript(
-                        self.json_transcript, self.conversation_id
-                    )
-                )
-            else:
-                self.logger.info(
-                    f"no events manager bound on {self.__class__.__name__}"
-                )
-
     async def generate_completion(
         self,
         affirmative_phrase: Optional[str],
@@ -725,75 +702,72 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
         is_interrupt: bool = False,
         stream_output: bool = True,
     ):
-        async with self.publish_state_transcript_on_end():
+        self.logger.info(
+            f"current intent description: {self.current_intent_description}"
+        )
+        self.logger.info(f"average latency: {self.average_latency}")
+        self.update_history("human", human_input)
+        if self.agent_config.call_type:
             self.logger.info(
-                f"current intent description: {self.current_intent_description}"
+                f"[CallType.{self.agent_config.call_type.upper()}:{self.agent_config.current_call_id}] Lead:{human_input}"
             )
-            self.logger.info(f"average latency: {self.average_latency}")
-            self.update_history("human", human_input)
-            if self.agent_config.call_type:
-                self.logger.info(
-                    f"[CallType.{self.agent_config.call_type.upper()}:{self.agent_config.current_call_id}] Lead:{human_input}"
-                )
 
-            transfer_block_name = self.state_machine.get("transfer_block_name")
-            if (
-                self.resume_task
-                and not self.resume_task.cancelled()
-                and not self.resume_task.done()
-            ):
-                self.resume_task.cancel()
-                try:
-                    await self.resume_task
-                except asyncio.CancelledError:
-                    self.logger.info("Old resume task cancelled")
+        transfer_block_name = self.state_machine.get("transfer_block_name")
+        if (
+            self.resume_task
+            and not self.resume_task.cancelled()
+            and not self.resume_task.done()
+        ):
+            self.resume_task.cancel()
+            try:
+                await self.resume_task
+            except asyncio.CancelledError:
+                self.logger.info("Old resume task cancelled")
 
-            if transfer_block_name and self.current_block_name != transfer_block_name:
-                # First analyze intent
-                intent_result, streamed = await self.analyze_user_intent()
-                self.logger.error(f"Intent RESULT: {intent_result}")
+        if transfer_block_name and self.current_block_name != transfer_block_name:
+            # First analyze intent
+            intent_result, streamed = await self.analyze_user_intent()
+            self.logger.error(f"Intent RESULT: {intent_result}")
 
-                if intent_result == "transfer":
-                    self.logger.info("Transfer condition met")
-                    if transfer_block_name:
-                        self.resume = lambda _: self.handle_state(transfer_block_name)
-                        self.previous_resume = self.resume
-                        self.previous_visited_states = self.visited_states
-                        self.resume_task = asyncio.create_task(self.resume(human_input))
-                        await self.resume_task
-                    else:
-                        self.logger.error(
-                            "transfer_block_name not found in state_machine"
-                        )
-                    return "", True
-
-                elif intent_result == "switch":
-                    self.logger.info("Switch condition met, going to start state")
-                    result = await self.handle_state(
-                        self.state_machine["startingStateId"],
-                        trigger="switch",
-                    )
-                    self.current_intent_description = None
-                    return result, True
-
-                else:  # continue or unknown intent
+            if intent_result == "transfer":
+                self.logger.info("Transfer condition met")
+                if transfer_block_name:
+                    self.resume = lambda _: self.handle_state(transfer_block_name)
+                    self.previous_resume = self.resume
+                    self.previous_visited_states = self.visited_states
                     self.resume_task = asyncio.create_task(self.resume(human_input))
-                    resume_output = await self.resume_task
-                    self.resume = resume_output
-                    return "", True
+                    await self.resume_task
+                else:
+                    self.logger.error("transfer_block_name not found in state_machine")
+                return "", True
 
-            else:
-                self.logger.error("No intent task")
-                self.previous_resume = self.resume
-                self.previous_visited_states = self.visited_states
-                if not self.resume:
-                    self.resume = self.previous_resume
-                    self.visited_states = self.previous_visited_states
-                    self.logger.info("Resuming from previous resume")
+            elif intent_result == "switch":
+                self.logger.info("Switch condition met, going to start state")
+                result = await self.handle_state(
+                    self.state_machine["startingStateId"],
+                    trigger="switch",
+                )
+                self.current_intent_description = None
+                return result, True
+
+            else:  # continue or unknown intent
                 self.resume_task = asyncio.create_task(self.resume(human_input))
                 resume_output = await self.resume_task
                 self.resume = resume_output
                 return "", True
+
+        else:
+            self.logger.error("No intent task")
+            self.previous_resume = self.resume
+            self.previous_visited_states = self.visited_states
+            if not self.resume:
+                self.resume = self.previous_resume
+                self.visited_states = self.previous_visited_states
+                self.logger.info("Resuming from previous resume")
+            self.resume_task = asyncio.create_task(self.resume(human_input))
+            resume_output = await self.resume_task
+            self.resume = resume_output
+            return "", True
 
     async def print_start_message(self, state, start: bool):
         if "start_message" in state:
@@ -963,6 +937,7 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
             )
         )
 
+        self.on_json_transcript_update(self.json_transcript)
         self.state_history.append(state)
 
         if retry_count > 20:
