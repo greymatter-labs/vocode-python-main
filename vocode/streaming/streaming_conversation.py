@@ -1043,9 +1043,10 @@ class StreamingConversation(Generic[OutputDeviceType]):
             )
 
         def on_json_transcript_update(json_transcript: StateAgentTranscript):
+            transcript = deepcopy(json_transcript)
             self.events_manager.publish_event(
-                JsonTranscriptEvent.copy_from_transcript(
-                    transcript=json_transcript,
+                JsonTranscriptEvent(
+                    transcript=transcript,
                     conversation_id=self.id,
                 )
             )

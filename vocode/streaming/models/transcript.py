@@ -1,4 +1,3 @@
-from copy import deepcopy
 import time
 from typing import List, Optional
 from pydantic import BaseModel, Field
@@ -220,10 +219,3 @@ class TranscriptCompleteEvent(Event, type=EventType.TRANSCRIPT_COMPLETE):
 
 class JsonTranscriptEvent(Event, type=EventType.JSON_TRANSCRIPT):
     transcript: StateAgentTranscript
-
-    @classmethod
-    def copy_from_transcript(
-        cls, transcript: StateAgentTranscript, conversation_id: str
-    ):
-        copy_transcript = deepcopy(transcript)
-        return cls(transcript=copy_transcript, conversation_id=conversation_id)
