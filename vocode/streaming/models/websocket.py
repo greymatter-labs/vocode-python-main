@@ -20,7 +20,7 @@ class WebSocketMessageType(str, Enum):
     READY = "websocket_ready"
     STOP = "websocket_stop"
     AUDIO_CONFIG_START = "websocket_audio_config_start"
-    DEBUG_TRANSCRIPT = "websocket_debug_transcript"
+    JSON_TRANSCRIPT = "websocket_json_transcript"
 
 
 class WebSocketMessage(TypedModel, type=WebSocketMessageType.BASE):
@@ -73,6 +73,6 @@ class StopMessage(WebSocketMessage, type=WebSocketMessageType.STOP):
 
 
 class DebugTranscriptMessage(
-    WebSocketMessage, type=WebSocketMessageType.DEBUG_TRANSCRIPT
+    WebSocketMessage, type=WebSocketMessageType.JSON_TRANSCRIPT
 ):
     transcript: StateAgentTranscript

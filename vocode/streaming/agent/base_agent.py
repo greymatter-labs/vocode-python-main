@@ -9,7 +9,7 @@ from enum import Enum
 from typing import (
     TYPE_CHECKING,
     AsyncGenerator,
-    Generator,
+    Callable,
     Generic,
     Optional,
     Tuple,
@@ -29,17 +29,15 @@ from vocode.streaming.models.actions import (
     ActionInput,
     ActionOutput,
     FunctionCall,
-    FunctionFragment,
 )
 from vocode.streaming.models.agent import (
     AgentConfig,
-    ChatGPTAgentConfig,
     CommandAgentConfig,
     LLMAgentConfig,
 )
 from vocode.streaming.models.message import BaseMessage
-from vocode.streaming.models.model import BaseModel, TypedModel
-from vocode.streaming.models.state_agent_transcript import JsonTranscript
+from vocode.streaming.models.model import TypedModel
+from vocode.streaming.models.state_agent_transcript import StateAgentTranscript
 from vocode.streaming.models.transcript import Transcript
 from vocode.streaming.transcriber.base_transcriber import Transcription
 from vocode.streaming.utils import remove_non_letters_digits
@@ -148,6 +146,8 @@ class AbstractAgent(Generic[AgentConfigType]):
 
 
 class BaseAgent(AbstractAgent[AgentConfigType], InterruptibleWorker):
+    on_json_transcript_update: Callable[[StateAgentTranscript], None] = lambda _: None
+
     def __init__(
         self,
         agent_config: AgentConfigType,
