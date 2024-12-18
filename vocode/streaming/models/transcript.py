@@ -5,6 +5,7 @@ from enum import Enum
 from vocode.streaming.models.actions import ActionInput, ActionOutput
 from vocode.streaming.models.events import ActionEvent, Sender, Event, EventType
 
+from vocode.streaming.models.state_agent_transcript import StateAgentTranscript
 from vocode.streaming.utils.events_manager import EventsManager
 
 
@@ -210,6 +211,13 @@ class TranscriptEvent(Event, type=EventType.TRANSCRIPT):
             return f"{self.sender.name}: {self.text} ({self.timestamp})"
         return f"{self.sender.name}: {self.text}"
 
-
 class TranscriptCompleteEvent(Event, type=EventType.TRANSCRIPT_COMPLETE):
     transcript: Transcript
+
+class JsonTranscriptEvent(Event, type=EventType.JSON_TRANSCRIPT):
+    transcript: StateAgentTranscript
+    def __init__(
+        self,
+        json_transcript: StateAgentTranscript
+    ):
+        self.transcript =  deepcopy(json_transcript)

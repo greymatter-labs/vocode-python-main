@@ -944,6 +944,8 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
                 trigger=trigger,
             )
         )
+        if self.on_json_transcript_update:
+            self.on_json_transcript_update(self.json_transcript)
 
         self.state_history.append(state)
 
