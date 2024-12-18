@@ -18,6 +18,9 @@ import httpx
 import numpy
 import requests
 from openai import AsyncOpenAI, OpenAI
+from telephony_app.models.call_type import CallType
+from telephony_app.utils.call_information_handler import update_call_transcripts
+
 from vocode import getenv
 from vocode.streaming.action.worker import ActionsWorker
 from vocode.streaming.agent.base_agent import (
@@ -85,9 +88,6 @@ from vocode.streaming.utils.worker import (
     InterruptibleEventFactory,
     InterruptibleWorker,
 )
-
-from telephony_app.models.call_type import CallType
-from telephony_app.utils.call_information_handler import update_call_transcripts
 
 tracer = setup_tracer()
 
@@ -1404,9 +1404,9 @@ class StreamingConversation(Generic[OutputDeviceType]):
 
         speech_data = bytearray()
         held_buffer = self.transcriptions_worker.buffer.to_message()
-        time_started_speaking = time.time()
         buffer_cleared = False
         total_time_sent = 0
+        time_started_speaking = None
         moved_back = False
         async for chunk_result in synthesis_result.chunk_generator:
 
@@ -1419,6 +1419,8 @@ class StreamingConversation(Generic[OutputDeviceType]):
                 self.transcriptions_worker.block_inputs = True
                 self.transcriptions_worker.time_silent = 0.0
                 self.transcriptions_worker.triggered_affirmative = False
+                if time_started_speaking is None:
+                    time_started_speaking = time.time()
                 # self.logger.debug(f"Sending chunk, len {len(speech_data)}")
 
                 if self.agent.agent_config.allow_interruptions:
@@ -1435,7 +1437,6 @@ class StreamingConversation(Generic[OutputDeviceType]):
                 await self.output_device.consume_nonblocking(speech_data)
                 chunk_time = len(speech_data) / (chunk_size / seconds_per_chunk)
                 total_time_sent += chunk_time
-
                 speech_data = bytearray()
 
         if not stop_event.is_set():
@@ -1458,6 +1459,10 @@ class StreamingConversation(Generic[OutputDeviceType]):
             return "", False
         else:
             self.logger.debug("No buffer check task found, proceeding.")
+        t_consume = (
+            0 if time_started_speaking is None else time.time() - time_started_speaking
+        )
+        self.logger.info(f"{t_consume=}")
 
         self.transcriptions_worker.block_inputs = True
         self.transcriptions_worker.time_silent = 0.0
@@ -1471,7 +1476,10 @@ class StreamingConversation(Generic[OutputDeviceType]):
         # Added stop event check otherwise it will block other synthesis result tasks
         # even though we meant to cancel this one.
         sleep_interval = 0.1  # Mark last action every 0.1 seconds
-        remaining_sleep = total_time_sent
+        remaining_sleep = (
+            total_time_sent - t_consume
+        )  # t_consume is the time it took to consume the audio
+        self.turn_speech_time = t_consume
         while remaining_sleep > 0:
             next_sleep = min(sleep_interval, remaining_sleep)
             await asyncio.sleep(next_sleep)
@@ -1482,6 +1490,8 @@ class StreamingConversation(Generic[OutputDeviceType]):
             self.mark_last_action_timestamp()
             self.turn_speech_time += next_sleep
             remaining_sleep -= next_sleep
+            # message_sent = synthesis_result.get_message_up_to(self.turn_speech_time)
+            # self.logger.info(f"{message_sent=} {self.turn_speech_time=}")
             if self.turn_speech_time > 3:
                 self.logger.debug(f"Turn speech time: {self.turn_speech_time}")
                 buffer_cleared = True
