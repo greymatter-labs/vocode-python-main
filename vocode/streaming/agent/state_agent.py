@@ -698,9 +698,10 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
         return "How can I assist you today?"
 
     @contextlib.asynccontextmanager
-    async def send_state_transcript_ctx(self):
+    async def publish_state_transcript_on_end(self):
         assert self.conversation_id is not None, f"{self.conversation_id=}  must be set"
         # TODO send when the state changes only, may want to look at proxy, or add hashes
+        # TODO if errors we may want to append it to the transcript before sending
         try:
             yield
         finally:
@@ -724,7 +725,7 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
         is_interrupt: bool = False,
         stream_output: bool = True,
     ):
-        async with self.send_state_transcript_ctx():
+        async with self.publish_state_transcript_on_end():
             self.logger.info(
                 f"current intent description: {self.current_intent_description}"
             )
