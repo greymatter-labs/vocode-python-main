@@ -42,7 +42,7 @@ from vocode.streaming.models.state_agent_transcript import (
     StateAgentTranscriptInvariantViolation,
     StateAgentTranscriptMessage,
 )
-from vocode.streaming.models.transcript import StateAgentTranscriptEvent
+from vocode.streaming.models.transcript import StateAgentJsonTranscriptEvent
 from vocode.streaming.utils import interpolate_memories
 from vocode.streaming.utils.events_manager import EventsManager
 
@@ -707,7 +707,7 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
             if self.events_manager:
                 self.logger.info("sending transcript event")
                 self.events_manager.publish_event(
-                    StateAgentTranscriptEvent.copy_from_transcript(
+                    StateAgentJsonTranscriptEvent.copy_from_transcript(
                         self.json_transcript, self.conversation_id
                     )
                 )

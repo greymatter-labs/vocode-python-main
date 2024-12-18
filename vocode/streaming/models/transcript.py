@@ -218,7 +218,7 @@ class TranscriptCompleteEvent(Event, type=EventType.TRANSCRIPT_COMPLETE):
     transcript: Transcript
 
 
-class StateAgentTranscriptEvent(Event, type=EventType.STATE_AGENT_PUBLISH):
+class StateAgentJsonTranscriptEvent(Event, type=EventType.STATE_AGENT_JSON_TRANSCRIPT):
     transcript: StateAgentTranscript
 
     @classmethod
