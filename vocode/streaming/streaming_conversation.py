@@ -55,6 +55,7 @@ from vocode.streaming.models.message import BaseMessage
 from vocode.streaming.models.synthesizer import SentimentConfig
 from vocode.streaming.models.transcriber import EndpointingConfig, TranscriberConfig
 from vocode.streaming.models.transcript import (
+    JsonTranscriptEvent,
     Message,
     Transcript,
     TranscriptCompleteEvent,
@@ -1009,6 +1010,16 @@ class StreamingConversation(Generic[OutputDeviceType]):
         self.output_device = output_device
         self.transcriber = transcriber
         self.turn_speech_time = 0.0
+
+        if events_manager:
+            def on_json_transcript_update(json_transcript):
+                events_manager.publish_event(
+                    JsonTranscriptEvent(
+                        json_transcript=json_transcript,
+                        conversation_id=self.id,
+                    )
+                )
+            agent.on_json_transcript_update = on_json_transcript_update
 
         self.agent = agent
         self.synthesizer = synthesizer
