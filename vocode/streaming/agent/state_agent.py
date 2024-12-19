@@ -42,7 +42,6 @@ from vocode.streaming.models.state_agent_transcript import (
     StateAgentTranscriptMessage,
 )
 from vocode.streaming.utils import interpolate_memories
-from vocode.streaming.utils.events_manager import EventsManager
 
 
 class StateMachine(BaseModel):
@@ -442,8 +441,6 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
         self,
         agent_config: CommandAgentConfig,
         logger: Optional[logging.Logger] = None,
-        *,
-        events_manager: Optional[EventsManager] = None,
     ):
         super().__init__(
             agent_config=agent_config,
