@@ -1,8 +1,6 @@
-import ast
 import asyncio
 import json
 import logging
-import re
 import time
 from enum import Enum
 from typing import (
@@ -12,22 +10,17 @@ from typing import (
     Dict,
     List,
     Optional,
-    Set,
     Tuple,
     TypedDict,
-    Union,
-    cast,
 )
 
 from openai import AsyncOpenAI
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 from vocode import getenv
 from vocode.streaming.action.phone_call_action import (
     TwilioPhoneCallAction,
-    VonagePhoneCallAction,
 )
 from vocode.streaming.agent.base_agent import (
-    AgentInput,
     AgentResponseGenerationComplete,
     AgentResponseMessage,
     RespondAgent,
@@ -35,8 +28,6 @@ from vocode.streaming.agent.base_agent import (
 from vocode.streaming.agent.utils import translate_message
 from vocode.streaming.models.actions import ActionInput
 from vocode.streaming.models.agent import CommandAgentConfig
-from vocode.streaming.models.call_type import CallType
-from vocode.streaming.models.events import Sender
 from vocode.streaming.models.memory_dependency import MemoryDependency
 from vocode.streaming.models.message import BaseMessage
 from vocode.streaming.models.state_agent_transcript import (
@@ -50,10 +41,7 @@ from vocode.streaming.models.state_agent_transcript import (
     StateAgentTranscriptInvariantViolation,
     StateAgentTranscriptMessage,
 )
-from vocode.streaming.transcriber.base_transcriber import Transcription
 from vocode.streaming.utils import interpolate_memories
-from vocode.streaming.utils.conversation_logger_adapter import wrap_logger
-from vocode.streaming.utils.find_sparse_subarray import find_last_sparse_subarray
 
 
 class StateMachine(BaseModel):
@@ -655,6 +643,7 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
         runtime_inputs: Optional[dict] = None,
         speak: bool = True,
     ):
+
         if role == "human":
             while self.chat_history and self.chat_history[-1][0] == "human":
                 self.chat_history.pop()
@@ -945,6 +934,7 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
             )
         )
 
+        self.on_json_transcript_update(self.json_transcript)
         self.state_history.append(state)
 
         if retry_count > 20:

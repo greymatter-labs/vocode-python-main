@@ -1,10 +1,12 @@
 import time
-from typing import Any, Dict, List, Optional, Union
+from typing import List, Optional
 from pydantic import BaseModel, Field
-from enum import Enum
 from vocode.streaming.models.actions import ActionInput, ActionOutput
 from vocode.streaming.models.events import ActionEvent, Sender, Event, EventType
 
+from vocode.streaming.models.state_agent_transcript import (
+    StateAgentTranscript,
+)
 from vocode.streaming.utils.events_manager import EventsManager
 
 
@@ -213,3 +215,7 @@ class TranscriptEvent(Event, type=EventType.TRANSCRIPT):
 
 class TranscriptCompleteEvent(Event, type=EventType.TRANSCRIPT_COMPLETE):
     transcript: Transcript
+
+
+class JsonTranscriptEvent(Event, type=EventType.JSON_TRANSCRIPT):
+    transcript: StateAgentTranscript
