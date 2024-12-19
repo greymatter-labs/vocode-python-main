@@ -932,6 +932,7 @@ class StreamingConversation(Generic[OutputDeviceType]):
                 # split on < and truncate there
                 transcript_message.text = transcript_message.text.split("<")[0].strip()
                 # Don't publish the transcript message if it's an action starting phrase (always ends in ellipsis)
+                # TODO: Is this used at all?
                 if not transcript_message.text.strip().endswith("..."):
                     self.conversation.transcript.maybe_publish_transcript_event_from_message(
                         message=transcript_message,
@@ -1378,6 +1379,11 @@ class StreamingConversation(Generic[OutputDeviceType]):
             self.transcriber.get_transcriber_config().min_interrupt_confidence or 0
         )
 
+    def log_transcript_message(self, message: str, replacer: str = "\n"):
+        self.logger.info(
+            f"[CallType.{self.agent.agent_config.call_type.upper()}:{self.agent.agent_config.current_call_id}] Agent: {message.replace(replacer, ' ')}"
+        )
+
     async def send_speech_to_output(
         self,
         message: str,
@@ -1409,10 +1415,15 @@ class StreamingConversation(Generic[OutputDeviceType]):
         time_started_speaking = None
         moved_back = False
         async for chunk_result in synthesis_result.chunk_generator:
-
             if stop_event.is_set() and self.agent.agent_config.allow_interruptions:
-                return "", False
+                if time_started_speaking is not None:
 
+                    message_sent = synthesis_result.get_message_up_to(
+                        time.time() - time_started_speaking
+                    )
+                else:
+                    message_sent = ""
+                return message_sent, True
             speech_data.extend(chunk_result.chunk)
 
             if len(speech_data) > chunk_size:
@@ -1431,8 +1442,11 @@ class StreamingConversation(Generic[OutputDeviceType]):
                         self.logger.debug(
                             "Moved back state from send_speech_to_output in the middle"
                         )
+                        message_sent = synthesis_result.get_message_up_to(
+                            time.time() - time_started_speaking
+                        )
                         moved_back = True
-                        return "", False
+                        return message_sent, True
 
                 await self.output_device.consume_nonblocking(speech_data)
                 chunk_time = len(speech_data) / (chunk_size / seconds_per_chunk)
@@ -1448,7 +1462,12 @@ class StreamingConversation(Generic[OutputDeviceType]):
             self.logger.debug("Interrupted speech output on the last chunk")
             # if not moved_back:
             #     self.agent.move_back_state()
-            return "", False
+            message_sent = (
+                synthesis_result.get_message_up_to(time.time() - time_started_speaking)
+                if time_started_speaking is not None
+                else ""
+            )
+            return message_sent, True
 
         self.transcriptions_worker.synthesis_done = True
 
@@ -1480,29 +1499,27 @@ class StreamingConversation(Generic[OutputDeviceType]):
             total_time_sent - t_consume
         )  # t_consume is the time it took to consume the audio
         self.turn_speech_time = t_consume
+        turn_speech_time = t_consume
         while remaining_sleep > 0:
             next_sleep = min(sleep_interval, remaining_sleep)
             await asyncio.sleep(next_sleep)
             if stop_event.is_set():
-                self.logger.debug("Interrupted speech output on the last chunk")
-                # self.agent.move_back_state()
-                return "", False
+                message_sent = synthesis_result.get_message_up_to(turn_speech_time)
+                return message_sent, True
             self.mark_last_action_timestamp()
             self.turn_speech_time += next_sleep
+            turn_speech_time += next_sleep
             remaining_sleep -= next_sleep
-            # message_sent = synthesis_result.get_message_up_to(self.turn_speech_time)
-            # self.logger.info(f"{message_sent=} {self.turn_speech_time=}")
+            message_sent = synthesis_result.get_message_up_to(self.turn_speech_time)
+            self.logger.info(f"{message_sent=} {self.turn_speech_time=}")
             if self.turn_speech_time > 3:
                 self.logger.debug(f"Turn speech time: {self.turn_speech_time}")
                 buffer_cleared = True
                 self.transcriptions_worker.buffer.clear()  # only clear if agent is done and no more audio queued
         # This ensures we do volume thresholding and mark last action periodically
         message_sent = synthesis_result.get_message_up_to(total_time_sent)
-        replacer = "\n"
         if not stop_event.is_set():
-            self.logger.info(
-                f"[CallType.{self.agent.agent_config.call_type.upper()}:{self.agent.agent_config.current_call_id}] Agent: {message_sent.replace(replacer, ' ')}"
-            )
+            self.log_transcript_message(message_sent)
         if transcript_message:
             transcript_message.text = message_sent
         cut_off = False
