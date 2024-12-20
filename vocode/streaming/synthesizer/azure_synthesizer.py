@@ -380,15 +380,14 @@ class AzureSynthesizer(BaseSynthesizer[AzureSynthesizerConfig]):
                     if index == 0:
                         return message
 
-                    # the last event that has been spoken
+                    # Get last spoken event
                     current_event = events[index - 1]
-                    # self.logger.info(f"{current_event=}")
-                    # an events text_offset is the index of the first character of the events text in the ssml string
+                    # Calculate ending character position
                     current_char_index = current_event["text_offset"] + len(
                         current_event["text"]
                     )
                     message_up_to = ssml[message_start_index:current_char_index]
-                    # Verify message_up_to is a substring of message
+                    # Validate substring
                     if message_up_to not in message:
                         self.logger.error(
                             f"Message up to {message_up_to} is not a substring of message {message}"
