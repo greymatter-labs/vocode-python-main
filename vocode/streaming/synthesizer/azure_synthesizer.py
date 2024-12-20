@@ -9,7 +9,7 @@ import tempfile
 # get req for wav as wav
 import wave
 from concurrent.futures import ThreadPoolExecutor
-from typing import Any, List, Optional, Tuple
+from typing import Any, List, Optional, Tuple, TypedDict
 from xml.etree import ElementTree
 
 import aiohttp
@@ -43,14 +43,11 @@ ElementTree.register_namespace("", NAMESPACES[""])
 ElementTree.register_namespace("mstts", NAMESPACES["mstts"])
 
 
-from typing import List, TypedDict
-
-
 class WordBoundaryEvent(TypedDict):
     text: str
     text_offset: int
     audio_offset: float
-    boundary_type: int
+    boundary_type: speechsdk.SpeechSynthesisBoundaryType
 
 
 class WordBoundaryEventPool:
@@ -63,7 +60,9 @@ class WordBoundaryEventPool:
                 "text": event.text,
                 "text_offset": event.text_offset,
                 "audio_offset": (event.audio_offset + 5000) / (10000 * 1000),
-                "boundary_type": event.boundary_type,
+                "boundary_type": speechsdk.SpeechSynthesisBoundaryType(
+                    event.boundary_type
+                ),
             }
         )
 
@@ -383,7 +382,7 @@ class AzureSynthesizer(BaseSynthesizer[AzureSynthesizerConfig]):
 
                     # the last event that has been spoken
                     current_event = events[index - 1]
-
+                    # self.logger.info(f"{current_event=}")
                     # an events text_offset is the index of the first character of the events text in the ssml string
                     current_char_index = current_event["text_offset"] + len(
                         current_event["text"]
