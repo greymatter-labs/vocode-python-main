@@ -43,9 +43,19 @@ ElementTree.register_namespace("", NAMESPACES[""])
 ElementTree.register_namespace("mstts", NAMESPACES["mstts"])
 
 
+from typing import List, TypedDict
+
+
+class WordBoundaryEvent(TypedDict):
+    text: str
+    text_offset: int
+    audio_offset: float
+    boundary_type: int
+
+
 class WordBoundaryEventPool:
     def __init__(self):
-        self.events = []
+        self.events: List[WordBoundaryEvent] = []
 
     def add(self, event):
         self.events.append(
@@ -57,7 +67,7 @@ class WordBoundaryEventPool:
             }
         )
 
-    def get_events_sorted(self):
+    def get_events_sorted(self) -> List[WordBoundaryEvent]:
         return sorted(self.events, key=lambda event: event["audio_offset"])
 
 
@@ -235,6 +245,7 @@ class AzureSynthesizer(BaseSynthesizer[AzureSynthesizerConfig]):
         return with_mark + self.add_marks(rest_stripped, index + 1)
 
     def word_boundary_cb(self, evt, pool):
+        # self.logger.debug(f"Word boundary event: {evt}")
         pool.add(evt)
 
     async def create_ssml(
@@ -358,17 +369,37 @@ class AzureSynthesizer(BaseSynthesizer[AzureSynthesizerConfig]):
         seconds: float,
         word_boundary_event_pool: WordBoundaryEventPool,
     ) -> str:
-        events = word_boundary_event_pool.get_events_sorted()
-        message_index: int = events[0]["text_offset"]  # Start of the message
-        for index, event in enumerate(events):
-            if event["audio_offset"] > seconds:
-                current_index = events[index - 1]["text_offset"] + len(
-                    events[index - 1]["text"]
-                )
-                message_up_to = ssml[message_index:current_index]
-                # self.logger.debug(f"{message_up_to=} {current_index=}")
-                return message_up_to
-        return message
+        try:
+            events = word_boundary_event_pool.get_events_sorted()
+            # Start of the message
+            # ssml looks like "<ssml_tags>message</ssml_tags>"
+            if len(events) == 0:
+                return message
+            message_start_index = events[0]["text_offset"]
+            for index, event in enumerate(events):
+                if event["audio_offset"] > seconds:
+                    if index == 0:
+                        return message
+
+                    # the last event that has been spoken
+                    current_event = events[index - 1]
+
+                    # an events text_offset is the index of the first character of the events text in the ssml string
+                    current_char_index = current_event["text_offset"] + len(
+                        current_event["text"]
+                    )
+                    message_up_to = ssml[message_start_index:current_char_index]
+                    # Verify message_up_to is a substring of message
+                    if message_up_to not in message:
+                        self.logger.error(
+                            f"Message up to {message_up_to} is not a substring of message {message}"
+                        )
+                        return message
+                    return message_up_to
+            return message
+        except Exception as e:
+            self.logger.error(f"Error in get_message_up_to: {str(e)}")
+            return message
 
     async def create_speech(
         self,
