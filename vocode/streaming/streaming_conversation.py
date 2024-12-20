@@ -1420,7 +1420,7 @@ class StreamingConversation(Generic[OutputDeviceType]):
                 self.transcriptions_worker.time_silent = 0.0
                 self.transcriptions_worker.triggered_affirmative = False
                 if time_started_speaking is None:
-                    time_started_speaking = time.time()
+                    time_started_speaking = time.perf_counter()
                 # self.logger.debug(f"Sending chunk, len {len(speech_data)}")
 
                 if self.agent.agent_config.allow_interruptions:
@@ -1459,11 +1459,12 @@ class StreamingConversation(Generic[OutputDeviceType]):
             return "", False
         else:
             self.logger.debug("No buffer check task found, proceeding.")
-        t_consume = (
-            0 if time_started_speaking is None else time.time() - time_started_speaking
+        duration_spoken_seconds = (
+            0
+            if time_started_speaking is None
+            else time.perf_counter() - time_started_speaking
         )
-        self.logger.info(f"{t_consume=}")
-
+        # self.logger.info(f"{duration_spoken_seconds=}")
         self.transcriptions_worker.block_inputs = True
         self.transcriptions_worker.time_silent = 0.0
         self.transcriptions_worker.triggered_affirmative = False
@@ -1476,10 +1477,7 @@ class StreamingConversation(Generic[OutputDeviceType]):
         # Added stop event check otherwise it will block other synthesis result tasks
         # even though we meant to cancel this one.
         sleep_interval = 0.1  # Mark last action every 0.1 seconds
-        remaining_sleep = (
-            total_time_sent - t_consume
-        )  # t_consume is the time it took to consume the audio
-        self.turn_speech_time = t_consume
+        remaining_sleep = total_time_sent - duration_spoken_seconds
         while remaining_sleep > 0:
             next_sleep = min(sleep_interval, remaining_sleep)
             await asyncio.sleep(next_sleep)
@@ -1489,13 +1487,15 @@ class StreamingConversation(Generic[OutputDeviceType]):
                 return "", False
             self.mark_last_action_timestamp()
             self.turn_speech_time += next_sleep
+            duration_spoken_seconds += next_sleep
             remaining_sleep -= next_sleep
-            # message_sent = synthesis_result.get_message_up_to(self.turn_speech_time)
-            # self.logger.info(f"{message_sent=} {self.turn_speech_time=}")
+            # message_sent = synthesis_result.get_message_up_to(duration_spoken_seconds)
+            # self.logger.info(f"{message_sent=} {duration_spoken_seconds=}")
             if self.turn_speech_time > 3:
                 self.logger.debug(f"Turn speech time: {self.turn_speech_time}")
                 buffer_cleared = True
                 self.transcriptions_worker.buffer.clear()  # only clear if agent is done and no more audio queued
+
         # This ensures we do volume thresholding and mark last action periodically
         message_sent = synthesis_result.get_message_up_to(total_time_sent)
         replacer = "\n"
