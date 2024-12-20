@@ -1378,6 +1378,11 @@ class StreamingConversation(Generic[OutputDeviceType]):
             self.transcriber.get_transcriber_config().min_interrupt_confidence or 0
         )
 
+    def get_duration_spoken_seconds(self, time_started_speaking: float | None):
+        if time_started_speaking is None:
+            return 0
+        return time.perf_counter() - time_started_speaking
+
     async def send_speech_to_output(
         self,
         message: str,
@@ -1440,6 +1445,8 @@ class StreamingConversation(Generic[OutputDeviceType]):
                 speech_data = bytearray()
 
         if not stop_event.is_set():
+            if time_started_speaking is None:
+                time_started_speaking = time.perf_counter()
             self.logger.debug(f"Sending final chunk, len {len(speech_data)}")
             await self.output_device.consume_nonblocking(speech_data)
             self.transcriptions_worker.time_silent = 0.0
@@ -1459,11 +1466,6 @@ class StreamingConversation(Generic[OutputDeviceType]):
             return "", False
         else:
             self.logger.debug("No buffer check task found, proceeding.")
-        duration_spoken_seconds = (
-            0
-            if time_started_speaking is None
-            else time.perf_counter() - time_started_speaking
-        )
         # self.logger.info(f"{duration_spoken_seconds=}")
         self.transcriptions_worker.block_inputs = True
         self.transcriptions_worker.time_silent = 0.0
@@ -1477,7 +1479,9 @@ class StreamingConversation(Generic[OutputDeviceType]):
         # Added stop event check otherwise it will block other synthesis result tasks
         # even though we meant to cancel this one.
         sleep_interval = 0.1  # Mark last action every 0.1 seconds
-        remaining_sleep = total_time_sent - duration_spoken_seconds
+        remaining_sleep = total_time_sent - self.get_duration_spoken_seconds(
+            time_started_speaking
+        )
         while remaining_sleep > 0:
             next_sleep = min(sleep_interval, remaining_sleep)
             await asyncio.sleep(next_sleep)
@@ -1487,10 +1491,9 @@ class StreamingConversation(Generic[OutputDeviceType]):
                 return "", False
             self.mark_last_action_timestamp()
             self.turn_speech_time += next_sleep
-            duration_spoken_seconds += next_sleep
             remaining_sleep -= next_sleep
-            # message_sent = synthesis_result.get_message_up_to(duration_spoken_seconds)
-            # self.logger.info(f"{message_sent=} {duration_spoken_seconds=}")
+            # message_sent = synthesis_result.get_message_up_to(self.get_duration_spoken_seconds(time_started_speaking))
+            # self.logger.info(f"{message_sent=} {self.get_duration_spoken_seconds(time_started_speaking)=}")
             if self.turn_speech_time > 3:
                 self.logger.debug(f"Turn speech time: {self.turn_speech_time}")
                 buffer_cleared = True
