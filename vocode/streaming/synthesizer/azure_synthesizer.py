@@ -367,7 +367,10 @@ class AzureSynthesizer(BaseSynthesizer[AzureSynthesizerConfig]):
         ssml: str,
         seconds: float,
         word_boundary_event_pool: WordBoundaryEventPool,
+        includes_dtmf: bool,
     ) -> str:
+        if includes_dtmf:
+            return message
         try:
             events = word_boundary_event_pool.get_events_sorted()
             # Start of the message
@@ -494,6 +497,15 @@ class AzureSynthesizer(BaseSynthesizer[AzureSynthesizerConfig]):
         dtmf_pattern = re.compile(r"DTMF_(\w)")
         parts = dtmf_pattern.split(modified_message)
 
+        ssml_parts = {}
+        # TODO Parallelize and fix the indexing. {"0": ... is odd and im sure theres a better way to do this}
+        for index, part in enumerate(parts):
+            if index % 2 == 0:
+                if part:
+                    ssml_parts[f"{index}"] = await self.create_ssml(
+                        part, bot_sentiment=bot_sentiment
+                    )
+
         async def dtmf_audio_generator(tone: str):
             dtmf_url = f"https://evolution.voxeo.com/library/audio/prompts/dtmf/Dtmf-{tone}.wav"
             async with aiohttp.ClientSession() as session:
@@ -506,7 +518,7 @@ class AzureSynthesizer(BaseSynthesizer[AzureSynthesizerConfig]):
                 if index % 2 == 0:
                     # Normal text part
                     if part:
-                        ssml = await self.create_ssml(part, bot_sentiment=bot_sentiment)
+                        ssml = ssml_parts[f"{index}"]
                         audio_data_stream = (
                             await asyncio.get_event_loop().run_in_executor(
                                 self.thread_pool_executor, self.synthesize_ssml, ssml
@@ -520,10 +532,14 @@ class AzureSynthesizer(BaseSynthesizer[AzureSynthesizerConfig]):
                     async for chunk in dtmf_audio_generator(tone):
                         yield chunk
 
-        # full_ssml = await self.create_ssml(message.text, bot_sentiment=bot_sentiment)
+        includes_dtmf = len(parts) > 1
         return SynthesisResult(
             combined_generator(),
             lambda seconds: self.get_message_up_to(
-                message.text, "", seconds, word_boundary_event_pool
+                message.text,
+                ssml_parts["0"],
+                seconds,
+                word_boundary_event_pool,
+                includes_dtmf,
             ),
         )
