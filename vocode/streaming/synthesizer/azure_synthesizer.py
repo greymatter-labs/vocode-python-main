@@ -16,6 +16,7 @@ import aiohttp
 import azure.cognitiveservices.speech as speechsdk
 import numpy as np
 from opentelemetry.context.context import Context
+
 from vocode import getenv
 from vocode.streaming.agent.bot_sentiment_analyser import BotSentiment
 from vocode.streaming.models.audio_encoding import AudioEncoding
@@ -52,7 +53,7 @@ class WordBoundaryEventPool:
                 "text": event.text,
                 "text_offset": event.text_offset,
                 "audio_offset": (event.audio_offset + 5000) / (10000 * 1000),
-                "boudary_type": event.boundary_type,
+                "boundary_type": event.boundary_type,
             }
         )
 
@@ -358,11 +359,15 @@ class AzureSynthesizer(BaseSynthesizer[AzureSynthesizerConfig]):
         word_boundary_event_pool: WordBoundaryEventPool,
     ) -> str:
         events = word_boundary_event_pool.get_events_sorted()
-        # for event in events:
-        #     if event["audio_offset"] > seconds:
-        #         ssml_fragment = ssml[: event["text_offset"]]
-        #         # TODO: this is a little hacky, but it works for now
-        #         return ssml_fragment.split(">")[-1]
+        message_index: int = events[0]["text_offset"]  # Start of the message
+        for index, event in enumerate(events):
+            if event["audio_offset"] > seconds:
+                current_index = events[index - 1]["text_offset"] + len(
+                    events[index - 1]["text"]
+                )
+                message_up_to = ssml[message_index:current_index]
+                # self.logger.debug(f"{message_up_to=} {current_index=}")
+                return message_up_to
         return message
 
     async def create_speech(
@@ -486,6 +491,7 @@ class AzureSynthesizer(BaseSynthesizer[AzureSynthesizerConfig]):
                     async for chunk in dtmf_audio_generator(tone):
                         yield chunk
 
+        # full_ssml = await self.create_ssml(message.text, bot_sentiment=bot_sentiment)
         return SynthesisResult(
             combined_generator(),
             lambda seconds: self.get_message_up_to(
