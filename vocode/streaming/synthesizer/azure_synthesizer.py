@@ -371,7 +371,8 @@ class AzureSynthesizer(BaseSynthesizer[AzureSynthesizerConfig]):
         try:
             events = word_boundary_event_pool.get_events_sorted()
             self.logger.info(f"get_message_up_to: events: {events}")
-            self.logger.info(f"get_message_up_to: events: {ssml}")
+            self.logger.info(f"get_message_up_to: ssml: {ssml}")
+            return message
             # Start of the message
             # ssml looks like "<ssml_tags>message</ssml_tags>"
             if len(events) == 0:
@@ -522,6 +523,7 @@ class AzureSynthesizer(BaseSynthesizer[AzureSynthesizerConfig]):
                 else:
                     # DTMF tone part
                     tone = part.upper()
+                    full_ssml.append(f"[dtmf: ]")
                     async for chunk in dtmf_audio_generator(tone):
                         yield chunk
 
@@ -529,7 +531,7 @@ class AzureSynthesizer(BaseSynthesizer[AzureSynthesizerConfig]):
             combined_generator(),
             lambda seconds: self.get_message_up_to(
                 message.text,
-                full_ssml,
+                "".join(full_ssml),
                 seconds,
                 word_boundary_event_pool,
             ),
