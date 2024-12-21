@@ -523,7 +523,6 @@ class AzureSynthesizer(BaseSynthesizer[AzureSynthesizerConfig]):
                 else:
                     # DTMF tone part
                     tone = part.upper()
-                    full_ssml.append(f"[dtmf: ]")
                     async for chunk in dtmf_audio_generator(tone):
                         yield chunk
 
