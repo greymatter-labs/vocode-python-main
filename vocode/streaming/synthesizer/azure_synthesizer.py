@@ -369,7 +369,7 @@ class AzureSynthesizer(BaseSynthesizer[AzureSynthesizerConfig]):
         word_boundary_event_pool: WordBoundaryEventPool,
     ) -> str:
         try:
-            events = word_boundary_event_pool.get_events_sorted()
+            events = word_boundary_event_pool.events
             self.logger.info(f"get_message_up_to: events: {events}")
             self.logger.info(f"get_message_up_to: ssml: {ssml}")
             return message
