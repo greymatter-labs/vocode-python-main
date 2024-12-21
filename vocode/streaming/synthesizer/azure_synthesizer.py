@@ -364,19 +364,19 @@ class AzureSynthesizer(BaseSynthesizer[AzureSynthesizerConfig]):
     def get_message_up_to(
         self,
         message: str,
-        ssml: str,
+        ssml_parts: list[str],
         seconds: float,
         word_boundary_event_pool: WordBoundaryEventPool,
-        includes_dtmf: bool,
     ) -> str:
-        if includes_dtmf:
+        if len(ssml_parts) > 1:
             return message
+        else:
+            ssml = ssml_parts[0]
         try:
             events = word_boundary_event_pool.get_events_sorted()
-            # Start of the message
-            # ssml looks like "<ssml_tags>message</ssml_tags>"
             if len(events) == 0:
                 return message
+            # Start of the message; ssml looks like "<ssml_tags>message</ssml_tags>"
             message_start_index = events[0]["text_offset"]
             for index, event in enumerate(events):
                 if event["audio_offset"] > seconds:
@@ -496,15 +496,7 @@ class AzureSynthesizer(BaseSynthesizer[AzureSynthesizerConfig]):
         # Split the message into parts and handle DTMF tones separately
         dtmf_pattern = re.compile(r"DTMF_(\w)")
         parts = dtmf_pattern.split(modified_message)
-
-        ssml_parts = {}
-        # TODO Parallelize and fix the indexing. {"0": ... is odd and im sure theres a better way to do this}
-        for index, part in enumerate(parts):
-            if index % 2 == 0:
-                if part:
-                    ssml_parts[f"{index}"] = await self.create_ssml(
-                        part, bot_sentiment=bot_sentiment
-                    )
+        ssml_parts = []
 
         async def dtmf_audio_generator(tone: str):
             dtmf_url = f"https://evolution.voxeo.com/library/audio/prompts/dtmf/Dtmf-{tone}.wav"
@@ -518,7 +510,8 @@ class AzureSynthesizer(BaseSynthesizer[AzureSynthesizerConfig]):
                 if index % 2 == 0:
                     # Normal text part
                     if part:
-                        ssml = ssml_parts[f"{index}"]
+                        ssml = await self.create_ssml(part, bot_sentiment=bot_sentiment)
+                        ssml_parts.append(ssml)
                         audio_data_stream = (
                             await asyncio.get_event_loop().run_in_executor(
                                 self.thread_pool_executor, self.synthesize_ssml, ssml
@@ -532,14 +525,12 @@ class AzureSynthesizer(BaseSynthesizer[AzureSynthesizerConfig]):
                     async for chunk in dtmf_audio_generator(tone):
                         yield chunk
 
-        includes_dtmf = len(parts) > 1
         return SynthesisResult(
             combined_generator(),
             lambda seconds: self.get_message_up_to(
                 message.text,
-                ssml_parts["0"],
+                ssml_parts,
                 seconds,
                 word_boundary_event_pool,
-                includes_dtmf,
             ),
         )
