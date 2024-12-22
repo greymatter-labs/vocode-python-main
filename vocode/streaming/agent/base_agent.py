@@ -19,6 +19,7 @@ from typing import (
 
 from opentelemetry import trace
 from opentelemetry.trace import Span
+
 from vocode.streaming.action.factory import ActionFactory
 from vocode.streaming.action.phone_call_action import (
     TwilioPhoneCallAction,
@@ -299,6 +300,7 @@ class RespondAgent(BaseAgent[AgentConfigType]):
         assert self.transcript is not None
         try:
             agent_input = item.payload
+            self.logger.debug(f"{agent_input=}")
             if isinstance(agent_input, TranscriptionAgentInput):
                 transcription = typing.cast(
                     TranscriptionAgentInput, agent_input
@@ -378,7 +380,7 @@ class RespondAgent(BaseAgent[AgentConfigType]):
                 except asyncio.TimeoutError:
                     self.logger.debug("Goodbye detection timed out")
         except asyncio.CancelledError:
-            pass
+            self.logger.debug("Agent input processing cancelled")
 
     def _get_action_config(self, function_name: str) -> Optional[ActionConfig]:
         if self.agent_config.actions is None:

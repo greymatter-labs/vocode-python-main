@@ -1007,7 +1007,7 @@ class StreamingConversation(Generic[OutputDeviceType]):
             logger or logging.getLogger(__name__),
             conversation_id=self.id,
         )
-        self.logger.setLevel(logging.INFO)
+        # self.logger.setLevel(logging.INFO)
         self.conversation_span = tracer.start_span(f"conversation::{self.id}")
         self.logger.debug(f"Conversation ID: {self.id}")
         # threadingevent
@@ -1017,12 +1017,9 @@ class StreamingConversation(Generic[OutputDeviceType]):
         self.output_device = output_device
         self.transcriber = transcriber
         self.turn_speech_time = 0.0
-        self.json_transcript_history: dict[str, dict] = {}
-
         self.agent = agent
         self.synthesizer = synthesizer
         self.synthesis_enabled = True
-
         self.interruptible_events: queue.Queue[InterruptibleEvent] = queue.Queue()
         self.interruptible_event_factory = self.QueueingInterruptibleEventFactory(
             conversation=self
@@ -1403,15 +1400,15 @@ class StreamingConversation(Generic[OutputDeviceType]):
             return 0
         return time.perf_counter() - time_started_speaking
 
+    @staticmethod
     def set_message_sent_on_interrupt(
-        self,
         duration_spoken_seconds: float,
         json_transcript_entry: StateAgentTranscriptMessage,
         synthesis_result: SynthesisResult,
     ):
-        message_sent = synthesis_result.get_message_up_to(duration_spoken_seconds)
-        self.logger.info(f"Message sent on interrupt: {message_sent}")
-        json_transcript_entry.message_sent = message_sent
+        json_transcript_entry.message_sent = synthesis_result.get_message_up_to(
+            duration_spoken_seconds
+        )
 
     async def send_speech_to_output(
         self,
@@ -1427,15 +1424,6 @@ class StreamingConversation(Generic[OutputDeviceType]):
         if not (synthesis_result and message):
             return "", False
         stop_event.clear()
-        transcript = deepcopy(self.agent.get_json_transcript())
-        transcript_dict = transcript.dict()
-        filtered_entries = [
-            entry
-            for entry in transcript_dict["entries"]
-            if entry["role"] in ["message.bot", "human"]
-        ]
-        transcript_dict["entries"] = filtered_entries
-        self.json_transcript_history[time.perf_counter()] = transcript_dict
 
         self.transcriptions_worker.synthesis_done = False
         message_sent = message
@@ -1622,17 +1610,6 @@ class StreamingConversation(Generic[OutputDeviceType]):
 
     async def terminate(self):
         self.logger.debug("Terminating conversation")
-        with open("/code/telephony_app/transcript_history.json", "w") as f:
-            json.dump(
-                self.json_transcript_history,
-                f,
-                indent=6,
-            )
-
-        self.logger.warning(
-            "Json transcript history written to transcript_history.json"
-        )
-
         self.mark_terminated()
         end_span(self.conversation_span)
         await self.broadcast_interrupt()

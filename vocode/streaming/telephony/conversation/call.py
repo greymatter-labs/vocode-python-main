@@ -54,7 +54,7 @@ class Call(StreamingConversation[TelephonyOutputDeviceType]):
             logger or logging.getLogger(__name__),
             conversation_id=conversation_id,
         )
-        logger.setLevel(logging.INFO)
+        # logger.setLevel(logging.INFO)
 
         self.from_phone = from_phone
         self.to_phone = to_phone
