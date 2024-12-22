@@ -4,6 +4,7 @@ from enum import Enum
 from typing import List, Optional, Union
 
 from pydantic import BaseModel, Field, root_validator
+
 from vocode.streaming.models.memory_dependency import MemoryDependency
 
 
@@ -42,6 +43,7 @@ class StateAgentTranscriptEntry(BaseModel):
 class StateAgentTranscriptMessage(StateAgentTranscriptEntry):
     role: StateAgentTranscriptRole
     message: str
+    message_sent: str
     timestamp: str = Field(default_factory=lambda: datetime.datetime.now().isoformat())
 
     class Config:

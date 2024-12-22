@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import asyncio
-import threading
-import janus
-from typing import Any, Optional
-from typing import TypeVar, Generic
 import logging
+import threading
+from typing import Any, Generic, Optional, TypeVar
 
+import janus
+
+from vocode.streaming.models.state_agent_transcript import StateAgentTranscriptMessage
 
 logger = logging.getLogger(__name__)
 
@@ -139,9 +140,11 @@ class InterruptibleAgentResponseEvent(InterruptibleEvent[Payload]):
         agent_response_tracker: asyncio.Event,
         is_interruptible: bool = True,
         interruption_event: Optional[threading.Event] = None,
+        json_transcript_entry: Optional[StateAgentTranscriptMessage] = None,
     ):
         super().__init__(payload, is_interruptible, interruption_event)
         self.agent_response_tracker = agent_response_tracker
+        self.json_transcript_entry = json_transcript_entry
 
 
 class InterruptibleEventFactory:
@@ -155,11 +158,13 @@ class InterruptibleEventFactory:
         payload: Any,
         is_interruptible: bool = True,
         agent_response_tracker: Optional[asyncio.Event] = None,
+        json_transcript_entry: Optional[StateAgentTranscriptMessage] = None,
     ) -> InterruptibleAgentResponseEvent:
         return InterruptibleAgentResponseEvent(
             payload,
             is_interruptible=is_interruptible,
             agent_response_tracker=agent_response_tracker or asyncio.Event(),
+            json_transcript_entry=json_transcript_entry,
         )
 
 
@@ -206,12 +211,14 @@ class InterruptibleWorker(AsyncWorker[InterruptibleEventType]):
         item: Any,
         is_interruptible: bool = True,
         agent_response_tracker: Optional[asyncio.Event] = None,
+        json_transcript_entry: Optional[StateAgentTranscriptMessage] = None,
     ):
         interruptible_utterance_event = (
             self.interruptible_event_factory.create_interruptible_agent_response_event(
                 item,
                 is_interruptible=is_interruptible,
                 agent_response_tracker=agent_response_tracker or asyncio.Event(),
+                json_transcript_entry=json_transcript_entry,
             )
         )
         return super().produce_nonblocking(interruptible_utterance_event)
