@@ -1604,7 +1604,7 @@ class StreamingConversation(Generic[OutputDeviceType]):
                 )
             self.logger.debug("Cleared buffer from send_speech_to_output")
 
-            # self.agent.restore_resume_state()
+        # self.agent.restore_resume_state()
 
         if message_sent:
             if self.allow_unmute:
@@ -1614,7 +1614,7 @@ class StreamingConversation(Generic[OutputDeviceType]):
                     self.transcriber.unmute()
         self.transcriptions_worker.ready_to_send = BufferStatus.DISCARD
         if json_transcript_entry:
-            json_transcript_entry.message = message_sent
+            json_transcript_entry.message_sent = message_sent
         return message_sent, cut_off
 
     def mark_terminated(self):

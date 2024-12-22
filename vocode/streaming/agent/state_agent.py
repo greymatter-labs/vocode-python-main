@@ -642,8 +642,6 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
         speak: bool = True,
         state_agent_transcript_messages_added: List[StateAgentTranscriptMessage] = [],
     ):
-        if role == "message.bot" or role == "human":
-            self.logger.info(f"Updating history with role: {role}, message: {message}")
         TranscriptEntry = None
         if role == "human":
             while self.chat_history and self.chat_history[-1][0] == "human":
@@ -1599,7 +1597,7 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
                                 TranscriptMessage = StateAgentTranscriptMessage(
                                     role="message.bot",
                                     message=interpolated_content,
-                                    message_sent=interpolated_content,
+                                    message_sent="",
                                 )
                                 state_agent_transcript_messages_added.append(
                                     TranscriptMessage
@@ -1647,7 +1645,7 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
                 TranscriptMessage = StateAgentTranscriptMessage(
                     role="message.bot",
                     message=interpolated_content,
-                    message_sent=interpolated_content,
+                    message_sent="",
                 )
                 state_agent_transcript_messages_added.append(TranscriptMessage)
                 self.produce_interruptible_agent_response_event_nonblocking(
