@@ -3,23 +3,12 @@ import json
 import logging
 import time
 from enum import Enum
-from typing import (
-    Any,
-    Awaitable,
-    Callable,
-    Dict,
-    List,
-    Optional,
-    Tuple,
-    TypedDict,
-)
+from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple, TypedDict
 
 from openai import AsyncOpenAI
 from pydantic import BaseModel
 from vocode import getenv
-from vocode.streaming.action.phone_call_action import (
-    TwilioPhoneCallAction,
-)
+from vocode.streaming.action.phone_call_action import TwilioPhoneCallAction
 from vocode.streaming.agent.base_agent import (
     AgentResponseGenerationComplete,
     AgentResponseMessage,
@@ -1526,7 +1515,7 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
             buffer = ""
             output_started = False
             json_key = '"output": '
-            punctuation = [".", "!", "?", ",", ";"]
+            punctuation = [". ", "!", "?", ",", ";"]
             send_final_message = False
             first_chunk = True
             first_response_sent = False
@@ -1546,7 +1535,7 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
                         stream_output and "MISSING" in response_text
                     ):  # only want to say the output if its missing
 
-                        while any(p in buffer for p in punctuation):
+                        while any(p in buffer.replace("...", "") for p in punctuation):
                             split_index = max(
                                 buffer.rfind(p) for p in punctuation if p in buffer
                             )
