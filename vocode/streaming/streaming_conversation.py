@@ -1472,8 +1472,8 @@ class StreamingConversation(Generic[OutputDeviceType]):
         # Added stop event check otherwise it will block other synthesis result tasks
         # even though we meant to cancel this one.
         sleep_interval = 0.1  # Mark last action every 0.1 seconds
-        remaining_sleep = total_time_sent - self.get_duration_spoken_seconds(
-            time_started_speaking
+        remaining_sleep = (
+            total_time_sent  # - self.get_duration_spoken_seconds(time_started_speaking)
         )
         while remaining_sleep > 0:
             next_sleep = min(sleep_interval, remaining_sleep)
