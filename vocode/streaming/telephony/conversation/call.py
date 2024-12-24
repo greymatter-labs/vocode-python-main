@@ -1,32 +1,30 @@
 from __future__ import annotations
-from asyncio import iscoroutine
-from fastapi import WebSocket
-from enum import Enum
+
 import logging
+from asyncio import iscoroutine
+from enum import Enum
 from typing import Optional, TypeVar, Union
+
+from fastapi import WebSocket
+
 from vocode.streaming.agent.base_agent import BaseAgent
 from vocode.streaming.agent.factory import AgentFactory
 from vocode.streaming.models.agent import AgentConfig
 from vocode.streaming.models.events import PhoneCallEndedEvent
-from vocode.streaming.output_device.vonage_output_device import VonageOutputDevice
-
-from vocode.streaming.streaming_conversation import StreamingConversation
+from vocode.streaming.models.synthesizer import SynthesizerConfig
+from vocode.streaming.models.transcriber import TranscriberConfig
 from vocode.streaming.output_device.twilio_output_device import TwilioOutputDevice
-from vocode.streaming.models.synthesizer import (
-    SynthesizerConfig,
-)
-from vocode.streaming.models.transcriber import (
-    TranscriberConfig,
-)
+from vocode.streaming.output_device.vonage_output_device import VonageOutputDevice
+from vocode.streaming.streaming_conversation import StreamingConversation
 from vocode.streaming.synthesizer.factory import SynthesizerFactory
 from vocode.streaming.telephony.config_manager.base_config_manager import (
     BaseConfigManager,
 )
 from vocode.streaming.telephony.constants import DEFAULT_SAMPLING_RATE
 from vocode.streaming.transcriber.factory import TranscriberFactory
-from vocode.streaming.utils.events_manager import EventsManager
-from vocode.streaming.utils.conversation_logger_adapter import wrap_logger
 from vocode.streaming.utils import create_conversation_id
+from vocode.streaming.utils.conversation_logger_adapter import wrap_logger
+from vocode.streaming.utils.events_manager import EventsManager
 
 TelephonyOutputDeviceType = TypeVar(
     "TelephonyOutputDeviceType", bound=Union[TwilioOutputDevice, VonageOutputDevice]
@@ -56,6 +54,7 @@ class Call(StreamingConversation[TelephonyOutputDeviceType]):
             logger or logging.getLogger(__name__),
             conversation_id=conversation_id,
         )
+        # logger.setLevel(logging.INFO)
 
         self.from_phone = from_phone
         self.to_phone = to_phone

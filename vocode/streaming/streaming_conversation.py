@@ -7,10 +7,11 @@ import queue
 import random
 import threading
 import time
+import traceback
 import typing
 from copy import deepcopy
 from enum import Enum
-from typing import Any, Awaitable, Callable, Generic, Optional, Tuple, TypeVar
+from typing import Any, Awaitable, Callable, Dict, Generic, Optional, Tuple, TypeVar
 
 import httpx
 from telephony_app.models.call_type import CallType
@@ -37,7 +38,11 @@ from vocode.streaming.constants import (
 from vocode.streaming.models.agent import FillerAudioConfig
 from vocode.streaming.models.events import Sender
 from vocode.streaming.models.message import BaseMessage
-from vocode.streaming.models.state_agent_transcript import StateAgentTranscript
+from vocode.streaming.models.state_agent_transcript import (
+    StateAgentTranscript,
+    StateAgentTranscriptEntry,
+    StateAgentTranscriptMessage,
+)
 from vocode.streaming.models.synthesizer import SentimentConfig
 from vocode.streaming.models.transcriber import TranscriberConfig
 from vocode.streaming.models.transcript import (
@@ -101,11 +106,13 @@ class StreamingConversation(Generic[OutputDeviceType]):
             payload: Any,
             is_interruptible: bool = True,
             agent_response_tracker: Optional[asyncio.Event] = None,
+            json_transcript_entry: Optional[StateAgentTranscriptMessage] = None,
         ) -> InterruptibleAgentResponseEvent:
             interruptible_event = super().create_interruptible_agent_response_event(
                 payload,
                 is_interruptible=is_interruptible,
                 agent_response_tracker=agent_response_tracker,
+                json_transcript_entry=json_transcript_entry,
             )
             self.conversation.interruptible_events.put_nowait(interruptible_event)
             return interruptible_event
@@ -732,6 +739,7 @@ class StreamingConversation(Generic[OutputDeviceType]):
                 return
             try:
                 agent_response = item.payload
+                json_transcript_entry = item.json_transcript_entry
                 if isinstance(agent_response, AgentResponseFillerAudio):
                     self.send_filler_audio(item.agent_response_tracker)
                     return
@@ -820,6 +828,7 @@ class StreamingConversation(Generic[OutputDeviceType]):
                         (agent_response_message.message, synthesis_result),
                         is_interruptible=item.is_interruptible,
                         agent_response_tracker=item.agent_response_tracker,
+                        json_transcript_entry=json_transcript_entry,
                     )
                     # self.conversation.logger.info(
                     #     f"[{self.conversation.agent.agent_config.call_type}:{self.conversation.agent.agent_config.current_call_id}] Agent: {agent_response_message.message.text}"
@@ -829,7 +838,7 @@ class StreamingConversation(Generic[OutputDeviceType]):
                         f"SYNTH: WAS NOT COMMAND AGENT, {agent_response_message.message.text}"
                     )
             except asyncio.CancelledError:
-                pass
+                self.conversation.logger.warning("Agent responses worker cancelled")
 
     class SynthesisResultsWorker(InterruptibleAgentResponseWorker):
         """Worker class responsible for playing synthesized speech results.
@@ -859,6 +868,7 @@ class StreamingConversation(Generic[OutputDeviceType]):
             try:
                 # Unpack the message and synthesis result from the event payload.
                 message, synthesis_result = item.payload
+                json_transcript_entry = item.json_transcript_entry
 
                 # Initialize a transcript message with an empty text, which will be updated later.
                 transcript_message = Message(
@@ -880,6 +890,7 @@ class StreamingConversation(Generic[OutputDeviceType]):
                     self.conversation.started_event,
                     TEXT_TO_SPEECH_CHUNK_SIZE_SECONDS,
                     transcript_message=transcript_message,
+                    json_transcript_entry=json_transcript_entry,
                 )
                 # Create an asynchronous task for the coroutine and store it as the current task.
                 self.current_task = asyncio.create_task(send_speech_coroutine)
@@ -902,8 +913,15 @@ class StreamingConversation(Generic[OutputDeviceType]):
                     self.conversation.started_event.clear()
                     self.current_task = None
                 except Exception as e:
+                    if isinstance(e, asyncio.CancelledError):
+                        self.conversation.logger.info(
+                            f"Cancelled Synthesis Results Worker Task"
+                        )
+                    else:
+                        self.conversation.logger.warning(
+                            f"Synthesis Results Worker current_task error: {e}"
+                        )
                     # If an exception occurs, log it and set the message as cut off.
-                    self.conversation.logger.debug(f"Detected Task cancelled: {e}")
                     message_sent, cut_off = "", True
                     self.current_task = None
                     return
@@ -959,7 +977,15 @@ class StreamingConversation(Generic[OutputDeviceType]):
                     except asyncio.TimeoutError:
                         # If the goodbye detection task times out, simply pass.
                         pass
-            except asyncio.CancelledError:
+            except Exception as e:
+                if isinstance(e, asyncio.CancelledError):
+                    self.conversation.logger.info(
+                        f"Synthesis results worker cancelled: {e}"
+                    )
+                else:
+                    self.conversation.logger.warning(
+                        f"Error in synthesis results worker: {e}"
+                    )
                 # If the task was cancelled, do nothing.
                 self.current_task = None
                 pass
@@ -981,6 +1007,7 @@ class StreamingConversation(Generic[OutputDeviceType]):
             logger or logging.getLogger(__name__),
             conversation_id=self.id,
         )
+        # self.logger.setLevel(logging.INFO)
         self.conversation_span = tracer.start_span(f"conversation::{self.id}")
         self.logger.debug(f"Conversation ID: {self.id}")
         # threadingevent
@@ -990,11 +1017,9 @@ class StreamingConversation(Generic[OutputDeviceType]):
         self.output_device = output_device
         self.transcriber = transcriber
         self.turn_speech_time = 0.0
-
         self.agent = agent
         self.synthesizer = synthesizer
         self.synthesis_enabled = True
-
         self.interruptible_events: queue.Queue[InterruptibleEvent] = queue.Queue()
         self.interruptible_event_factory = self.QueueingInterruptibleEventFactory(
             conversation=self
@@ -1375,6 +1400,16 @@ class StreamingConversation(Generic[OutputDeviceType]):
             return 0
         return time.perf_counter() - time_started_speaking
 
+    @staticmethod
+    def set_message_sent_on_interrupt(
+        duration_spoken_seconds: float,
+        json_transcript_entry: StateAgentTranscriptMessage,
+        synthesis_result: SynthesisResult,
+    ):
+        json_transcript_entry.message_sent = synthesis_result.get_message_up_to(
+            duration_spoken_seconds
+        )
+
     async def send_speech_to_output(
         self,
         message: str,
@@ -1382,8 +1417,10 @@ class StreamingConversation(Generic[OutputDeviceType]):
         stop_event: threading.Event,
         started_event: threading.Event,
         seconds_per_chunk: int,
+        json_transcript_entry: Optional[StateAgentTranscriptMessage] = None,
         transcript_message: Optional[Message] = None,
     ):
+
         if not (synthesis_result and message):
             return "", False
         stop_event.clear()
@@ -1408,6 +1445,11 @@ class StreamingConversation(Generic[OutputDeviceType]):
         async for chunk_result in synthesis_result.chunk_generator:
 
             if stop_event.is_set() and self.agent.agent_config.allow_interruptions:
+                self.set_message_sent_on_interrupt(
+                    self.get_duration_spoken_seconds(time_started_speaking),
+                    json_transcript_entry,
+                    synthesis_result,
+                )
                 return "", False
 
             speech_data.extend(chunk_result.chunk)
@@ -1424,6 +1466,12 @@ class StreamingConversation(Generic[OutputDeviceType]):
                     self.mark_last_action_timestamp()
 
                     if stop_event.is_set():
+                        self.set_message_sent_on_interrupt(
+                            self.get_duration_spoken_seconds(time_started_speaking),
+                            json_transcript_entry,
+                            synthesis_result,
+                        )
+
                         # self.agent.move_back_state()
                         self.logger.debug(
                             "Moved back state from send_speech_to_output in the middle"
@@ -1443,11 +1491,15 @@ class StreamingConversation(Generic[OutputDeviceType]):
             self.logger.debug(f"Sending final chunk, len {len(speech_data)}")
             await self.output_device.consume_nonblocking(speech_data)
             self.transcriptions_worker.time_silent = 0.0
+            # TODO this is wrong, we should not use chunk_size here
             total_time_sent += len(speech_data) / (chunk_size / seconds_per_chunk)
         else:
             self.logger.debug("Interrupted speech output on the last chunk")
-            # if not moved_back:
-            #     self.agent.move_back_state()
+            self.set_message_sent_on_interrupt(
+                self.get_duration_spoken_seconds(time_started_speaking),
+                json_transcript_entry,
+                synthesis_result,
+            )
             return "", False
 
         self.transcriptions_worker.synthesis_done = True
@@ -1480,13 +1532,21 @@ class StreamingConversation(Generic[OutputDeviceType]):
             await asyncio.sleep(next_sleep)
             if stop_event.is_set():
                 self.logger.debug("Interrupted speech output on the last chunk")
-                # self.agent.move_back_state()
+                self.set_message_sent_on_interrupt(
+                    self.get_duration_spoken_seconds(time_started_speaking),
+                    json_transcript_entry,
+                    synthesis_result,
+                )
                 return "", False
             self.mark_last_action_timestamp()
             self.turn_speech_time += next_sleep
             remaining_sleep -= next_sleep
-            # message_sent = synthesis_result.get_message_up_to(self.get_duration_spoken_seconds(time_started_speaking))
-            # self.logger.info(f"{message_sent=} {self.get_duration_spoken_seconds(time_started_speaking)=}")
+            # message_sent = synthesis_result.get_message_up_to(
+            #     self.get_duration_spoken_seconds(time_started_speaking)
+            # )
+            # self.logger.info(
+            #     f"{message_sent=} {self.get_duration_spoken_seconds(time_started_speaking)=}"
+            # )
             if self.turn_speech_time > 3:
                 self.logger.debug(f"Turn speech time: {self.turn_speech_time}")
                 buffer_cleared = True
@@ -1532,7 +1592,7 @@ class StreamingConversation(Generic[OutputDeviceType]):
                 )
             self.logger.debug("Cleared buffer from send_speech_to_output")
 
-            # self.agent.restore_resume_state()
+        # self.agent.restore_resume_state()
 
         if message_sent:
             if self.allow_unmute:
@@ -1541,13 +1601,15 @@ class StreamingConversation(Generic[OutputDeviceType]):
                     self.logger.debug("Unmuting transcriber")
                     self.transcriber.unmute()
         self.transcriptions_worker.ready_to_send = BufferStatus.DISCARD
-
+        if json_transcript_entry:
+            json_transcript_entry.message_sent = message_sent
         return message_sent, cut_off
 
     def mark_terminated(self):
         self.active = False
 
     async def terminate(self):
+        self.logger.debug("Terminating conversation")
         self.mark_terminated()
         end_span(self.conversation_span)
         await self.broadcast_interrupt()
