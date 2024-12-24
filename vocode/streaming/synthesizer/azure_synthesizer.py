@@ -370,9 +370,8 @@ class AzureSynthesizer(BaseSynthesizer[AzureSynthesizerConfig]):
     ) -> str:
         if len(ssml_parts) > 1:
             return message
-        else:
-            ssml = ssml_parts[0]
         try:
+            ssml = ssml_parts[0]
             events = word_boundary_event_pool.get_events_sorted()
             if len(events) == 0:
                 return message
