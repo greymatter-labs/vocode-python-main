@@ -563,6 +563,7 @@ class StreamingConversation(Generic[OutputDeviceType]):
                 )
                 item.agent_response_tracker.set()
             except asyncio.CancelledError:
+                self.conversation.logger.debug("Filler audio worker cancelled")
                 pass
 
     class AgentResponsesWorker(InterruptibleAgentResponseWorker):
@@ -831,6 +832,7 @@ class StreamingConversation(Generic[OutputDeviceType]):
                         f"SYNTH: WAS NOT COMMAND AGENT, {agent_response_message.message.text}"
                     )
             except asyncio.CancelledError:
+                self.conversation.logger.debug("Agent responses worker cancelled")
                 pass
 
     class SynthesisResultsWorker(InterruptibleAgentResponseWorker):
@@ -962,6 +964,7 @@ class StreamingConversation(Generic[OutputDeviceType]):
                         # If the goodbye detection task times out, simply pass.
                         pass
             except asyncio.CancelledError:
+                self.conversation.logger.debug("Synthesis results worker cancelled")
                 # If the task was cancelled, do nothing.
                 self.current_task = None
                 pass

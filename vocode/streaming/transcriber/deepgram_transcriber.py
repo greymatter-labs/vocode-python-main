@@ -162,6 +162,7 @@ class VADWorker(AsyncWorker):
                         self.last_speech_time = 0
 
             except asyncio.CancelledError:
+                self.logger.debug("VAD worker cancelled")
                 break
             except Exception as e:
                 self.logger.warning(f"VAD error: {str(e)}", exc_info=True)

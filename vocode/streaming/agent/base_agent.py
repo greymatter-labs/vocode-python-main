@@ -378,7 +378,7 @@ class RespondAgent(BaseAgent[AgentConfigType]):
                 except asyncio.TimeoutError:
                     self.logger.debug("Goodbye detection timed out")
         except asyncio.CancelledError:
-            pass
+            self.logger.debug("Agent process cancelled")
 
     def _get_action_config(self, function_name: str) -> Optional[ActionConfig]:
         if self.agent_config.actions is None:
