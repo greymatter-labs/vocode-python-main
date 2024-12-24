@@ -9,13 +9,14 @@ import tempfile
 # get req for wav as wav
 import wave
 from concurrent.futures import ThreadPoolExecutor
-from typing import Any, List, Optional, Tuple
+from typing import Any, List, Optional, Tuple, TypedDict
 from xml.etree import ElementTree
 
 import aiohttp
 import azure.cognitiveservices.speech as speechsdk
 import numpy as np
 from opentelemetry.context.context import Context
+
 from vocode import getenv
 from vocode.streaming.agent.bot_sentiment_analyser import BotSentiment
 from vocode.streaming.models.audio_encoding import AudioEncoding
@@ -42,9 +43,16 @@ ElementTree.register_namespace("", NAMESPACES[""])
 ElementTree.register_namespace("mstts", NAMESPACES["mstts"])
 
 
+class WordBoundaryEvent(TypedDict):
+    text: str
+    text_offset: int
+    audio_offset: float
+    boundary_type: speechsdk.SpeechSynthesisBoundaryType
+
+
 class WordBoundaryEventPool:
     def __init__(self):
-        self.events = []
+        self.events: List[WordBoundaryEvent] = []
 
     def add(self, event):
         self.events.append(
@@ -52,11 +60,13 @@ class WordBoundaryEventPool:
                 "text": event.text,
                 "text_offset": event.text_offset,
                 "audio_offset": (event.audio_offset + 5000) / (10000 * 1000),
-                "boudary_type": event.boundary_type,
+                "boundary_type": speechsdk.SpeechSynthesisBoundaryType(
+                    event.boundary_type
+                ),
             }
         )
 
-    def get_events_sorted(self):
+    def get_events_sorted(self) -> List[WordBoundaryEvent]:
         return sorted(self.events, key=lambda event: event["audio_offset"])
 
 
@@ -234,6 +244,7 @@ class AzureSynthesizer(BaseSynthesizer[AzureSynthesizerConfig]):
         return with_mark + self.add_marks(rest_stripped, index + 1)
 
     def word_boundary_cb(self, evt, pool):
+        # self.logger.debug(f"Word boundary event: {evt}")
         pool.add(evt)
 
     async def create_ssml(
@@ -357,13 +368,39 @@ class AzureSynthesizer(BaseSynthesizer[AzureSynthesizerConfig]):
         seconds: float,
         word_boundary_event_pool: WordBoundaryEventPool,
     ) -> str:
-        events = word_boundary_event_pool.get_events_sorted()
-        # for event in events:
-        #     if event["audio_offset"] > seconds:
-        #         ssml_fragment = ssml[: event["text_offset"]]
-        #         # TODO: this is a little hacky, but it works for now
-        #         return ssml_fragment.split(">")[-1]
-        return message
+        try:
+            events = word_boundary_event_pool.events
+            self.logger.info(f"get_message_up_to: events: {events}")
+            self.logger.info(f"get_message_up_to: ssml: {ssml}")
+            return message
+            # Start of the message
+            # ssml looks like "<ssml_tags>message</ssml_tags>"
+            if len(events) == 0:
+                return message
+            message_start_index = events[0]["text_offset"]
+            for index, event in enumerate(events):
+                if event["audio_offset"] > seconds:
+                    if index == 0:
+                        return message
+
+                    # Get last spoken event
+                    current_event = events[index - 1]
+                    # Calculate ending character position
+                    current_char_index = current_event["text_offset"] + len(
+                        current_event["text"]
+                    )
+                    message_up_to = ssml[message_start_index:current_char_index]
+                    # Validate substring
+                    if message_up_to not in message:
+                        self.logger.error(
+                            f"Message up to {message_up_to} is not a substring of message {message}"
+                        )
+                        return message
+                    return message_up_to
+            return message
+        except Exception as e:
+            self.logger.error(f"Error in get_message_up_to: {str(e)}")
+            return message
 
     async def create_speech(
         self,
@@ -460,6 +497,8 @@ class AzureSynthesizer(BaseSynthesizer[AzureSynthesizerConfig]):
         dtmf_pattern = re.compile(r"DTMF_(\w)")
         parts = dtmf_pattern.split(modified_message)
 
+        full_ssml = []
+
         async def dtmf_audio_generator(tone: str):
             dtmf_url = f"https://evolution.voxeo.com/library/audio/prompts/dtmf/Dtmf-{tone}.wav"
             async with aiohttp.ClientSession() as session:
@@ -473,6 +512,7 @@ class AzureSynthesizer(BaseSynthesizer[AzureSynthesizerConfig]):
                     # Normal text part
                     if part:
                         ssml = await self.create_ssml(part, bot_sentiment=bot_sentiment)
+                        full_ssml.append(ssml)
                         audio_data_stream = (
                             await asyncio.get_event_loop().run_in_executor(
                                 self.thread_pool_executor, self.synthesize_ssml, ssml
@@ -489,6 +529,9 @@ class AzureSynthesizer(BaseSynthesizer[AzureSynthesizerConfig]):
         return SynthesisResult(
             combined_generator(),
             lambda seconds: self.get_message_up_to(
-                message.text, "", seconds, word_boundary_event_pool
+                message.text,
+                "".join(full_ssml),
+                seconds,
+                word_boundary_event_pool,
             ),
         )
