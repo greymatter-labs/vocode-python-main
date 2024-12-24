@@ -463,9 +463,13 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
         self.json_transcript = StateAgentTranscript()
 
         self.overall_instructions = (
-            self.agent_config.prompt_preamble
-            + "\n"
-            + self.state_machine["states"]["start"]["instructions"]
+            (
+                self.agent_config.prompt_preamble
+                + "\n"
+                + self.state_machine["states"]["start"]["instructions"]
+            )
+            if self.agent_config.prompt_preamble
+            else self.state_machine["states"]["start"]["instructions"]
         )
         self.label_to_state_id = self.state_machine["labelToStateId"]
 
