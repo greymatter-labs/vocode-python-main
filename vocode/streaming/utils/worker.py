@@ -1,14 +1,14 @@
 from __future__ import annotations
 
 import asyncio
-import threading
-import janus
-from typing import Any, Optional
-from typing import TypeVar, Generic
 import logging
+import threading
+from typing import Any, Generic, Optional, TypeVar
 
+import janus
 
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.DEBUG)
 
 WorkerInputType = TypeVar("WorkerInputType")
 
@@ -67,6 +67,7 @@ class ThreadAsyncWorker(AsyncWorker[WorkerInputType]):
                 self._forward_from_thead(),
             )
         except asyncio.CancelledError:
+            logger.debug("ThreadAsyncWorker cancelled")
             return
 
     async def _forward_to_thread(self):
@@ -93,6 +94,7 @@ class AsyncQueueWorker(AsyncWorker):
                 item = await self.input_queue.get()
                 await self.process(item)
             except asyncio.CancelledError:
+                logger.debug("AsyncQueueWorker cancelled")
                 return
             except Exception as e:
                 logger.exception("AsyncQueueWorker", exc_info=True)
@@ -221,12 +223,14 @@ class InterruptibleWorker(AsyncWorker[InterruptibleEventType]):
         while True:
             item = await self.input_queue.get()
             if item.is_interrupted():
+                logger.debug("InterruptibleWorker item interrupted")
                 continue
             self.interruptible_event = item
             self.current_task = asyncio.create_task(self.process(item))
             try:
                 await self.current_task
             except asyncio.CancelledError:
+                logger.debug("InterruptibleWorker cancelled")
                 return
             except Exception as e:
                 logger.exception("InterruptibleWorker", exc_info=True)
