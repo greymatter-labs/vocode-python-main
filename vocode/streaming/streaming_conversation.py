@@ -1040,18 +1040,8 @@ class StreamingConversation(Generic[OutputDeviceType]):
                 input_queue=self.filler_audio_queue, conversation=self
             )
 
-        def on_json_transcript_update(json_transcript: StateAgentTranscript):
-            transcript = deepcopy(json_transcript)
-            self.events_manager.publish_event(
-                JsonTranscriptEvent(
-                    transcript=transcript,
-                    conversation_id=self.id,
-                )
-            )
-
-        self.agent.on_json_transcript_update = on_json_transcript_update
+        self.agent.on_json_transcript_update = self.on_json_transcript_update
         self.events_manager = events_manager or EventsManager()
-
         self.events_task: Optional[asyncio.Task] = None
         self.per_chunk_allowance_seconds = per_chunk_allowance_seconds
         self.transcript = Transcript()
@@ -1207,6 +1197,15 @@ class StreamingConversation(Generic[OutputDeviceType]):
         self.transcriber.VOLUME_THRESHOLD = 700  # turn it back down
         self.agent.agent_config.allow_interruptions = previous_allow_interruptions
         end_span(initial_message_span)
+
+    def on_json_transcript_update(self, json_transcript: StateAgentTranscript):
+        transcript = deepcopy(json_transcript)
+        self.events_manager.publish_event(
+            JsonTranscriptEvent(
+                transcript=transcript,
+                conversation_id=self.id,
+            )
+        )
 
     async def check_for_idle(self):
         """Terminates the conversation after 15 seconds if no activity is detected"""
@@ -1370,7 +1369,8 @@ class StreamingConversation(Generic[OutputDeviceType]):
             self.transcriber.get_transcriber_config().min_interrupt_confidence or 0
         )
 
-    def get_duration_spoken_seconds(self, time_started_speaking: float | None):
+    @staticmethod
+    def get_duration_spoken_seconds(time_started_speaking: float | None):
         if time_started_speaking is None:
             return 0
         return time.perf_counter() - time_started_speaking
