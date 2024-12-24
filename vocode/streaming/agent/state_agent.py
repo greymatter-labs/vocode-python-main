@@ -134,7 +134,7 @@ async def handle_memory_dep(
         "question"
     ].get("message", "")
     logger.error(f"message_to_say |  {message_to_say}")
-    output, state_agent_transcript_messages_added, streamed = await call_ai(
+    output, messages_to_add, streamed = await call_ai(
         f"""You are trying to obtain the following information: '{memory_dep['key']}'.
 
 What it means: '{memory_dep['description'] or 'No extra details given.'}'.
@@ -175,7 +175,7 @@ Your response must be a JSON containing the keys '{memory_dep['key']}' and 'outp
     await speak(
         {"type": "verbatim", "message": message, "improvise": False},
         streamed,
-        state_agent_transcript_messages_added,
+        messages_to_add,
     )
 
     async def resume(human_input: str):
@@ -328,7 +328,7 @@ async def handle_options(
             f"{ai_options_str}\n\n"
             "Always return a number from the above list. Return the number of the condition that best applies."
         )
-    response, state_agent_transcript_messages_added, streamed = await call_ai(
+    response, messages_to_add, streamed = await call_ai(
         prompt, tool, stream_output=True
     )
 
@@ -362,7 +362,7 @@ async def handle_options(
                 "- If the user asked a question, provide a concise answer and then ask for a clear answer if you are waiting for one.\n"
                 "- Ensure not to suggest any actions or offer alternatives.\n"
             )
-            output, state_agent_transcript_messages_added, streamed = await call_ai(
+            output, messages_to_add, streamed = await call_ai(
                 prompt, tool, stream_output=True
             )
             output = output[output.find("{") : output.find("}") + 1]
@@ -640,9 +640,9 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
         action_name: Optional[str] = None,
         runtime_inputs: Optional[dict] = None,
         speak: bool = True,
-        state_agent_transcript_messages_added: List[StateAgentTranscriptMessage] = [],
+        messages_to_add: List[StateAgentTranscriptMessage] = [],
     ):
-        TranscriptEntry = None
+        transcript_entry = None
         if role == "human":
             while self.chat_history and self.chat_history[-1][0] == "human":
                 self.chat_history.pop()
@@ -663,17 +663,15 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
             )
         else:
 
-            TranscriptEntry = StateAgentTranscriptMessage(
+            transcript_entry = StateAgentTranscriptMessage(
                 role=role, message=message, message_sent=""
             )
-            if len(state_agent_transcript_messages_added) > 0 and not speak:
-                self.json_transcript.entries.extend(
-                    state_agent_transcript_messages_added
-                )
+            if len(messages_to_add) > 0 and not speak:
+                self.json_transcript.entries.extend(messages_to_add)
             else:
-                self.json_transcript.entries.append(TranscriptEntry)
+                self.json_transcript.entries.append(transcript_entry)
 
-        self.logger.info(f"{role=}, {message=}, {speak=}, {TranscriptEntry=}")
+        self.logger.info(f"{role=}, {message=}, {speak=}, {transcript_entry=}")
         if role == "message.bot" and len(message.strip()) > 0 and speak:
             self.produce_interruptible_agent_response_event_nonblocking(
                 AgentResponseMessage(
@@ -683,7 +681,7 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
                         )
                     )
                 ),
-                json_transcript_entry=TranscriptEntry,
+                json_transcript_entry=transcript_entry,
                 agent_response_tracker=agent_response_tracker,
             )
 
@@ -789,7 +787,7 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
         is_start=False,
         memory_id=None,
         speak=True,
-        state_agent_transcript_messages_added: List[StateAgentTranscriptMessage] = [],
+        messages_to_add: List[StateAgentTranscriptMessage] = [],
     ):
         if is_start:
             current_state_id = current_state_id + "_start"
@@ -806,7 +804,7 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
                 "message.bot",
                 message["message"],
                 speak=speak,
-                state_agent_transcript_messages_added=state_agent_transcript_messages_added,
+                messages_to_add=messages_to_add,
             )
         else:
             guide = message["description"]
@@ -851,8 +849,8 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
                 f"'invalid_answer' - if the user provided an answer but it wasn't a valid or relevant response to the specific question.\n"
                 f"'continue' - if none of the above apply."
             )
-            response, state_agent_transcript_messages_added, streamed = (
-                await self.call_ai(prompt, stream_output=True)
+            response, messages_to_add, streamed = await self.call_ai(
+                prompt, stream_output=True
             )
             self.logger.info(f"Initial intent analysis response: {response}")
             intent = response.strip().lower()
@@ -885,7 +883,7 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
             f"'continue' - if the user's message is relevant to the current intent and they are engaged in the conversation (e.g. asking follow-up questions or providing additional context) but none of the above apply."
         )
 
-        response, state_agent_transcript_messages_added, streamed = await self.call_ai(
+        response, messages_to_add, streamed = await self.call_ai(
             prompt, stream_output=True
         )
         self.logger.info(f"Analyze user intent prompt response: {response}")
@@ -1002,12 +1000,14 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
                         state_id_or_label=state_id_or_label, retry_count=new_retry_count
                     )
 
-                speak_message = lambda message, streamed, state_agent_transcript_messages_added: self.print_message(
-                    message,
-                    state["id"],
-                    memory_id=memory_dep["key"] + "_memory",
-                    speak=not streamed,
-                    state_agent_transcript_messages_added=state_agent_transcript_messages_added,
+                speak_message = (
+                    lambda message, streamed, messages_to_add: self.print_message(
+                        message,
+                        state["id"],
+                        memory_id=memory_dep["key"] + "_memory",
+                        speak=not streamed,
+                        messages_to_add=messages_to_add,
+                    )
                 )
                 try:
                     return await handle_memory_dep(
@@ -1177,12 +1177,12 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
             prompt += f"Bot's is thinking: '{bot_message_after_user}'\n"
         prompt += "\nNow, respond as the BOT directly."
 
-        message, state_agent_transcript_messages_added, streamed = await self.call_ai(
+        message, messages_to_add, streamed = await self.call_ai(
             prompt, stream_output=True
         )
         message = message.strip()
         self.logger.info(f"Guided response: {message}, {streamed=}")
-        self.update_history("message.bot", message)
+        self.update_history("message.bot", message, messages_to_add=messages_to_add)
         return message, streamed
 
     async def compose_action(self, state):
@@ -1257,12 +1257,10 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
 
             if dict_to_fill:
                 param_descriptions_str = "\n".join(param_descriptions)
-                response, state_agent_transcript_messages_added, streamed = (
-                    await self.call_ai(
-                        prompt=f"Based on the current conversation and the instructions provided, return a valid json with values inserted for these parameters:\n{param_descriptions_str}",
-                        tool=dict_to_fill,
-                        stream_output=True,
-                    )
+                response, messages_to_add, streamed = await self.call_ai(
+                    prompt=f"Based on the current conversation and the instructions provided, return a valid json with values inserted for these parameters:\n{param_descriptions_str}",
+                    tool=dict_to_fill,
+                    stream_output=True,
                 )
                 self.logger.info(f"Raw AI response: {response}")
                 response = response[response.find("{") : response.rfind("}") + 1]
@@ -1400,7 +1398,7 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
         streamed = False
         start_time = time.time()
 
-        state_agent_transcript_messages_added = []
+        messages_to_add = []
 
         # Extract the last sequence of bot, user, bot messages
         last_bot_messages_before = []
@@ -1594,20 +1592,18 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
                                 self.logger.info(
                                     f"streaming content. Raw: {content}  interpolated: {interpolated_content}"
                                 )
-                                TranscriptMessage = StateAgentTranscriptMessage(
+                                transcript_message = StateAgentTranscriptMessage(
                                     role="message.bot",
                                     message=interpolated_content,
                                     message_sent="",
                                 )
-                                state_agent_transcript_messages_added.append(
-                                    TranscriptMessage
-                                )
+                                messages_to_add.append(transcript_message)
 
                                 self.produce_interruptible_agent_response_event_nonblocking(
                                     AgentResponseMessage(
                                         message=BaseMessage(text=interpolated_content)
                                     ),
-                                    json_transcript_entry=TranscriptMessage,
+                                    json_transcript_entry=transcript_message,
                                 )
                                 if not first_response_sent:
                                     # Update average latency on first response for streaming
@@ -1642,17 +1638,17 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
                     f"Streaming final message. Raw: {buffer}  interpolated: {interpolated_content}"
                 )
                 # Need to pass the same object to the json transcript and the produce_interruptible_agent_response_event_nonblocking
-                TranscriptMessage = StateAgentTranscriptMessage(
+                transcript_message = StateAgentTranscriptMessage(
                     role="message.bot",
                     message=interpolated_content,
                     message_sent="",
                 )
-                state_agent_transcript_messages_added.append(TranscriptMessage)
+                messages_to_add.append(transcript_message)
                 self.produce_interruptible_agent_response_event_nonblocking(
                     AgentResponseMessage(
                         message=BaseMessage(text=interpolated_content)
                     ),
-                    json_transcript_entry=TranscriptMessage,
+                    json_transcript_entry=transcript_message,
                 )
                 if not first_response_sent:
                     # Update average latency if we haven't sent any responses yet
@@ -1666,7 +1662,7 @@ class StateAgent(RespondAgent[CommandAgentConfig]):
                 streamed = True
         return (
             interpolate_memories.interpolate_memories(response_text, self.memories),
-            state_agent_transcript_messages_added,
+            messages_to_add,
             streamed,
         )
 
