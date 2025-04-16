@@ -114,6 +114,7 @@ class TelephonyServer:
     def create_inbound_route(
         self,
         inbound_call_config: AbstractInboundCallConfig,
+        conversation_id: Optional[str] = None,
     ):
         async def twilio_route(
             twilio_config: TwilioConfig,
@@ -133,7 +134,7 @@ class TelephonyServer:
                 to_phone=twilio_to,
             )
 
-            conversation_id = create_conversation_id()
+            conversation_id = conversation_id or create_conversation_id()
             await self.config_manager.save_config(conversation_id, call_config)
             return self.templater.get_connection_twiml(
                 base_url=self.base_url, call_id=conversation_id
